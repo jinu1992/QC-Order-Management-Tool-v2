@@ -1,0 +1,70 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cubelelo B2B Quick Commerce Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- pdf.js for Consignment PDF processing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'partners-green': '#22C55E',
+              'partners-light-green': '#F0FDF4',
+              'partners-red': '#EF4444',
+              'partners-light-red': '#FEF2F2',
+              'partners-blue': '#3B82F6',
+              'partners-light-blue': '#EFF6FF',
+              'partners-purple': '#A855F7',
+              'partners-light-purple': '#FBF5FF',
+              'partners-yellow': '#FBBF24',
+              'partners-light-yellow': '#FFFBEB',
+              'partners-gray-bg': '#F7F8FA',
+              'partners-border': '#E5E7EB',
+            },
+          },
+        },
+      }
+    </script>
+    <style>
+      /* Isometric Cube Container */
+      .cube-wrapper {
+        display: inline-block;
+        transform-origin: 50% 50%;
+      }
+      
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      .animate-fade-in-up {
+        animation: fade-in-up 0.5s ease-out forwards;
+      }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "recharts": "https://esm.sh/recharts@^3.6.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "qrcode.react": "https://esm.sh/qrcode.react@^4.2.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-partners-gray-bg">
+    <div id="root"></div>
+    <!-- Vite Entry Point -->
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

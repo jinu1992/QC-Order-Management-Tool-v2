@@ -1,0 +1,5 @@
+{
+  "name": "Remix: QuickCommerce PO Management Dashboard",
+  "description": "A centralized dashboard to track and manage Purchase Orders (POs) through various shipment stages, replacing the current Google Sheet-based workflow with a scalable, interactive web application.",
+  "requestFramePermissions": []
+}
