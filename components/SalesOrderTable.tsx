@@ -958,6 +958,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 const invNum = item.invoiceNumber;
                 const hasInvoice = !!invNum && invNum !== 'GENERATING...';
                 
+                const isAmazon = po.channel.toLowerCase().includes('amazon');
                 const isAmazonFbaYeio = (po.channel.toLowerCase().includes('amazon_fba') || po.channel.toLowerCase().includes('amazon fba')) && 
                                         (po.storeCode.toUpperCase() === 'YEIO');
                 const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
@@ -979,10 +980,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
                 else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || trackingStatusLower === 'booked') {
-                    displayStatus = statusHasInvoice ? 'Shipped' : 'Batch Created';
+                    displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
                 }
                 else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
-                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Shipped' : 'Invoiced'; 
+                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced'; 
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
 
