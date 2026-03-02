@@ -48,7 +48,8 @@ const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     const rawStatus = String(po.status || '').trim().toLowerCase();
 
     // 1. Check if all items are explicitly cancelled or whole PO cancelled
-    if (rawStatus === 'cancelled' || (items.length > 0 && activeItems.length === 0)) return POStatus.Cancelled;
+    const allItemsCancelled = items.length > 0 && activeItems.length === 0;
+    if (allItemsCancelled || (items.length === 0 && rawStatus === 'cancelled')) return POStatus.Cancelled;
     
     // 2. Below threshold
     if (rawStatus === 'below threshold') return POStatus.BelowThreshold;
@@ -520,6 +521,16 @@ const PoTable: React.FC<PoTableProps> = ({
     const [cancellingLineItemId, setCancellingLineItemId] = useState<string | null>(null);
     const [isAllocating, setIsAllocating] = useState(false);
 
+    const [skuSearch, setSkuSearch] = useState('');
+    const [debouncedSkuSearch, setDebouncedSkuSearch] = useState('');
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSkuSearch(skuSearch);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [skuSearch]);
+
     const [columnFilters, setColumnFilters] = useState<{ [key: string]: string }>({});
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
     const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -548,6 +559,17 @@ const PoTable: React.FC<PoTableProps> = ({
             if (!val) return;
             orders = orders.filter(po => String((po as any)[key] || '').toLowerCase().includes(val));
         });
+
+        if (activeFilter === 'New POs' && debouncedSkuSearch.trim()) {
+            const search = debouncedSkuSearch.toLowerCase().trim();
+            orders = orders.filter(po => 
+                (po.items || []).some(item => 
+                    (item.masterSku || '').toLowerCase().includes(search) || 
+                    (item.articleCode || '').toLowerCase().includes(search) ||
+                    (item.itemName || '').toLowerCase().includes(search)
+                )
+            );
+        }
         
         orders.sort((a, b) => {
             const dateA = parseDate(a.orderDate);
@@ -555,7 +577,7 @@ const PoTable: React.FC<PoTableProps> = ({
             return dateB - dateA;
         });
         return orders;
-    }, [activeFilter, purchaseOrders, columnFilters]);
+    }, [activeFilter, purchaseOrders, columnFilters, debouncedSkuSearch]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -784,6 +806,18 @@ const PoTable: React.FC<PoTableProps> = ({
                     ))}
                 </div>
                 <div className="flex items-center gap-2">
+                    {activeFilter === 'New POs' && (
+                        <div className="relative">
+                            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <input 
+                                type="text"
+                                placeholder="Filter by SKU..."
+                                className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-partners-green focus:border-transparent outline-none w-48 md:w-64 transition-all"
+                                value={skuSearch}
+                                onChange={(e) => setSkuSearch(e.target.value)}
+                            />
+                        </div>
+                    )}
                     {activeFilter === 'New POs' && (
                         <button 
                             type="button" 
