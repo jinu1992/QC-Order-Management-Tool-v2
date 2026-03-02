@@ -849,7 +849,7 @@ const AmazonBoxDetailsModal: FC<{
                                             
                                             <th className="px-6 py-4">Box Qty</th>
                                             <th className="px-6 py-4">Weight (kg)</th>
-                                            <th className="px-6 py-4">Dimensions (L×B×H) in cms</th>
+                                            <th className="px-6 py-4">Dimensions  (L×B×H) in cms</th>
 
                                         </tr>
                                     </thead>
