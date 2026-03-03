@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -908,6 +908,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [isCreatingInvoice, setIsCreatingInvoice] = useState<string | null>(null);
     const [isPushingNimbus, setIsPushingNimbus] = useState<string | null>(null);
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
+    const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -929,6 +930,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         { id: 'Confirmed', name: 'Confirmed' },
         { id: 'Batch Created', name: 'Batch Created' },
         { id: 'Invoiced', name: 'Invoiced' },
+        { id: 'Awaiting Appointment Confirmation', name: 'Awaiting Appointment' },
+        { id: 'Create ASN', name: 'Create ASN' },
         { id: 'Label Generated', name: 'Label Generated' },
         { id: 'Shipped', name: 'Shipped' },
         { id: 'Delivered', name: 'Delivered' },
@@ -938,7 +941,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
 
     const { salesOrders, salesTabCounts, allSalesOrders } = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
-        const counts: Record<string, number> = { 'All POs': 0, 'Confirmed': 0, 'Batch Created': 0, 'Invoiced': 0, 'Label Generated': 0, 'Shipped': 0, 'Delivered': 0, 'Returned': 0, 'Closed': 0 };
+        const counts: Record<string, number> = { 
+            'All POs': 0, 
+            'Confirmed': 0, 
+            'Batch Created': 0, 
+            'Invoiced': 0, 
+            'Awaiting Appointment Confirmation': 0,
+            'Create ASN': 0,
+            'Label Generated': 0, 
+            'Shipped': 0, 
+            'Delivered': 0, 
+            'Returned': 0, 
+            'Closed': 0 
+        };
 
         purchaseOrders.forEach(po => {
             (po.items || []).forEach(item => {
@@ -986,6 +1001,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced'; 
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
+
+                const isZepto = po.channel.toLowerCase().includes('zepto');
+                if (isZepto) {
+                    if (po.appointmentDate || po.appointmentId) {
+                        displayStatus = 'Create ASN';
+                    } else if (po.appointmentRequestDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
 
                 if (!groups[refCode]) {
                     groups[refCode] = { 
@@ -1038,11 +1062,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                     const curPo = String(po.id || '');
                     if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
                     const statusRank = (s: string) => { 
-                        if (s === 'Returned') return 10;
-                        if (s === 'Closed') return 9;
-                        if (s === 'Delivered') return 8;
-                        if (s === 'Shipped') return 7; 
-                        if (s === 'Label Generated') return 6;
+                        if (s === 'Returned') return 12;
+                        if (s === 'Closed') return 11;
+                        if (s === 'Delivered') return 10;
+                        if (s === 'Shipped') return 9; 
+                        if (s === 'Label Generated') return 8;
+                        if (s === 'Create ASN') return 7;
+                        if (s === 'Awaiting Appointment Confirmation') return 6;
                         if (s === 'Invoiced') return 4; 
                         if (s === 'Batch Created') return 3; 
                         if (s === 'Confirmed') return 2; 
@@ -1099,6 +1125,61 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         filteredResults.sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate));
         return { salesOrders: filteredResults, salesTabCounts: counts, allSalesOrders: results };
     }, [purchaseOrders, activeFilter, columnFilters]);
+
+    const zeptoEligibility = useMemo(() => {
+        const zeptoOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('zepto'));
+        if (zeptoOrders.length === 0) return { eligible: false, reason: 'No Zepto orders' };
+
+        // Only consider orders that haven't had an appointment request yet
+        const activeZeptoOrders = zeptoOrders.filter(so => !so.appointmentRequestDate && !so.appointmentDate && !so.appointmentId);
+        
+        const openZeptoOrders = activeZeptoOrders.filter(so => 
+            ['Confirmed', 'Batch Created'].includes(so.status)
+        );
+
+        const invoicedZeptoOrders = activeZeptoOrders.filter(so => 
+            so.status === 'Invoiced' && !so.awb
+        );
+
+        const hasOpen = openZeptoOrders.length > 0;
+        const allInvoiced = !hasOpen && invoicedZeptoOrders.length > 0;
+        
+        const missingBoxDetails = invoicedZeptoOrders.some(so => (so.boxCount || 0) === 0);
+
+        if (hasOpen) return { eligible: false, reason: 'Waiting for other Zepto orders to be invoiced', hasOpen: true };
+        if (invoicedZeptoOrders.length === 0) return { eligible: false, reason: 'No eligible invoiced Zepto orders' };
+        if (missingBoxDetails) return { eligible: false, reason: 'Box details missing for some orders' };
+
+        return { eligible: true, orders: invoicedZeptoOrders };
+    }, [allSalesOrders]);
+
+    const handleSendZeptoAppointmentRequest = async () => {
+        if (!zeptoEligibility.eligible || isSendingZeptoAppointment) return;
+        
+        setIsSendingZeptoAppointment(true);
+        try {
+            const res = await sendZeptoAppointmentRequestEmail({
+                orders: zeptoEligibility.orders?.map(o => ({
+                    id: o.id,
+                    poReference: o.poReference,
+                    boxCount: o.boxCount
+                }))
+            });
+
+            if (res.status === 'success') {
+                addNotification('Appointment request sent successfully.', 'success');
+                // Refresh data to show updated statuses
+                handleEESync();
+            } else {
+                addNotification(res.message || 'Failed to send appointment request', 'error');
+            }
+        } catch (err) {
+            console.error('Error sending Zepto appointment request:', err);
+            addNotification('Error sending appointment request', 'error');
+        } finally {
+            setIsSendingZeptoAppointment(false);
+        }
+    };
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -1597,6 +1678,7 @@ let html = `
     const getPrimaryAction = (so: GroupedSalesOrder) => {
         const isExecuting = isCreatingInvoice === so.id || isPushingNimbus === so.id;
         const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
+        const isZepto = so.channel.toLowerCase().includes('zepto');
         
         const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
                                 (so.storeCode.toUpperCase() === 'YEIO');
@@ -1605,6 +1687,12 @@ let html = `
 
         if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
         
+        if (isZepto) {
+            if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (so.status === 'Invoiced' && !so.awb) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+        }
+
         if (so.status === 'Invoiced' && !so.awb) {
             if (so.boxCount === 0 && !so.channel.toLowerCase().includes('flipkart')) {
                 return { 
@@ -1736,6 +1824,17 @@ let html = `
                     ))}
                 </div>
                 <div className="flex items-center gap-2">
+                    {zeptoEligibility.eligible && (
+                        <button 
+                            onClick={handleSendZeptoAppointmentRequest}
+                            disabled={isSendingZeptoAppointment}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                            title="All Zepto orders invoiced. Ready to send appointment request."
+                        >
+                            {isSendingZeptoAppointment ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <SendIcon className="h-4 w-4" />}
+                            Send Appointment Request
+                        </button>
+                    )}
                     <button 
                         onClick={handleEESync} 
                         disabled={isSyncingEE || isSyncing} 
@@ -1790,6 +1889,8 @@ let html = `
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
                                 const isZepto = so.channel.toLowerCase().includes('zepto');
+                                const isGreyedOut = isZepto && so.status === 'Invoiced' && zeptoEligibility.hasOpen;
+                                const zeptoTooltip = isGreyedOut ? "Waiting for other Zepto orders to be invoiced" : undefined;
                                 
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
@@ -1815,10 +1916,30 @@ let html = `
 
                                 return (
                                     <Fragment key={so.id}>
-                                        <tr className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'}`} onClick={() => setExpandedRowId(isExpanded ? null : so.id)}>
+                                        <tr 
+                                            className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'} ${isGreyedOut ? 'opacity-50 grayscale-[0.5]' : ''}`} 
+                                            onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
+                                            title={zeptoTooltip}
+                                        >
                                             <td className="p-4 text-center sticky left-0 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]"><div className="text-gray-400 hover:text-partners-green">{isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}</div></td>
                                             <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">{so.id}</td>
-                                            <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${so.status === 'Returned' ? 'bg-red-100 text-red-700' : so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' : so.status === 'Invoiced' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>{so.status}</span></td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                    so.status === 'Returned' ? 'bg-red-100 text-red-700' : 
+                                                    so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : 
+                                                    so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : 
+                                                    so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : 
+                                                    so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' : 
+                                                    so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' : 
+                                                    so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
+                                                    so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
+                                                    so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
+                                                    so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                                    'bg-gray-100 text-gray-700'
+                                                }`}>
+                                                    {so.status}
+                                                </span>
+                                            </td>
                                             <td className="px-6 py-4 font-medium text-gray-800">{so.channel}</td>
                                             <td className="px-6 py-4">{so.storeCode}</td>
                                             <td className="px-6 py-4 font-medium text-gray-900">{so.qty} / ₹{totalAmountIncTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>

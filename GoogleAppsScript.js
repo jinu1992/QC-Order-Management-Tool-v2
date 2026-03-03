@@ -87,6 +87,9 @@ function doPost(e) {
     else if (action === 'saveSystemConfig') result = { status: 'success', message: 'System config saved' };
     else if (action === 'updatePrice') result = { status: 'success', message: 'Price updated' };
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
+    else if (action === 'sendZeptoAppointmentRequestEmail') result = { status: 'success', message: 'Zepto Appointment request sent successfully.', requestId: 'REQ-' + Date.now() };
+    else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
+    else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
     else if (action === 'createItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'createInventoryItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'loginGoogle') result = { status: 'success', message: 'Login successful', user: { name: 'Admin User', email: 'admin@example.com', role: 'Admin' } };

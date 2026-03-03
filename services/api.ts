@@ -375,6 +375,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 zohoContactId: row['Zoho Contact ID'] ? String(row['Zoho Contact ID']) : undefined,
                 items: [item],
                 appointmentDate: formatSheetDate(row['Appointment Date']),
+                appointmentRequestDate: formatSheetDate(row['Appointment Request Date']),
                 appointmentTime: row['Appointment Time'] ? String(row['Appointment Time']) : undefined,
                 appointmentId: row['Appointment ID'] ? String(row['Appointment ID']) : undefined,
                 qrCodeUrl: row['QR Code URL'] ? String(row['QR Code URL']) : undefined,
@@ -428,6 +429,18 @@ export const updatePOStatus = async (poNumber: string, status: string) => {
 
 export const cancelPOLineItem = async (poNumber: string, articleCode: string) => {
     return await postToScript({ action: 'cancelLineItem', poNumber, articleCode });
+};
+
+export const sendZeptoAppointmentRequestEmail = async (params: any) => {
+    return await postToScript({ action: 'sendZeptoAppointmentRequestEmail', ...params });
+};
+
+export const updateZeptoOrderStatus = async (poNumber: string, status: string) => {
+    return await postToScript({ action: 'updateZeptoOrderStatus', poNumber, status });
+};
+
+export const updateZeptoAppointmentDetails = async (params: any) => {
+    return await postToScript({ action: 'updateZeptoAppointmentDetails', ...params });
 };
 
 export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{status: string, message?: string, data?: any}> => {
