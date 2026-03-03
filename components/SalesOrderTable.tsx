@@ -936,7 +936,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         { id: 'Closed', name: 'Closed' },
     ];
 
-    const { salesOrders, salesTabCounts } = useMemo(() => {
+    const { salesOrders, salesTabCounts, allSalesOrders } = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
         const counts: Record<string, number> = { 'All POs': 0, 'Confirmed': 0, 'Batch Created': 0, 'Invoiced': 0, 'Label Generated': 0, 'Shipped': 0, 'Delivered': 0, 'Returned': 0, 'Closed': 0 };
 
@@ -1097,7 +1097,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             filteredResults = filteredResults.filter(so => String((so as any)[key] || '').toLowerCase().includes(val));
         });
         filteredResults.sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate));
-        return { salesOrders: filteredResults, salesTabCounts: counts };
+        return { salesOrders: filteredResults, salesTabCounts: counts, allSalesOrders: results };
     }, [purchaseOrders, activeFilter, columnFilters]);
 
     useEffect(() => {
@@ -1262,6 +1262,72 @@ let html = `
 
         printWindow.document.write(html);
         printWindow.document.close();
+    };
+
+    const handleExportInTransitCSV = () => {
+        const inTransitOrders = allSalesOrders.filter(so => {
+            const isAmazon = so.channel.toLowerCase().includes('amazon');
+            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
+            
+            // In Transit logic: 
+            // 1. Status is "Shipped"
+            // 2. Status is "Delivered" (for Amazon) but not actually delivered yet
+            if (so.status === 'Shipped') return true;
+            if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
+            return false;
+        });
+
+        if (inTransitOrders.length === 0) {
+            addNotification('No in-transit orders found to export.', 'warning');
+            return;
+        }
+
+        const headers = [
+            'Booked Date',
+            'PO Number',
+            'Channel',
+            'Store Code',
+            'AWB',
+            'Tracking Status',
+            'Latest Status',
+            'Current Location',
+            'EDD',
+            'Appointment Date & Time',
+            'Appointment ID',
+            'PO PDF',
+            'Invoice Url'
+        ];
+
+        const rows = inTransitOrders.map(so => {
+            const appointmentDateTime = so.appointmentDate ? `${so.appointmentDate} ${so.appointmentTime || ''}`.trim() : 'N/A';
+            return [
+                so.manifestDate || so.batchCreatedAt || 'N/A',
+                so.poReference,
+                so.channel,
+                so.storeCode,
+                so.awb || 'N/A',
+                so.trackingStatus || 'N/A',
+                so.latestStatus || 'N/A',
+                so.currentLocation || 'N/A',
+                so.edd || 'N/A',
+                appointmentDateTime,
+                so.appointmentId || 'N/A',
+                so.poPdfUrl || 'N/A',
+                so.invoicePdfUrl || 'N/A'
+            ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
+        });
+
+        const csvContent = [headers.join(','), ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `In_Transit_Orders_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
     const handleEESync = async () => {
@@ -1681,6 +1747,12 @@ let html = `
                     <button onClick={onSync} disabled={isSyncing || isSyncingEE} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50">
                         <CloudDownloadIcon className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} /> Refresh Data
                     </button>
+                    <button 
+                        onClick={handleExportInTransitCSV} 
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-lg shadow-sm hover:bg-emerald-700 transition-all active:scale-95"
+                    >
+                        <ClipboardListIcon className="h-4 w-4" /> Export In-Transit CSV
+                    </button>
                 </div>
             </div>
 
@@ -1731,7 +1803,15 @@ let html = `
                                 const showBlinkitAppointmentBtn = isBlinkit && hasLabel && (so.status !== 'Delivered');
                                 const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && (so.status !== 'Delivered');
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
-                                const showAmazonBoxDetails = isAmazon && (so.status === 'Invoiced' || so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered');
+                                const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
+                                const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
+                                                        (so.storeCode.toUpperCase() === 'YEIO');
+                                const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
+
+                                const showAmazonBoxDetails = isAmazon && (
+                                    (so.status === 'Invoiced' || so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered') ||
+                                    (eeStatusLower === 'confirmed' && canInvoice)
+                                );
 
                                 return (
                                     <Fragment key={so.id}>
@@ -1987,7 +2067,7 @@ let html = `
                                                                 <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
                                                                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Exp Delivery Date</p><p className="text-sm font-bold text-partners-green">{so.edd || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
                                                                 <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
-                                                            </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{!so.invoiceNumber ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">Invoice Ready for Shipment</p><p className="text-xs text-blue-300 mt-1">Generate AWB by clicking the 'Ship with Nimbus' button above.</p></>}</div>}
+                                                            </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Nimbus' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>
                                                             {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
                                                                 <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
