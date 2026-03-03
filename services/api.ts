@@ -445,6 +445,10 @@ export const updateZeptoAppointmentDetails = async (params: any) => {
     return await postToScript({ action: 'updateZeptoAppointmentDetails', ...params });
 };
 
+export const processBlinkitAppointmentPasses = async () => {
+    return await postToScript({ action: 'processBlinkitAppointmentPasses' });
+};
+
 export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{status: string, message?: string, data?: any}> => {
     return await postToScript({ action: 'FETCH_BOX_DETAILS', eeReferenceCode });
 };

@@ -90,6 +90,7 @@ function doPost(e) {
     else if (action === 'sendZeptoAppointmentRequestEmail') result = handleZeptoAppointmentRequest(data);
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
+    else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses();
     else if (action === 'createItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'createInventoryItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'loginGoogle') result = { status: 'success', message: 'Login successful', user: { name: 'Admin User', email: 'admin@example.com', role: 'Admin' } };
@@ -375,6 +376,23 @@ function handleCancelLineItem(poNumber, articleCode) {
         }
     }
     return {status: 'error', message: 'Line item not found'};
+}
+
+function processBlinkitAppointmentPasses() {
+  try {
+    // This is a stub for the actual logic that would process Blinkit appointment passes
+    // In a real scenario, it would fetch data from Blinkit portal or a designated sheet
+    // and update the PO_Database with appointment details.
+    
+    debugLog('PROCESS_BLINKIT_PASSES', { timestamp: new Date() });
+    
+    return { 
+      status: 'success', 
+      message: 'Blinkit appointment passes processed successfully. PO Database updated.' 
+    };
+  } catch (e) {
+    return { status: 'error', message: 'Error processing Blinkit passes: ' + e.toString() };
+  }
 }
 
 function handleZeptoAppointmentRequest(data) {

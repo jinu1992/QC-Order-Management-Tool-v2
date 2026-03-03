@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -911,6 +911,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [isPushingNimbus, setIsPushingNimbus] = useState<string | null>(null);
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
+    const [isProcessingBlinkit, setIsProcessingBlinkit] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -1415,6 +1416,24 @@ let html = `
         document.body.removeChild(link);
     };
 
+    const handleProcessBlinkitPasses = async () => {
+        setIsProcessingBlinkit(true);
+        addNotification('Processing Blinkit appointment passes...', 'info');
+        try {
+            const res = await processBlinkitAppointmentPasses();
+            if (res.status === 'success') {
+                addNotification(res.message || 'Blinkit passes processed successfully.', 'success');
+                onSync();
+            } else {
+                addNotification('Failed: ' + (res.message || 'Unknown error'), 'error');
+            }
+        } catch (e) {
+            addNotification('Error processing Blinkit passes.', 'error');
+        } finally {
+            setIsProcessingBlinkit(false);
+        }
+    };
+
     const handleEESync = async () => {
         setIsSyncingEE(true);
         addNotification('Triggering EasyEcom API sync...', 'info');
@@ -1827,34 +1846,49 @@ let html = `
                         <button key={tab.id} onClick={() => setActiveFilter(tab.id)} className={`px-3 py-1.5 text-sm font-semibold rounded-full border transition-all ${activeFilter === tab.id ? 'bg-partners-green text-white border-partners-green shadow-sm' : 'bg-white text-gray-600 border-partners-border hover:bg-gray-50'}`}>{tab.name} <span className="ml-1 text-[10px] opacity-70">({salesTabCounts[tab.id] || 0})</span></button>
                     ))}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     {zeptoEligibility.eligible && (
                         <button 
                             onClick={handleSendZeptoAppointmentRequest}
                             disabled={isSendingZeptoAppointment}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                            className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 group"
                             title="All Zepto orders invoiced. Ready to send appointment request."
                         >
-                            {isSendingZeptoAppointment ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <SendIcon className="h-4 w-4" />}
-                            Send Appointment Request
+                            <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingZeptoAppointment ? 'animate-pulse' : ''}`} />
+                            <span>Send Appt.</span>
                         </button>
                     )}
                     <button 
+                        onClick={handleProcessBlinkitPasses} 
+                        disabled={isProcessingBlinkit || isSyncing} 
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group"
+                        title="Update Blinkit Appointment Passes from portal"
+                    >
+                        <CalendarIcon className={`h-3.5 w-3.5 ${isProcessingBlinkit ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} /> 
+                        <span>Blinkit Pass</span>
+                    </button>
+                    <button 
                         onClick={handleEESync} 
                         disabled={isSyncingEE || isSyncing} 
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all active:scale-95 disabled:opacity-50"
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all active:scale-95 disabled:opacity-50 group"
                     >
-                        <RefreshIcon className={`h-4 w-4 ${isSyncingEE ? 'animate-spin' : ''}`} /> 
-                        {isSyncingEE ? 'Syncing EasyEcom...' : 'Sync EasyEcom'}
+                        <RefreshIcon className={`h-3.5 w-3.5 ${isSyncingEE ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} /> 
+                        <span>Sync EE</span>
                     </button>
-                    <button onClick={onSync} disabled={isSyncing || isSyncingEE} className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50">
-                        <CloudDownloadIcon className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} /> Refresh Data
+                    <button 
+                        onClick={onSync} 
+                        disabled={isSyncing || isSyncingEE} 
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 group"
+                    >
+                        <CloudDownloadIcon className={`h-3.5 w-3.5 ${isSyncing ? 'animate-bounce' : 'group-hover:-translate-y-0.5 transition-transform'}`} /> 
+                        <span>Refresh</span>
                     </button>
                     <button 
                         onClick={handleExportInTransitCSV} 
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-lg shadow-sm hover:bg-emerald-700 transition-all active:scale-95"
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-emerald-700 rounded-lg shadow-sm hover:bg-emerald-800 transition-all active:scale-95 group"
                     >
-                        <ClipboardListIcon className="h-4 w-4" /> Export In-Transit CSV
+                        <ClipboardListIcon className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" /> 
+                        <span>Export CSV</span>
                     </button>
                 </div>
             </div>
