@@ -87,7 +87,7 @@ function doPost(e) {
     else if (action === 'saveSystemConfig') result = { status: 'success', message: 'System config saved' };
     else if (action === 'updatePrice') result = { status: 'success', message: 'Price updated' };
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
-    else if (action === 'sendZeptoAppointmentRequestEmail') result = { status: 'success', message: 'Zepto Appointment request sent successfully.', requestId: 'REQ-' + Date.now() };
+    else if (action === 'sendZeptoAppointmentRequestEmail') result = handleZeptoAppointmentRequest(data);
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
     else if (action === 'createItem') result = { status: 'success', message: 'Item created' };
@@ -375,6 +375,47 @@ function handleCancelLineItem(poNumber, articleCode) {
         }
     }
     return {status: 'error', message: 'Line item not found'};
+}
+
+function handleZeptoAppointmentRequest(data) {
+  const { orders } = data;
+  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'No orders provided' };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_PO_DB);
+    const sheetData = sheet.getDataRange().getValues();
+    const headers = sheetData[0];
+    const poCol = headers.indexOf('PO Number');
+    const requestIdCol = headers.indexOf('Appointment Request ID');
+    const requestTimestampCol = headers.indexOf('Appointment Request Timestamp');
+
+    if (requestIdCol === -1 || requestTimestampCol === -1) {
+        return { status: 'error', message: 'Appointment Request columns not found in sheet. Please add "Appointment Request ID" and "Appointment Request Timestamp" columns.' };
+    }
+
+    const requestId = 'REQ-' + Date.now();
+    const timestamp = new Date().toLocaleString();
+
+    let updatedCount = 0;
+    orders.forEach(order => {
+      for (let i = 1; i < sheetData.length; i++) {
+        if (String(sheetData[i][poCol]) === order.poReference) {
+          sheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
+          sheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
+          updatedCount++;
+        }
+      }
+    });
+
+    return { 
+      status: 'success', 
+      message: `Zepto Appointment request sent for ${updatedCount} orders.`, 
+      requestId 
+    };
+  } catch (e) {
+    return { status: 'error', message: 'Error updating appointment request: ' + e.toString() };
+  }
 }
 
 function getBoxSummaryByEEReference(eeReferenceCode) {

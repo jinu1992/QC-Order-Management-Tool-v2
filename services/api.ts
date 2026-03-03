@@ -376,6 +376,8 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 items: [item],
                 appointmentDate: formatSheetDate(row['Appointment Date']),
                 appointmentRequestDate: formatSheetDate(row['Appointment Request Date']),
+                appointmentRequestId: row['Appointment Request ID'] ? String(row['Appointment Request ID']) : undefined,
+                appointmentRequestTimestamp: row['Appointment Request Timestamp'] ? String(row['Appointment Request Timestamp']) : undefined,
                 appointmentTime: row['Appointment Time'] ? String(row['Appointment Time']) : undefined,
                 appointmentId: row['Appointment ID'] ? String(row['Appointment ID']) : undefined,
                 qrCodeUrl: row['QR Code URL'] ? String(row['QR Code URL']) : undefined,

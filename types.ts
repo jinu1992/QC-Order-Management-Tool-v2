@@ -100,6 +100,8 @@ export interface PurchaseOrder {
     contactVerified: boolean;
     pocEmail?: string;
     appointmentRequestDate?: string;
+    appointmentRequestId?: string;
+    appointmentRequestTimestamp?: string;
     appointmentTime?: string;
     appointmentId?: string;
     qrCodeUrl?: string;

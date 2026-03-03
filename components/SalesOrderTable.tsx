@@ -84,6 +84,8 @@ interface GroupedSalesOrder {
     boxCount: number;
     appointmentDate?: string;
     appointmentRequestDate?: string;
+    appointmentRequestId?: string;
+    appointmentRequestTimestamp?: string;
     appointmentId?: string;
     appointmentTime?: string;
     appointmentRemarks?: string;
@@ -1006,7 +1008,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 if (isZepto) {
                     if (po.appointmentDate || po.appointmentId) {
                         displayStatus = 'Create ASN';
-                    } else if (po.appointmentRequestDate) {
+                    } else if (po.appointmentRequestId || po.appointmentRequestDate) {
                         displayStatus = 'Awaiting Appointment Confirmation';
                     }
                 }
@@ -1048,6 +1050,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                         boxCount: eeBoxCount,
                         appointmentDate: po.appointmentDate,
                         appointmentRequestDate: po.appointmentRequestDate,
+                        appointmentRequestId: po.appointmentRequestId,
+                        appointmentRequestTimestamp: po.appointmentRequestTimestamp,
                         appointmentId: po.appointmentId,
                         appointmentTime: po.appointmentTime,
                         appointmentRemarks: po.appointmentRemarks,
@@ -1131,7 +1135,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         if (zeptoOrders.length === 0) return { eligible: false, reason: 'No Zepto orders' };
 
         // Only consider orders that haven't had an appointment request yet
-        const activeZeptoOrders = zeptoOrders.filter(so => !so.appointmentRequestDate && !so.appointmentDate && !so.appointmentId);
+        const activeZeptoOrders = zeptoOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
         
         const openZeptoOrders = activeZeptoOrders.filter(so => 
             ['Confirmed', 'Batch Created'].includes(so.status)
@@ -1169,7 +1173,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             if (res.status === 'success') {
                 addNotification('Appointment request sent successfully.', 'success');
                 // Refresh data to show updated statuses
-                handleEESync();
+                onSync();
             } else {
                 addNotification(res.message || 'Failed to send appointment request', 'error');
             }
@@ -2067,7 +2071,18 @@ let html = `
                                                             </div>
                                                             <div>
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><TruckIcon className="h-4 w-4 text-partners-green" /> Logistics Timeline</h4>
-                                                                <div className="flex px-4 pt-2"><TimelineStep label="Batch Created" date={so.batchCreatedAt} icon={<CubeIcon className="h-4 w-4" />} /><TimelineStep label="Invoiced" date={so.invoiceDate} icon={<InvoiceIcon className="h-4 w-4" />} /><TimelineStep label="Shipped" date={so.manifestDate} icon={<CheckCircleIcon className="h-4 w-4" />} isLast /></div>
+                                                                <div className="flex px-4 pt-2">
+                                                                    <TimelineStep label="Batch Created" date={so.batchCreatedAt} icon={<CubeIcon className="h-4 w-4" />} />
+                                                                    <TimelineStep label="Invoiced" date={so.invoiceDate} icon={<InvoiceIcon className="h-4 w-4" />} />
+                                                                    {isZepto && <TimelineStep label="Appt. Requested" date={so.appointmentRequestTimestamp || so.appointmentRequestDate} icon={<SendIcon className="h-4 w-4" />} />}
+                                                                    <TimelineStep label="Shipped" date={so.manifestDate} icon={<CheckCircleIcon className="h-4 w-4" />} isLast />
+                                                                </div>
+                                                                {so.appointmentRequestId && (
+                                                                    <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                                                                        <p className="text-[10px] uppercase font-bold text-blue-400">Appointment Request ID</p>
+                                                                        <p className="text-xs font-bold text-blue-700">{so.appointmentRequestId}</p>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <div className="pt-6 border-t border-gray-100">
