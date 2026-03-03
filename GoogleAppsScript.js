@@ -78,7 +78,7 @@ function doPost(e) {
     else if (action === 'createZohoInvoice') result = { status: 'success', message: 'Zoho Invoice creation triggered for ' + data.eeReferenceCode };
     else if (action === 'pushToNimbus') result = { status: 'success', message: 'Pushed to Nimbus Post', awb: 'NIM' + Math.floor(Math.random()*1000000) };
     else if (action === 'updateFBAShipmentId') result = { status: 'success', message: 'FBA Shipment ID updated' };
-    else if (action === 'fetchEasyEcomShipments') result = { status: 'success', message: 'EasyEcom shipments sync triggered' };
+    else if (action === 'syncEasyEcomShipments') result = { status: 'success', message: 'EasyEcom shipments sync triggered' };
     else if (action === 'syncInventory') result = { status: 'success', message: 'Inventory sync triggered' };
     else if (action === 'syncZohoContacts') result = { status: 'success', message: 'Zoho contacts sync triggered' };
     else if (action === 'syncZohoContactToEasyEcom') result = { status: 'success', message: 'Zoho contact sync to EasyEcom triggered' };

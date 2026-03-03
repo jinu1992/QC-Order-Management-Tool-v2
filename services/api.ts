@@ -45,6 +45,10 @@ const postToScript = async (payload: any) => {
         const status = result.status || 'success';
         const message = result.message || result.error || result.msg || result.details || (status === 'success' ? 'Operation completed.' : 'Operation failed.');
 
+        if (Array.isArray(result)) {
+            return { status, message, data: result };
+        }
+
         return {
             ...result,
             status,
@@ -418,7 +422,7 @@ export const syncSinglePO = async (poNumber: string) => {
 };
 
 export const syncEasyEcomShipments = async () => {
-    return await postToScript({ action: 'fetchEasyEcomShipments' });
+    return await postToScript({ action: 'syncEasyEcomShipments' });
 };
 
 export const requestZohoSync = async (contactId: string) => {

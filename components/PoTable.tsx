@@ -592,13 +592,17 @@ const PoTable: React.FC<PoTableProps> = ({
     const refreshSinglePOState = async (poNumber: string) => {
         setRefreshingPoId(poNumber);
         try {
-            await syncSinglePO(poNumber);
+            const res = await syncSinglePO(poNumber);
             const updatedPO = await fetchPurchaseOrder(poNumber);
             if (updatedPO) {
                 setPurchaseOrders(prev => prev.map(p => p.poNumber === poNumber ? updatedPO : p));
+                addNotification(res.message || `Refreshed ${poNumber} successfully`, 'success');
+            } else {
+                addNotification(`Could not find ${poNumber} in database`, 'error');
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error("Failed to fetch updated single PO", e);
+            addNotification(e.message || 'Network error', 'error');
         } finally {
             setRefreshingPoId(null);
         }
@@ -705,7 +709,7 @@ const PoTable: React.FC<PoTableProps> = ({
             if (res.status === 'success') {
                 addNotification(res.message || 'Zoho contacts sync initiated.', 'success');
                 refreshSinglePOState(po.poNumber);
-            } else { addNotification(`Error: ${res.message}`, 'error'); }
+            } else { addNotification(`Error: ${res.message || 'Unknown error'}`, 'error'); }
         } catch (e) { addNotification('Sync Exception.', 'error'); }
         finally { setSyncingZohoId(null); }
     };
@@ -718,7 +722,7 @@ const PoTable: React.FC<PoTableProps> = ({
             if (res.status === 'success') {
                 addNotification(res.message || 'Customer mapped to EasyEcom successfully.', 'success');
                 refreshSinglePOState(po.poNumber);
-            } else { addNotification(`Error: ${res.message}`, 'error'); }
+            } else { addNotification(`Error: ${res.message || 'Unknown error'}`, 'error'); }
         } catch (e) { addNotification('EE Sync Exception.', 'error'); }
         finally { setSyncingEEId(null); }
     };

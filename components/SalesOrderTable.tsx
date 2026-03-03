@@ -78,6 +78,7 @@ interface GroupedSalesOrder {
     latestStatus?: string;
     latestStatusDate?: string;
     currentLocation?: string;
+    trackingUrl?: string;
     deliveredDate?: string;
     rtoStatus?: string;
     rtoAwb?: string;
@@ -737,12 +738,18 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
 const AmazonBoxDetailsModal: FC<{ 
     so: GroupedSalesOrder, 
     onClose: () => void, 
-    addNotification: any 
-}> = ({ so, onClose, addNotification }) => {
-    const [boxDetails, setBoxDetails] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    addNotification: any,
+    data?: any[]
+}> = ({ so, onClose, addNotification, data = [] }) => {
+    const [boxDetails, setBoxDetails] = useState<any[]>(data);
+    const [isLoading, setIsLoading] = useState(data.length === 0);
 
     useEffect(() => {
+        if (data && data.length > 0) {
+            setBoxDetails(data);
+            setIsLoading(false);
+            return;
+        }
         const load = async () => {
             try {
                 const res = await fetchBoxDetails(so.id);
@@ -760,7 +767,7 @@ const AmazonBoxDetailsModal: FC<{
             }
         };
         load();
-    }, [so.id, addNotification]);
+    }, [so.id, addNotification, data]);
 
     const groupedBoxes = useMemo(() => {
         const groups: Record<string, { weight: string, dimensions: string, count: number, items: string }> = {};
@@ -918,8 +925,33 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [shippingConfirm, setShippingConfirm] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [fbaShipmentModal, setFbaShipmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [flipkartConsignmentModal, setFlipkartConsignmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
-    const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
+    const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
+    
+    const handleFetchBoxDetails = async (so: GroupedSalesOrder) => {
+        setIsFetchingBoxDetails(so.id);
+        const payload = { action: 'FETCH_BOX_DETAILS', eeReferenceCode: so.id };
+        console.log("FETCH_BOX_DETAILS request:", payload);
+        try {
+            const res = await fetchBoxDetails(so.id);
+            console.log("FETCH_BOX_DETAILS response:", res);
+            
+            // Requirement 2 & 3: Success/Error Handling
+            if (res && res.status === 'error') {
+                addNotification(res.message || "Failed to fetch box details", "error");
+            } else {
+                // Success: either status is success or it's a raw array (handled by postToScript fix)
+                const data = (res && res.status === 'success') ? res.data : res;
+                setAmazonBoxModal({ isOpen: true, so, data });
+            }
+        } catch (err) {
+            console.error("Error fetching box details:", err);
+            addNotification("Error fetching box details", "error");
+        } finally {
+            setIsFetchingBoxDetails(null);
+        }
+    };
     
     const [columnFilters, setColumnFilters] = useState<{ [key: string]: string }>({});
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
@@ -1172,7 +1204,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             });
 
             if (res.status === 'success') {
-                addNotification('Appointment request sent successfully.', 'success');
+                addNotification(res.message || 'Appointment request sent successfully.', 'success');
                 // Refresh data to show updated statuses
                 onSync();
             } else {
@@ -1207,7 +1239,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             try {
                 // Trigger sync (POST) - we don't block on failure here to match PoTable behavior
                 try {
-                    await syncSinglePO(id);
+                    const syncRes = await syncSinglePO(id);
+                    if (syncRes && syncRes.message) {
+                        lastMessage = syncRes.message;
+                    }
                 } catch (syncErr) {
                     console.warn("Sync failed for", id, syncErr);
                 }
@@ -1217,7 +1252,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 if (updated) {
                     setPurchaseOrders(prev => prev.map(p => p.poNumber === id ? updated : p));
                     successCount++;
-                    lastMessage = `Refreshed ${id}`;
+                    if (!lastMessage) lastMessage = `Refreshed ${id}`;
                 } else {
                     failCount++;
                     lastMessage = `Could not find ${id} in database`;
@@ -1805,6 +1840,7 @@ let html = `
                     so={amazonBoxModal.so}
                     onClose={() => setAmazonBoxModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
+                    data={amazonBoxModal.data}
                 />
             )}
             {shippingConfirm.isOpen && shippingConfirm.so && (
@@ -2043,10 +2079,12 @@ let html = `
                                                     )}
                                                     {showAmazonBoxDetails && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); setAmazonBoxModal({ isOpen: true, so }); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1.5"
+                                                            onClick={(e) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
+                                                            disabled={isFetchingBoxDetails === so.id}
+                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                                                         >
-                                                            <CubeIcon className="h-3.5 w-3.5" /> Box Details
+                                                            {isFetchingBoxDetails === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CubeIcon className="h-3.5 w-3.5" />}
+                                                            {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
                                                         </button>
                                                     )}
                                                     <button onClick={(e) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
@@ -2059,7 +2097,7 @@ let html = `
                                             <tr className="bg-gray-50">
                                                 <td colSpan={8} className="px-4 py-8 sm:px-12">
                                                     <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-8">
-                                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                                                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
                                                             <div>
                                                                 <div className="flex justify-between items-center mb-4">
                                                                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><CalendarIcon className="h-4 w-4 text-blue-500" /> Fulfillment Ref</h4>
@@ -2103,14 +2141,40 @@ let html = `
                                                                     )}
                                                                 </div>
                                                             </div>
-                                                            <div>
+                                                            <div className="lg:col-span-2">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><TruckIcon className="h-4 w-4 text-partners-green" /> Logistics Timeline</h4>
-                                                                <div className="flex px-4 pt-2">
+                                                                <div className="flex px-4 pt-2 overflow-x-auto pb-4 gap-2">
                                                                     <TimelineStep label="Batch Created" date={so.batchCreatedAt} icon={<CubeIcon className="h-4 w-4" />} />
                                                                     <TimelineStep label="Invoiced" date={so.invoiceDate} icon={<InvoiceIcon className="h-4 w-4" />} />
                                                                     {isZepto && <TimelineStep label="Appt. Requested" date={so.appointmentRequestTimestamp || so.appointmentRequestDate} icon={<SendIcon className="h-4 w-4" />} />}
-                                                                    <TimelineStep label="Shipped" date={so.manifestDate} icon={<CheckCircleIcon className="h-4 w-4" />} isLast />
+                                                                    <TimelineStep label="Shipped" date={so.manifestDate} icon={<CheckCircleIcon className="h-4 w-4" />} />
+                                                                    <TimelineStep label="Out for Delivery" date={so.latestStatus === 'Out for Delivery' ? so.latestStatusDate : undefined} icon={<TruckIcon className="h-4 w-4" />} />
+                                                                    <TimelineStep label="Delivered" date={so.deliveredDate || (so.status === 'Delivered' ? so.latestStatusDate : undefined)} icon={<CheckCircleIcon className="h-4 w-4" />} isLast />
                                                                 </div>
+                                                                {so.awb && (
+                                                                    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl shadow-sm">
+                                                                        <div>
+                                                                            <p className="text-[10px] uppercase font-bold text-emerald-400">Latest Status</p>
+                                                                            <p className="text-xs font-bold text-emerald-700">{so.latestStatus || 'In Transit'}</p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-[10px] uppercase font-bold text-emerald-400">Status Date</p>
+                                                                            <p className="text-xs font-bold text-emerald-700">{so.latestStatusDate || 'N/A'}</p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-[10px] uppercase font-bold text-emerald-400">Current Location</p>
+                                                                            <p className="text-xs font-bold text-emerald-700">{so.currentLocation || 'N/A'}</p>
+                                                                        </div>
+                                                                        <div>
+                                                                            <p className="text-[10px] uppercase font-bold text-emerald-400">Tracking URL</p>
+                                                                            {so.trackingUrl ? (
+                                                                                <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-1 text-xs font-bold">
+                                                                                    Track Shipment <ExternalLinkIcon className="h-3 w-3" />
+                                                                                </a>
+                                                                            ) : <p className="text-xs text-emerald-300 font-bold italic">N/A</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                                 {so.appointmentRequestId && (
                                                                     <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                                                                         <p className="text-[10px] uppercase font-bold text-blue-400">Appointment Request ID</p>
