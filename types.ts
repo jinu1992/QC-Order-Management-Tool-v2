@@ -69,6 +69,11 @@ export interface POItem {
     rtoAwb?: string;
     freightCharged?: number;
     zohoItemId?: string;
+    appointmentRequestId?: string;
+    appointmentRequestDate?: string;
+    appointmentRequestTimestamp?: string;
+    appointmentDate?: string;
+    appointmentId?: string;
 }
 
 export interface PurchaseOrder {

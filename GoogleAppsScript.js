@@ -90,6 +90,7 @@ function doPost(e) {
     else if (action === 'sendZeptoAppointmentRequestEmail') result = handleZeptoAppointmentRequest(data);
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
+    else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses();
     else if (action === 'createItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'createInventoryItem') result = { status: 'success', message: 'Item created' };
@@ -405,11 +406,12 @@ function handleZeptoAppointmentRequest(data) {
     const sheetData = sheet.getDataRange().getValues();
     const headers = sheetData[0];
     const poCol = headers.indexOf('PO Number');
+    const refCol = headers.indexOf('EE_reference_code');
     const requestIdCol = headers.indexOf('Appointment Request ID');
     const requestTimestampCol = headers.indexOf('Appointment Request Timestamp');
 
-    if (requestIdCol === -1 || requestTimestampCol === -1) {
-        return { status: 'error', message: 'Appointment Request columns not found in sheet. Please add "Appointment Request ID" and "Appointment Request Timestamp" columns.' };
+    if (requestIdCol === -1 || requestTimestampCol === -1 || refCol === -1) {
+        return { status: 'error', message: 'Required columns (EE_reference_code, Appointment Request ID/Timestamp) not found in sheet.' };
     }
 
     const requestId = 'REQ-' + Date.now();
@@ -418,7 +420,8 @@ function handleZeptoAppointmentRequest(data) {
     let updatedCount = 0;
     orders.forEach(order => {
       for (let i = 1; i < sheetData.length; i++) {
-        if (String(sheetData[i][poCol]) === order.poReference) {
+        // Match by Sales Order ID (EE Reference Code)
+        if (String(sheetData[i][refCol]) === order.id) {
           sheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
           sheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
           updatedCount++;
@@ -445,4 +448,47 @@ function getBoxSummaryByEEReference(eeReferenceCode) {
       { "Box ID": "AMZ-BOX-002", "Weight": "2.1 kg", "Dimensions": "30x20x15 cm", "Items": "SKU-C (12)" }
     ]
   };
+}
+
+function updateZeptoASN(data) {
+  const { eeReferenceCode, asnNumber } = data;
+  if (!eeReferenceCode || !asnNumber) {
+    return { status: 'error', message: 'Missing required fields' };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  const eeRefIdx = headers.indexOf("EE_reference_code");
+  const statusIdx = headers.indexOf("Status");
+  let asnIdx = headers.indexOf("ASN Number");
+
+  if (eeRefIdx === -1 || statusIdx === -1) {
+    return { status: 'error', message: 'Required columns (EE_reference_code, Status) not found in PO_Database' };
+  }
+
+  // Add ASN Number column if missing
+  if (asnIdx === -1) {
+    asnIdx = headers.length;
+    sheet.getRange(1, asnIdx + 1).setValue("ASN Number");
+  }
+
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
+      sheet.getRange(i + 1, statusIdx + 1).setValue("Ready to Ship");
+      if (asnIdx !== -1) {
+        sheet.getRange(i + 1, asnIdx + 1).setValue(asnNumber);
+      }
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    return { status: 'success', message: 'ASN updated and status moved to Ready to Ship' };
+  } else {
+    return { status: 'error', message: 'Order not found' };
+  }
 }

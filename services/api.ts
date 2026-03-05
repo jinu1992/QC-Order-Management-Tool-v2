@@ -355,6 +355,11 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             rtoAwb: row['RTO AWB'] ? String(row['RTO AWB']) : undefined,
             freightCharged: Number(row['Freight Charged'] || 0),
             zohoItemId: row['Zoho Item ID'] ? String(row['Zoho Item ID']) : undefined,
+            appointmentRequestId: row['Appointment Request ID'] ? String(row['Appointment Request ID']) : undefined,
+            appointmentRequestDate: formatSheetDate(row['Appointment Request Date']),
+            appointmentRequestTimestamp: formatSheetDate(row['Appointment Request Timestamp']),
+            appointmentDate: formatSheetDate(row['Appointment Date']),
+            appointmentId: row['Appointment ID'] ? String(row['Appointment ID']) : undefined,
         };
 
         if (poMap.has(poNumber)) {
@@ -365,6 +370,17 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             // Update metadata if item row has newer information
             if (!po.poPdfUrl && row['PO PDF']) po.poPdfUrl = String(row['PO PDF']);
             if (po.poExpiryDate === 'N/A' && row['PO Expiry Date']) po.poExpiryDate = formatSheetDate(row['PO Expiry Date']);
+            if (!po.eeReferenceCode && row['EE_reference_code']) po.eeReferenceCode = String(row['EE_reference_code']);
+            if (!po.appointmentRequestId && row['Appointment Request ID']) po.appointmentRequestId = String(row['Appointment Request ID']);
+            if (!po.appointmentRequestDate && row['Appointment Request Date']) po.appointmentRequestDate = formatSheetDate(row['Appointment Request Date']);
+            if (!po.appointmentRequestTimestamp && row['Appointment Request Timestamp']) po.appointmentRequestTimestamp = String(row['Appointment Request Timestamp']);
+            if (!po.appointmentDate && row['Appointment Date']) po.appointmentDate = formatSheetDate(row['Appointment Date']);
+            if (!po.appointmentId && row['Appointment ID']) po.appointmentId = String(row['Appointment ID']);
+            if (!po.qrCodeUrl && row['QR Code URL']) po.qrCodeUrl = String(row['QR Code URL']);
+            if (!po.fbaShipmentId && row['FBA Shipment IDs']) po.fbaShipmentId = String(row['FBA Shipment IDs']);
+            if (po.consignmentQty === undefined && row['Consignment Qty']) po.consignmentQty = Number(row['Consignment Qty']);
+            if (po.consignmentProducts === undefined && row['Consignment Products']) po.consignmentProducts = Number(row['Consignment Products']);
+            if (!po.consignmentValue && row['Consignment Value']) po.consignmentValue = String(row['Consignment Value']);
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
@@ -377,6 +393,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 poPdfUrl: row['PO PDF'] ? String(row['PO PDF']) : undefined,
                 eeCustomerId: row['EE Customer ID'] ? String(row['EE Customer ID']) : undefined,
                 zohoContactId: row['Zoho Contact ID'] ? String(row['Zoho Contact ID']) : undefined,
+                eeReferenceCode: row['EE_reference_code'] ? String(row['EE_reference_code']) : undefined,
                 items: [item],
                 appointmentDate: formatSheetDate(row['Appointment Date']),
                 appointmentRequestDate: formatSheetDate(row['Appointment Request Date']),
@@ -447,6 +464,10 @@ export const updateZeptoOrderStatus = async (poNumber: string, status: string) =
 
 export const updateZeptoAppointmentDetails = async (params: any) => {
     return await postToScript({ action: 'updateZeptoAppointmentDetails', ...params });
+};
+
+export const updateZeptoASN = async (eeReferenceCode: string, asnNumber: string) => {
+    return await postToScript({ action: 'updateZeptoASN', eeReferenceCode, asnNumber });
 };
 
 export const processBlinkitAppointmentPasses = async () => {

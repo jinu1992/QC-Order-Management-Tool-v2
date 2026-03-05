@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses, updateZeptoASN } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -735,6 +735,174 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     );
 };
 
+const ZeptoASNHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNotification: any, onComplete: () => void }> = ({ so, onClose, addNotification, onComplete }) => {
+    const [step, setStep] = useState(1);
+    const [asnNumber, setAsnNumber] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleDownloadASN = () => {
+        // Generate a simple CSV for Zepto ASN
+        const headers = ["PO Number", "SKU", "Article Code", "Quantity", "Unit Price", "Total Amount"];
+        const rows = so.items.map(item => [
+            so.poReference,
+            item.masterSku || '',
+            item.articleCode || '',
+            item.itemQuantity || 0,
+            item.unitCost || 0,
+            (item.itemQuantity || 0) * (item.unitCost || 0)
+        ]);
+
+        const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `Zepto_ASN_${so.poReference}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        addNotification("ASN File Downloaded Successfully", "success");
+    };
+
+    const handleComplete = async () => {
+        if (!asnNumber.trim()) {
+            addNotification("Please enter a valid ASN number", "error");
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            const response = await updateZeptoASN(so.id, asnNumber.trim());
+
+            if (response.status === 'success') {
+                addNotification("ASN Updated! Order moved to Ready to Ship.", "success");
+                onComplete();
+                onClose();
+            } else {
+                addNotification(response.message || "Failed to update ASN", "error");
+            }
+        } catch (error) {
+            addNotification("Error updating ASN", "error");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-purple-100 flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-purple-50 border-b border-purple-100 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center text-white shadow-lg">
+                            <span className="font-black italic text-xl">z</span>
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-800">Zepto ASN Helper</h3>
+                            <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest">Step {step} of 2</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-purple-100 rounded-full transition-colors">
+                        <XCircleIcon className="h-6 w-6 text-gray-400"/>
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-6">
+                    {step === 1 ? (
+                        <>
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase">PO Number</p>
+                                        <p className="text-sm font-bold text-gray-800">{so.poReference}</p>
+                                    </div>
+                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Invoice No.</p>
+                                        <p className="text-sm font-bold text-gray-800">{so.invoiceNumber || 'N/A'}</p>
+                                    </div>
+                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Invoice Value</p>
+                                        <p className="text-sm font-bold text-gray-800">₹{so.invoiceTotal || '0'}</p>
+                                    </div>
+                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Delivery Date</p>
+                                        <p className="text-sm font-bold text-gray-800">
+                                            {(() => {
+                                                if (!so.appointmentDate || so.appointmentDate === 'TBD') return 'TBD';
+                                                const d = new Date(so.appointmentDate);
+                                                if (isNaN(d.getTime())) return so.appointmentDate;
+                                                return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
+                                            })()}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Upload Invoice</p>
+                                    {so.invoicePdfUrl ? (
+                                        <a href={so.invoicePdfUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1">
+                                            <ExternalLinkIcon className="h-3 w-3" /> View Invoice File
+                                        </a>
+                                    ) : (
+                                        <p className="text-xs text-gray-400 italic">No invoice file found</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                                <button 
+                                    onClick={handleDownloadASN}
+                                    className="w-full py-3.5 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-2 text-sm"
+                                >
+                                    <DownloadIcon className="h-4 w-4" /> Download ASN File
+                                </button>
+                                <button 
+                                    onClick={() => setStep(2)}
+                                    className="w-full py-3.5 bg-purple-600 text-white font-bold rounded-2xl shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all active:scale-95 text-sm"
+                                >
+                                    Next Step: Enter ASN Number
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="space-y-4">
+                                <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100">
+                                    <p className="text-xs font-bold text-purple-800 mb-2">Enter ASN Number from Zepto Portal</p>
+                                    <input 
+                                        type="text" 
+                                        value={asnNumber}
+                                        onChange={(e) => setAsnNumber(e.target.value)}
+                                        placeholder="e.g. ASN12345678"
+                                        className="w-full px-4 py-3 rounded-xl border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                        autoFocus
+                                    />
+                                    <p className="text-[10px] text-purple-600 mt-2 italic">Once entered, the status will move to 'Ready to Ship'.</p>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                                <button 
+                                    onClick={handleComplete}
+                                    disabled={isSubmitting || !asnNumber.trim()}
+                                    className="w-full py-3.5 bg-green-600 text-white font-bold rounded-2xl shadow-xl shadow-green-100 hover:bg-green-700 transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
+                                    Complete Process
+                                </button>
+                                <button 
+                                    onClick={() => setStep(1)}
+                                    className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                                >
+                                    Go Back
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const AmazonBoxDetailsModal: FC<{ 
     so: GroupedSalesOrder, 
     onClose: () => void, 
@@ -923,6 +1091,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [shippingConfirm, setShippingConfirm] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    const [zeptoASNHelper, setZeptoASNHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [fbaShipmentModal, setFbaShipmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [flipkartConsignmentModal, setFlipkartConsignmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
@@ -1038,10 +1207,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
 
                 const isZepto = po.channel.toLowerCase().includes('zepto');
-                if (isZepto) {
-                    if (po.appointmentDate || po.appointmentId) {
+                
+                // Use item-level appointment data if available (Sales Order ID reference)
+                const apptDate = item.appointmentDate || po.appointmentDate;
+                const apptId = item.appointmentId || po.appointmentId;
+                const apptReqId = item.appointmentRequestId || po.appointmentRequestId;
+                const apptReqDate = item.appointmentRequestDate || po.appointmentRequestDate;
+                const apptReqTimestamp = item.appointmentRequestTimestamp || po.appointmentRequestTimestamp;
+
+                if (isZepto && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
+                    if (apptDate || apptId) {
                         displayStatus = 'Create ASN';
-                    } else if (po.appointmentRequestId || po.appointmentRequestDate) {
+                    } else if (apptReqId || apptReqDate) {
                         displayStatus = 'Awaiting Appointment Confirmation';
                     }
                 }
@@ -1081,11 +1258,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                         rtoStatus: item.rtoStatus || po.rtoStatus, 
                         rtoAwb: item.rtoAwb || po.rtoAwb, 
                         boxCount: eeBoxCount,
-                        appointmentDate: po.appointmentDate,
-                        appointmentRequestDate: po.appointmentRequestDate,
-                        appointmentRequestId: po.appointmentRequestId,
-                        appointmentRequestTimestamp: po.appointmentRequestTimestamp,
-                        appointmentId: po.appointmentId,
+                        appointmentDate: item.appointmentDate || po.appointmentDate,
+                        appointmentRequestDate: item.appointmentRequestDate || po.appointmentRequestDate,
+                        appointmentRequestId: item.appointmentRequestId || po.appointmentRequestId,
+                        appointmentRequestTimestamp: item.appointmentRequestTimestamp || po.appointmentRequestTimestamp,
+                        appointmentId: item.appointmentId || po.appointmentId,
                         appointmentTime: po.appointmentTime,
                         appointmentRemarks: po.appointmentRemarks,
                         qrCodeUrl: po.qrCodeUrl,
@@ -1746,7 +1923,7 @@ let html = `
         if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
         
         if (isZepto) {
-            if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
             if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
             if (so.status === 'Invoiced' && !so.awb) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
@@ -1807,6 +1984,15 @@ let html = `
                     so={portalHelper.so} 
                     onClose={() => setPortalHelper({ isOpen: false, so: null })} 
                     addNotification={addNotification}
+                />
+            )}
+
+            {zeptoASNHelper.isOpen && zeptoASNHelper.so && (
+                <ZeptoASNHelperModal 
+                    so={zeptoASNHelper.so} 
+                    onClose={() => setZeptoASNHelper({ isOpen: false, so: null })} 
+                    addNotification={addNotification}
+                    onComplete={onSync}
                 />
             )}
             {instamartPrintPackModal.isOpen && instamartPrintPackModal.so && (
