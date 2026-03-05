@@ -735,24 +735,38 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     );
 };
 
-const ZeptoASNHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNotification: any, onComplete: () => void }> = ({ so, onClose, addNotification, onComplete }) => {
+const ZeptoASNHelperModal: FC<{ 
+    so: GroupedSalesOrder, 
+    onClose: () => void, 
+    addNotification: any, 
+    onComplete: () => void,
+    inventoryItems: InventoryItem[]
+}> = ({ so, onClose, addNotification, onComplete, inventoryItems }) => {
     const [step, setStep] = useState(1);
     const [asnNumber, setAsnNumber] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleDownloadASN = () => {
-        // Generate a simple CSV for Zepto ASN
-        const headers = ["PO Number", "SKU", "Article Code", "Quantity", "Unit Price", "Total Amount"];
-        const rows = so.items.map(item => [
-            so.poReference,
-            item.masterSku || '',
-            item.articleCode || '',
-            item.itemQuantity || 0,
-            item.unitCost || 0,
-            (item.itemQuantity || 0) * (item.unitCost || 0)
-        ]);
+        // Generate a simple CSV for Zepto ASN with specific headers
+        const headers = ["SKU Name", "SKU Code", "SKU Image Url", "Po Quantity", "Asn Quantity", "Po MRP", "EAN Number"];
+        const rows = so.items.map(item => {
+            // Find mapping to get EAN and other details if missing
+            const mapping = inventoryItems?.find(inv => 
+                (inv.sku === item.masterSku || inv.articleCode === item.articleCode)
+            );
 
-        const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+            return [
+                item.itemName || mapping?.itemName || '',
+                item.masterSku || mapping?.sku || '',
+                '', // SKU Image Url - not available in current data
+                item.qty || 0, // Po Quantity
+                item.itemQuantity || 0, // Asn Quantity
+                item.mrp || mapping?.mrp || 0, // Po MRP
+                mapping?.ean || '' // EAN Number
+            ];
+        });
+
+        const csvContent = [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -1962,6 +1976,7 @@ let html = `
                     onClose={() => setZeptoASNHelper({ isOpen: false, so: null })} 
                     addNotification={addNotification}
                     onComplete={onSync}
+                    inventoryItems={inventoryItems || []}
                 />
             )}
             {instamartPrintPackModal.isOpen && instamartPrintPackModal.so && (
