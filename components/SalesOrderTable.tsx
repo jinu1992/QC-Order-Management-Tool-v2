@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses, updateZeptoASN } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -1151,6 +1151,46 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
     const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
+    
+    // Close menu on click outside
+    useEffect(() => {
+        const handleClickOutside = () => setOpenMenuId(null);
+        window.addEventListener('click', handleClickOutside);
+        return () => window.removeEventListener('click', handleClickOutside);
+    }, []);
+
+    const handleMarkAsRTOInitiated = async (so: GroupedSalesOrder) => {
+        if (!window.confirm(`Are you sure you want to mark ${so.id} as RTO Initiated?`)) return;
+        
+        setIsUpdatingRTO(so.id);
+        try {
+            const timestamp = new Date().toLocaleString('en-IN', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric', 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                hour12: false 
+            }).replace(/\//g, '-');
+            
+            const res = await updateRTOStatus(so.id, timestamp);
+            if (res.status === 'success') {
+                addNotification(`Order ${so.id} marked as RTO Initiated`, 'success');
+                onSync(); // Refresh data
+            } else {
+                addNotification(res.message || "Failed to update RTO status", "error");
+            }
+        } catch (err) {
+            console.error("Error updating RTO status:", err);
+            addNotification("Error updating RTO status", "error");
+        } finally {
+            setIsUpdatingRTO(null);
+            setOpenMenuId(null);
+        }
+    };
     
     const handleFetchBoxDetails = async (so: GroupedSalesOrder) => {
         setIsFetchingBoxDetails(so.id);
@@ -1193,6 +1233,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         { id: 'Label Generated', name: 'Label Generated' },
         { id: 'Shipped', name: 'Shipped' },
         { id: 'Delivered', name: 'Delivered' },
+        { id: 'RTO Initiated', name: 'RTO Initiated' },
         { id: 'Returned', name: 'Returned' },
         { id: 'Closed', name: 'Closed' },
     ];
@@ -1209,6 +1250,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             'Label Generated': 0, 
             'Shipped': 0, 
             'Delivered': 0, 
+            'RTO Initiated': 0,
             'Returned': 0, 
             'Closed': 0 
         };
@@ -1250,7 +1292,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!item.deliveredDate || !!po.deliveredDate);
                 const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
 
-                if (eeStatusLower === 'returned' || eeStatusLower === 'rto' || item.rtoStatus || po.rtoStatus) displayStatus = 'Returned';
+                const rtoStatus = item.rtoStatus || po.rtoStatus;
+                const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
+
+                if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+                else if (isRTOInitiated) displayStatus = 'RTO Initiated';
+                else if (rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
                 else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
@@ -1334,7 +1381,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                     const curPo = String(po.id || '');
                     if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
                     const statusRank = (s: string) => { 
-                        if (s === 'Returned') return 12;
+                        if (s === 'Returned') return 13;
+                        if (s === 'RTO Initiated') return 12;
                         if (s === 'Closed') return 11;
                         if (s === 'Delivered') return 10;
                         if (s === 'Shipped') return 9; 
@@ -2213,6 +2261,7 @@ let html = `
                                             <td className="px-6 py-4">
                                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                                                     so.status === 'Returned' ? 'bg-red-100 text-red-700' : 
+                                                    so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
                                                     so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : 
                                                     so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : 
                                                     so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : 
@@ -2302,7 +2351,33 @@ let html = `
                                                         </button>
                                                     )}
                                                     <button onClick={(e) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
-                                                    <button className="text-gray-400 hover:text-gray-600 p-1"><DotsVerticalIcon className="h-4 w-4" /></button>
+                                                    <button 
+                                                        className="text-gray-400 hover:text-gray-600 p-1 relative"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(openMenuId === so.id ? null : so.id);
+                                                        }}
+                                                    >
+                                                        <DotsVerticalIcon className="h-4 w-4" />
+                                                        {openMenuId === so.id && (
+                                                            <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                                                {so.status === 'Shipped' && (
+                                                                    <button 
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleMarkAsRTOInitiated(so);
+                                                                        }}
+                                                                        disabled={isUpdatingRTO === so.id}
+                                                                        className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors disabled:opacity-50"
+                                                                    >
+                                                                        {isUpdatingRTO === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <XCircleIcon className="h-3.5 w-3.5" />}
+                                                                        Mark as RTO Initiated
+                                                                    </button>
+                                                                )}
+                                                                <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
+                                                            </div>
+                                                        )}
+                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>

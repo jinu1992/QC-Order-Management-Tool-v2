@@ -91,6 +91,7 @@ function doPost(e) {
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
+    else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses();
     else if (action === 'createItem') result = { status: 'success', message: 'Item created' };
     else if (action === 'createInventoryItem') result = { status: 'success', message: 'Item created' };
@@ -488,6 +489,39 @@ function updateZeptoASN(data) {
 
   if (updated) {
     return { status: 'success', message: 'ASN updated and status moved to Ready to Ship' };
+  } else {
+    return { status: 'error', message: 'Order not found' };
+  }
+}
+
+function updateRTOStatus(data) {
+  const { eeReferenceCode, rtoStatus } = data;
+  if (!eeReferenceCode || !rtoStatus) {
+    return { status: 'error', message: 'Missing required fields' };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  const eeRefIdx = headers.indexOf("EE_reference_code");
+  const rtoStatusIdx = headers.indexOf("RTO Status");
+
+  if (eeRefIdx === -1 || rtoStatusIdx === -1) {
+    return { status: 'error', message: 'Required columns not found in PO_Database' };
+  }
+
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
+      sheet.getRange(i + 1, rtoStatusIdx + 1).setValue(rtoStatus);
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    return { status: 'success', message: 'RTO Status updated successfully' };
   } else {
     return { status: 'error', message: 'Order not found' };
   }

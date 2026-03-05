@@ -414,6 +414,10 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
     return Array.from(poMap.values());
 };
 
+export const updateRTOStatus = async (eeReferenceCode: string, rtoStatus: string) => {
+    return await postToScript({ action: 'updateRTOStatus', eeReferenceCode, rtoStatus });
+};
+
 export const createInventoryItem = async (item: Partial<InventoryItem>) => {
      return await postToScript({ action: 'createItem', ...item });
 };
