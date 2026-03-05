@@ -1216,7 +1216,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 const apptReqTimestamp = item.appointmentRequestTimestamp || po.appointmentRequestTimestamp;
 
                 if (isZepto && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
-                    if (apptDate || apptId) {
+                    if (apptId) {
+                        // ASN already created, keep normal status (e.g. Invoiced)
+                    } else if (apptDate) {
                         displayStatus = 'Create ASN';
                     } else if (apptReqId || apptReqDate) {
                         displayStatus = 'Awaiting Appointment Confirmation';
@@ -1855,45 +1857,6 @@ let html = `
     /**
      * Special function for Zepto ASN CSV generation
      */
-    const handleDownloadZeptoAsnCsv = (so: GroupedSalesOrder) => {
-        const headers = ["SKU Name", "SKU Code", "SKU Image", "Po Quantity", "Asn Quantity", "Po MRP", "EAN Number"];
-        const rows = so.items.map(item => {
-            const mapping = inventoryItems?.find(inv => 
-                (inv.sku === item.masterSku || inv.articleCode === item.articleCode) && 
-                inv.channel.toLowerCase().includes('zepto')
-            );
-
-            return [
-                item.itemName || mapping?.itemName || '',
-                item.articleCode || mapping?.articleCode || '',
-                '', // SKU Image
-                item.qty || 0,
-                item.shippedQuantity || item.itemQuantity || item.qty,
-                item.mrp || mapping?.mrp || 0,
-                mapping?.ean || ''
-            ];
-        });
-
-        if (rows.length === 0) {
-            addNotification('No items found in this order.', 'warning');
-            return;
-        }
-
-        const csvContent = [
-            headers.join(','),
-            ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
-        ].join('\n');
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `Zepto_ASN_${so.id}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        addLog('CSV Download', `Downloaded Zepto ASN CSV for ${so.id}`);
-    };
 
     const TimelineStep = ({ label, date, icon, isLast = false }: { label: string, date?: string, icon: React.ReactNode, isLast?: boolean }) => {
         const isActive = !!date;
@@ -1925,7 +1888,7 @@ let html = `
         if (isZepto) {
             if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
             if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
-            if (so.status === 'Invoiced' && !so.awb) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
 
         if (so.status === 'Invoiced' && !so.awb) {
@@ -2159,7 +2122,7 @@ let html = `
                                 const showFlipkartPrintAction = isFlipkart && hasAppointmentId;
                                 
                                 const showFlipkartDownload = isFlipkart && hasLabel;
-                                const showZeptoDownload = isZepto && (so.status === 'Invoiced' || so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.invoiceNumber);
+                                const showZeptoDownload = false;
 
                                 const showBlinkitAppointmentBtn = isBlinkit && hasLabel && (so.status !== 'Delivered');
                                 const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && (so.status !== 'Delivered');
@@ -2217,7 +2180,7 @@ let html = `
                                                     )}
                                                     {showZeptoDownload && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); handleDownloadZeptoAsnCsv(so); }}
+                                                            onClick={(e) => { e.stopPropagation(); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
                                                             title="Download Zepto ASN CSV"
                                                         >
@@ -2383,7 +2346,7 @@ let html = `
                                                                     )}
                                                                     {showZeptoDownload && (
                                                                         <button 
-                                                                            onClick={(e) => { e.stopPropagation(); handleDownloadZeptoAsnCsv(so); }}
+                                                                            onClick={(e) => { e.stopPropagation(); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
                                                                         >
                                                                             <DownloadIcon className="h-4 w-4" /> Download Zepto ASN CSV
