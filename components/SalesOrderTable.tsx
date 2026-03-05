@@ -811,38 +811,44 @@ const ZeptoASNHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addN
                         <>
                             <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase">PO Number</p>
-                                        <p className="text-sm font-bold text-gray-800">{so.poReference}</p>
-                                    </div>
-                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Invoice No.</p>
-                                        <p className="text-sm font-bold text-gray-800">{so.invoiceNumber || 'N/A'}</p>
-                                    </div>
-                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Invoice Value</p>
-                                        <p className="text-sm font-bold text-gray-800">₹{so.invoiceTotal || '0'}</p>
-                                    </div>
-                                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                        <p className="text-[10px] font-bold text-gray-400 uppercase">Delivery Date</p>
-                                        <p className="text-sm font-bold text-gray-800">
-                                            {(() => {
-                                                if (!so.appointmentDate || so.appointmentDate === 'TBD') return 'TBD';
-                                                const d = new Date(so.appointmentDate);
-                                                if (isNaN(d.getTime())) return so.appointmentDate;
-                                                return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
-                                            })()}
-                                        </p>
-                                    </div>
+                                    <CopyField 
+                                        label="PO Number" 
+                                        value={so.poReference} 
+                                        icon={<ClipboardListIcon className="h-3 w-3"/>} 
+                                    />
+                                    <CopyField 
+                                        label="Invoice No." 
+                                        value={so.invoiceNumber || 'N/A'} 
+                                        icon={<InvoiceIcon className="h-3 w-3"/>} 
+                                    />
+                                    <CopyField 
+                                        label="Invoice Value" 
+                                        value={`₹${so.invoiceTotal || '0'}`} 
+                                        icon={<CurrencyIcon className="h-3 w-3"/>} 
+                                    />
+                                    <CopyField 
+                                        label="Delivery Date" 
+                                        value={(() => {
+                                            if (!so.appointmentDate || so.appointmentDate === 'TBD') return 'TBD';
+                                            const d = new Date(so.appointmentDate);
+                                            if (isNaN(d.getTime())) return so.appointmentDate;
+                                            return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
+                                        })()} 
+                                        icon={<CalendarIcon className="h-3 w-3"/>} 
+                                    />
                                 </div>
-                                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Upload Invoice</p>
-                                    {so.invoicePdfUrl ? (
-                                        <a href={so.invoicePdfUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1">
-                                            <ExternalLinkIcon className="h-3 w-3" /> View Invoice File
-                                        </a>
-                                    ) : (
-                                        <p className="text-xs text-gray-400 italic">No invoice file found</p>
+                                <div className="space-y-2">
+                                    <CopyField 
+                                        label="Invoice PDF URL" 
+                                        value={so.invoicePdfUrl || 'N/A'} 
+                                        icon={<ExternalLinkIcon className="h-3 w-3"/>} 
+                                    />
+                                    {so.invoicePdfUrl && (
+                                        <div className="px-1">
+                                            <a href={so.invoicePdfUrl} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:underline flex items-center gap-1">
+                                                <ExternalLinkIcon className="h-3 w-3" /> Open File in New Tab
+                                            </a>
+                                        </div>
                                     )}
                                 </div>
                             </div>
