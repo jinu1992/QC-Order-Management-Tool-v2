@@ -210,22 +210,36 @@ const FlipkartConsignmentModal: FC<{
                 
                 <div className="p-8">
                     <div className="grid grid-cols-2 gap-4 mb-8">
-                        <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Target PO</p>
-                            <p className="text-sm font-black text-gray-800">{so.poReference}</p>
-                        </div>
-                        <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">AWB / Tracking</p>
-                            <p className="text-sm font-black text-blue-600 font-mono">{so.awb || 'N/A'}</p>
-                        </div>
-                        <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Carrier</p>
-                            <p className="text-sm font-black text-gray-800">{so.carrier || 'N/A'}</p>
-                        </div>
-                        <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Status</p>
-                            <p className="text-sm font-black text-partners-green uppercase">{so.status}</p>
-                        </div>
+                        <CopyField 
+                            label="Target PO" 
+                            value={so.poReference} 
+                            icon={<ClipboardListIcon className="h-3 w-3"/>} 
+                        />
+                        <CopyField 
+                            label="AWB / Tracking" 
+                            value={so.awb || 'N/A'} 
+                            icon={<GlobeIcon className="h-3 w-3"/>} 
+                        />
+                        <CopyField 
+                            label="Carrier" 
+                            value={so.carrier || 'N/A'} 
+                            icon={<TruckIcon className="h-3 w-3"/>} 
+                        />
+                        <CopyField 
+                            label="Status" 
+                            value={so.status} 
+                            icon={<InfoIcon className="h-3 w-3"/>} 
+                        />
+                        {so.consignmentValue && (
+                            <div className="col-span-2">
+                                <CopyField 
+                                    label="Consignment Value" 
+                                    value={so.consignmentValue} 
+                                    copyValue={so.consignmentValue.replace(/[₹,]/g, '')}
+                                    icon={<CurrencyIcon className="h-3 w-3"/>} 
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {!uploadComplete ? (
@@ -617,11 +631,12 @@ const ShippingConfirmationModal: FC<{ so: GroupedSalesOrder, onConfirm: () => vo
 
 // --- Copy Field Helper ---
 
-const CopyField = ({ label, value, icon }: { label: string, value: string, icon: React.ReactNode }) => {
+const CopyField = ({ label, value, icon, copyValue }: { label: string, value: string, icon: React.ReactNode, copyValue?: string }) => {
     const [copied, setCopied] = useState(false);
     const handleCopy = (e: React.MouseEvent) => {
-        if (!value || value === 'N/A') return;
-        navigator.clipboard.writeText(value);
+        const textToCopy = copyValue || value;
+        if (!textToCopy || textToCopy === 'N/A') return;
+        navigator.clipboard.writeText(textToCopy);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -640,11 +655,12 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     const [showHelp, setShowHelp] = useState(false);
     const isZepto = so.channel.toLowerCase().includes('zepto');
     const isBlinkit = so.channel.toLowerCase().includes('blinkit');
-    const portalName = isZepto ? 'Zepto Brands' : 'Blinkit Partners';
-    const portalUrl = isZepto ? 'https://brands.zepto.co.in/' : 'https://partnersbiz.com';
-    const brandColor = isZepto ? 'bg-purple-600' : 'bg-yellow-400';
-    const logoText = isZepto ? 'z' : 'b';
-    const shadowColor = isZepto ? 'shadow-purple-100' : 'shadow-yellow-100';
+    const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+    const portalName = isZepto ? 'Zepto Brands' : isBlinkit ? 'Blinkit Partners' : 'Flipkart Seller';
+    const portalUrl = isZepto ? 'https://brands.zepto.co.in/' : isBlinkit ? 'https://partnersbiz.com' : 'https://seller.flipkart.com/';
+    const brandColor = isZepto ? 'bg-purple-600' : isBlinkit ? 'bg-yellow-400' : 'bg-blue-600';
+    const logoText = isZepto ? 'z' : isBlinkit ? 'b' : 'f';
+    const shadowColor = isZepto ? 'shadow-purple-100' : isBlinkit ? 'shadow-yellow-100' : 'shadow-blue-100';
 
     const handleOpenPortal = () => {
         const win = window.open(portalUrl, '_blank');
@@ -723,7 +739,12 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                         <CopyField label="Courier Name" value={so.carrier || 'Standard'} icon={<TruckIcon className="h-3 w-3"/>} />
                         <CopyField label="AWB Number" value={so.awb || 'N/A'} icon={<GlobeIcon className="h-3 w-3"/>} />
                         <CopyField label="Invoice Number" value={so.invoiceNumber || 'N/A'} icon={<InvoiceIcon className="h-3 w-3"/>} />
-                        <CopyField label="Total Amount (Inc. Tax)" value={`₹${amountWithTax}`} icon={<CurrencyIcon className="h-3 w-3"/>} />
+                        <CopyField 
+                            label="Total Amount (Inc. Tax)" 
+                            value={`₹${amountWithTax}`} 
+                            copyValue={amountWithTax}
+                            icon={<CurrencyIcon className="h-3 w-3"/>} 
+                        />
                         <div className="md:col-span-2"><CopyField label="Invoice PDF URL" value={so.invoicePdfUrl || 'N/A'} icon={<ExternalLinkIcon className="h-3 w-3"/>} /></div>
                     </div>
                     <div className="flex flex-col items-center pt-2">
@@ -825,11 +846,23 @@ const ZeptoASNHelperModal: FC<{
                         <>
                             <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
-                                    <CopyField 
-                                        label="PO Number" 
-                                        value={so.poReference} 
-                                        icon={<ClipboardListIcon className="h-3 w-3"/>} 
-                                    />
+                                    <div className="space-y-2">
+                                        <CopyField 
+                                            label="PO Number" 
+                                            value={so.poReference} 
+                                            icon={<ClipboardListIcon className="h-3 w-3"/>} 
+                                        />
+                                        <div className="px-1">
+                                            <a 
+                                                href={`https://brands.zepto.co.in/vendor/po/lifecycle/${so.poReference}?tab=ASN`} 
+                                                target="_blank" 
+                                                rel="noreferrer" 
+                                                className="text-[10px] font-black uppercase text-purple-600 hover:underline flex items-center gap-1"
+                                            >
+                                                <ExternalLinkIcon className="h-3 w-3" /> Open in Zepto Portal
+                                            </a>
+                                        </div>
+                                    </div>
                                     <CopyField 
                                         label="Invoice No." 
                                         value={so.invoiceNumber || 'N/A'} 
@@ -838,6 +871,7 @@ const ZeptoASNHelperModal: FC<{
                                     <CopyField 
                                         label="Invoice Value" 
                                         value={`₹${so.invoiceTotal || '0'}`} 
+                                        copyValue={String(so.invoiceTotal || '0')}
                                         icon={<CurrencyIcon className="h-3 w-3"/>} 
                                     />
                                     <CopyField 
@@ -1192,6 +1226,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 const carrier = item.carrier || po.carrier;
                 const awb = item.awb || po.awb;
                 const trackingStatus = item.trackingStatus || po.trackingStatus;
+                const trackingUrl = item.trackingUrl || po.trackingUrl;
 
                 const batchDate = item.eeBatchCreatedAt || po.eeBatchCreatedAt;
                 const invNum = item.invoiceNumber;
@@ -1218,7 +1253,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                 if (eeStatusLower === 'returned' || eeStatusLower === 'rto' || item.rtoStatus || po.rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
-                else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || trackingStatusLower === 'booked') {
+                else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
                     displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
                 }
                 else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
@@ -1272,6 +1307,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                         carrier: carrier, 
                         awb: awb, 
                         trackingStatus: trackingStatus, 
+                        trackingUrl: trackingUrl,
                         edd: item.edd || po.edd, 
                         latestStatus: item.latestStatus || po.latestStatus, 
                         latestStatusDate: item.latestStatusDate || po.latestStatusDate, 
@@ -1321,6 +1357,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
 
                     if (!groups[refCode].awb && awb) groups[refCode].awb = awb;
                     if (!groups[refCode].trackingStatus && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
+                    if (!groups[refCode].trackingUrl && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
                     if (!groups[refCode].ewb) groups[refCode].ewb = item.ewb || po.ewb;
                     if (!groups[refCode].fbaShipmentId) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
                     if (!groups[refCode].appointmentId) groups[refCode].appointmentId = po.appointmentId;
@@ -1586,7 +1623,13 @@ let html = `
 
     const handleExportInTransitCSV = () => {
         const inTransitOrders = allSalesOrders.filter(so => {
-            const isAmazon = so.channel.toLowerCase().includes('amazon');
+            const channelLower = so.channel.toLowerCase();
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
+            
+            if (!isAllowedChannel) return false;
+
+            const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
             
@@ -2145,7 +2188,7 @@ let html = `
                                 const showFlipkartDownload = isFlipkart && hasLabel;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = isBlinkit && hasLabel && (so.status !== 'Delivered');
+                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkart) && hasLabel && (so.status !== 'Delivered');
                                 const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && (so.status !== 'Delivered');
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
@@ -2212,13 +2255,14 @@ let html = `
                                                         <button 
                                                             onClick={(e) => { 
                                                                 e.stopPropagation(); 
-                                                                if (hasAppointmentId) setActiveAppointmentPass(so);
+                                                                if (isFlipkart) setFlipkartConsignmentModal({ isOpen: true, so });
+                                                                else if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                 else setPortalHelper({ isOpen: true, so });
                                                             }}
-                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
                                                         >
-                                                            {hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />}
-                                                            {hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment'}
+                                                            {isFlipkart ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
+                                                            {isFlipkart ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
                                                         </button>
                                                     )}
                                                     {showFlipkartAppointmentBtn && (
@@ -2473,15 +2517,15 @@ let html = `
                                                                 <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
                                                             </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Nimbus' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>
-                                                            {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
-                                                                <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
+                                                            {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || so.channel.toLowerCase().includes('flipkart')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
+                                                                <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
                                                                     <div className="flex items-center gap-3">
-                                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600' : 'bg-yellow-400'}`}>
-                                                                            <span className="font-black italic text-xl">{so.channel.toLowerCase().includes('zepto') ? 'z' : 'b'}</span>
+                                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-600' : 'bg-yellow-400'}`}>
+                                                                            <span className="font-black italic text-xl">{so.channel.toLowerCase().includes('zepto') ? 'z' : so.channel.toLowerCase().includes('flipkart') ? 'f' : 'b'}</span>
                                                                         </div>
                                                                         <div>
-                                                                            <p className={`text-xs font-bold uppercase ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-800' : 'text-yellow-800'}`}>{so.channel.toLowerCase().includes('zepto') ? 'Zepto Brands' : 'Blinkit'} Portal Action Required</p>
-                                                                            <p className={`text-[10px] font-medium ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-600' : 'text-yellow-600'}`}>AWB assigned. Generate appointment pass before dispatching.</p>
+                                                                            <p className={`text-xs font-bold uppercase ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-800' : so.channel.toLowerCase().includes('flipkart') ? 'text-blue-800' : 'text-yellow-800'}`}>{so.channel.toLowerCase().includes('zepto') ? 'Zepto Brands' : so.channel.toLowerCase().includes('flipkart') ? 'Flipkart Minutes' : 'Blinkit'} Portal Action Required</p>
+                                                                            <p className={`text-[10px] font-medium ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-600' : so.channel.toLowerCase().includes('flipkart') ? 'text-blue-600' : 'text-yellow-600'}`}>AWB assigned. Generate appointment pass before dispatching.</p>
                                                                         </div>
                                                                     </div>
                                                                     <button 
