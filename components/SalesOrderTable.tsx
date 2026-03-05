@@ -757,7 +757,7 @@ const ZeptoASNHelperModal: FC<{
 
             return [
                 item.itemName || mapping?.itemName || '',
-                item.masterSku || mapping?.sku || '',
+                item.masterSku || mapping?.articleCode || '',
                 '', // SKU Image Url - not available in current data
                 item.qty || 0, // Po Quantity
                 item.itemQuantity || 0, // Asn Quantity
