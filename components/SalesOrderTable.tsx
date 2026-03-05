@@ -2351,8 +2351,8 @@ let html = `
                                                         </button>
                                                     )}
                                                     <button onClick={(e) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
-                                                    <button 
-                                                        className="text-gray-400 hover:text-gray-600 p-1 relative"
+                                                    <div 
+                                                        className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setOpenMenuId(openMenuId === so.id ? null : so.id);
@@ -2377,7 +2377,7 @@ let html = `
                                                                 <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
                                                             </div>
                                                         )}
-                                                    </button>
+                                                    </div>
                                                 </div>
                                             </td>
                                         </tr>
