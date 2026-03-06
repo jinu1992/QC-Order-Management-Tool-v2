@@ -63,7 +63,31 @@ const postToScript = async (payload: any) => {
 };
 
 export const loginWithGoogle = async (credentialToken: string): Promise<{status: string, message?: string, user?: User}> => {
-    return await postToScript({ action: 'loginGoogle', idToken: credentialToken });
+    try {
+        const response = await fetch('/api/login-google', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ idToken: credentialToken })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            return { 
+                status: 'error', 
+                message: errorData.message || `Server Error: ${response.status}` 
+            };
+        }
+        
+        return await response.json();
+    } catch (error: any) {
+        console.error("Login API Error:", error);
+        return { 
+            status: 'error', 
+            message: 'Failed to connect to authentication server.' 
+        };
+    }
 };
 
 export const fetchPackingData = async (referenceCode: string): Promise<any[]> => {

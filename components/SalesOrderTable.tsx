@@ -114,7 +114,12 @@ const formatDisplayTime = (timeInput?: any): string => {
         if (timeStr.includes('T') || timeStr.includes('GMT') || (timeStr.length > 12 && timeStr.includes('-'))) {
             const dateObj = new Date(timeStr);
             if (!isNaN(dateObj.getTime())) {
-                const formatted = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                let hours = dateObj.getHours();
+                const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                hours = hours % 12;
+                hours = hours ? hours : 12; // the hour '0' should be '12'
+                const formatted = `${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
                 return formatted;
             }
         }
@@ -143,7 +148,10 @@ const formatDateForInput = (dateStr?: string): string => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) {
-        return d.toISOString().split('T')[0];
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
     // Handle DD-MM-YYYY
     const parts = dateStr.split('-');
@@ -153,8 +161,20 @@ const formatDateForInput = (dateStr?: string): string => {
     return dateStr;
 };
 
-const formatTimeForInput = (timeStr?: string): string => {
-    if (!timeStr) return '';
+const formatTimeForInput = (timeInput?: any): string => {
+    if (!timeInput) return '';
+    const timeStr = String(timeInput).trim();
+
+    // If it's an ISO string or similar, convert to local time
+    if (timeStr.includes('T') || timeStr.includes('GMT') || (timeStr.length > 12 && timeStr.includes('-'))) {
+        const dateObj = new Date(timeStr);
+        if (!isNaN(dateObj.getTime())) {
+            const hours = String(dateObj.getHours()).padStart(2, '0');
+            const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+            return `${hours}:${minutes}`;
+        }
+    }
+
     // Handle HH:MM AM/PM
     const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
     if (ampmMatch) {
@@ -1904,6 +1924,161 @@ let html = `
         printWindow.document.close();
     };
 
+    const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
+    const [googleTokens, setGoogleTokens] = useState<any>(() => {
+        const saved = localStorage.getItem('google_sheets_tokens');
+        return saved ? JSON.parse(saved) : null;
+    });
+
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
+                setGoogleTokens(event.data.tokens);
+                localStorage.setItem('google_sheets_tokens', JSON.stringify(event.data.tokens));
+                addNotification('Google account connected successfully!', 'success');
+            }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, []);
+
+    const parseAppointmentDateTime = (date?: string, time?: string) => {
+        if (!date) return 0;
+        try {
+            let d = new Date(date);
+            if (isNaN(d.getTime())) {
+                const parts = date.split('-');
+                if (parts.length === 3) {
+                    if (parts[2].length === 4) {
+                        d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                    } else {
+                        d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                    }
+                }
+            }
+            
+            if (time && !isNaN(d.getTime())) {
+                const timeStr = String(time).trim();
+                const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
+                if (ampmMatch) {
+                    let hours = parseInt(ampmMatch[1], 10);
+                    const minutes = parseInt(ampmMatch[2], 10);
+                    const ampm = ampmMatch[3].toUpperCase();
+                    if (ampm === 'PM' && hours < 12) hours += 12;
+                    if (ampm === 'AM' && hours === 12) hours = 0;
+                    d.setHours(hours, minutes, 0, 0);
+                } else if (timeStr.includes('T')) {
+                    const t = new Date(timeStr);
+                    d.setHours(t.getHours(), t.getMinutes(), t.getSeconds());
+                } else {
+                    const parts = timeStr.match(/(\d{1,2}):(\d{1,2})/);
+                    if (parts) {
+                        d.setHours(parseInt(parts[1]), parseInt(parts[2]), 0, 0);
+                    }
+                }
+            }
+            return d.getTime();
+        } catch (e) {
+            return 0;
+        }
+    };
+
+    const handleUpdateGoogleSheet = async () => {
+        const inTransitOrders = allSalesOrders.filter(so => {
+            const channelLower = so.channel.toLowerCase();
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
+            if (!isAllowedChannel) return false;
+            const isAmazon = channelLower.includes('amazon');
+            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
+            if (so.status === 'Shipped') return true;
+            if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
+            return false;
+        }).sort((a, b) => {
+            const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
+            const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
+            return timeB - timeA; // Latest first
+        });
+
+        if (inTransitOrders.length === 0) {
+            addNotification('No in-transit orders found to update.', 'warning');
+            return;
+        }
+
+        if (!googleTokens) {
+            try {
+                const res = await fetch('/api/auth/google/url');
+                const { url } = await res.json();
+                window.open(url, 'google_auth', 'width=600,height=700');
+                return;
+            } catch (err) {
+                addNotification('Failed to initiate Google login', 'error');
+                return;
+            }
+        }
+
+        setIsUpdatingSheet(true);
+        try {
+            const headers = [
+                'Booked Date', 'PO Number', 'Channel', 'Store Code', 'AWB', 
+                'Tracking Status', 'Latest Status', 'Current Location', 'EDD', 
+                'Appointment Date & Time', 'Appointment ID', 'PO PDF', 'Invoice Url'
+            ];
+
+            const rows = inTransitOrders.map(so => {
+                const appointmentDateTime = so.appointmentDate ? `${so.appointmentDate} ${formatDisplayTime(so.appointmentTime)}`.trim() : 'N/A';
+                return [
+                    so.manifestDate || so.batchCreatedAt || 'N/A',
+                    so.poReference,
+                    so.channel,
+                    so.storeCode,
+                    so.awb || 'N/A',
+                    so.trackingStatus || 'N/A',
+                    so.latestStatus || 'N/A',
+                    so.currentLocation || 'N/A',
+                    so.edd || 'N/A',
+                    appointmentDateTime,
+                    so.appointmentId || 'N/A',
+                    so.poPdfUrl || 'N/A',
+                    so.invoicePdfUrl || 'N/A'
+                ];
+            });
+
+            const spreadsheetId = '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
+            const sheetId = '1014733683';
+
+            const response = await fetch('/api/update-google-sheet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tokens: googleTokens,
+                    spreadsheetId,
+                    sheetId,
+                    data: [headers, ...rows]
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                addNotification('Google Sheet updated successfully!', 'success');
+                addLog('Google Sheet Update', `Updated sheet with ${inTransitOrders.length} orders`);
+            } else {
+                if (result.error?.includes('invalid_grant') || result.error?.includes('expired')) {
+                    setGoogleTokens(null);
+                    localStorage.removeItem('google_sheets_tokens');
+                    addNotification('Session expired. Please click again to reconnect Google account.', 'warning');
+                } else {
+                    addNotification('Failed to update Google Sheet: ' + result.error, 'error');
+                }
+            }
+        } catch (err) {
+            addNotification('Network error updating Google Sheet', 'error');
+        } finally {
+            setIsUpdatingSheet(false);
+        }
+    };
+
     const handleExportInTransitCSV = () => {
         const inTransitOrders = allSalesOrders.filter(so => {
             const channelLower = so.channel.toLowerCase();
@@ -1916,12 +2091,13 @@ let html = `
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
             
-            // In Transit logic: 
-            // 1. Status is "Shipped"
-            // 2. Status is "Delivered" (for Amazon) but not actually delivered yet
             if (so.status === 'Shipped') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
+        }).sort((a, b) => {
+            const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
+            const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
+            return timeB - timeA; // Latest first
         });
 
         if (inTransitOrders.length === 0) {
@@ -1946,7 +2122,7 @@ let html = `
         ];
 
         const rows = inTransitOrders.map(so => {
-            const appointmentDateTime = so.appointmentDate ? `${so.appointmentDate} ${so.appointmentTime || ''}`.trim() : 'N/A';
+            const appointmentDateTime = so.appointmentDate ? `${so.appointmentDate} ${formatDisplayTime(so.appointmentTime)}`.trim() : 'N/A';
             return [
                 so.manifestDate || so.batchCreatedAt || 'N/A',
                 so.poReference,
@@ -2455,6 +2631,14 @@ let html = `
                         <ClipboardListIcon className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" /> 
                         <span>Export CSV</span>
                     </button>
+                    <button 
+                        onClick={handleUpdateGoogleSheet} 
+                        disabled={isUpdatingSheet}
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-green-600 rounded-lg shadow-sm hover:bg-green-700 transition-all active:scale-95 group disabled:opacity-50"
+                    >
+                        <GlobeIcon className={`h-3.5 w-3.5 ${isUpdatingSheet ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} /> 
+                        <span>{isUpdatingSheet ? 'Updating...' : 'Update Sheet'}</span>
+                    </button>
                 </div>
             </div>
 
@@ -2646,7 +2830,7 @@ let html = `
                                                     >
                                                         <DotsVerticalIcon className="h-4 w-4" />
                                                         {openMenuId === so.id && (
-                                                            <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                                            <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
                                                                 {canUpdateAppt && (
                                                                     <button 
                                                                         onClick={(e) => {
