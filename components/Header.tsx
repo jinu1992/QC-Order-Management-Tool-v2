@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { DownloadIcon, BellIcon, CheckCircleIcon, InfoIcon, AdminIcon, MenuIcon, ArrowsExpandIcon, ArrowsMinimizeIcon } from './icons/Icons';
+import { DownloadIcon, BellIcon, CheckCircleIcon, InfoIcon, AdminIcon, MenuIcon, ArrowsExpandIcon, ArrowsMinimizeIcon, RefreshIcon } from './icons/Icons';
 import { NotificationItem, ViewType } from '../types';
 
 interface HeaderProps {
@@ -10,9 +10,10 @@ interface HeaderProps {
     onViewLogs: () => void;
     activeView: ViewType;
     onToggleSidebar: () => void;
+    lastSynced?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, onViewLogs, activeView, onToggleSidebar }) => {
+const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, onViewLogs, activeView, onToggleSidebar, lastSynced }) => {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [canFullscreen, setCanFullscreen] = useState(true);
@@ -132,7 +133,16 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
         </div>
       </div>
       
-      <div className="mt-4 md:mt-0 flex items-center gap-2 sm:gap-4">
+        <div className="mt-4 md:mt-0 flex items-center gap-2 sm:gap-4">
+        {lastSynced && (
+          <div className="hidden sm:flex flex-col items-end mr-2">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auto-Refresh Active</p>
+            <p className="text-[11px] font-medium text-partners-green flex items-center gap-1">
+              <RefreshIcon className="h-3 w-3 animate-spin-slow" />
+              Synced: {new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          </div>
+        )}
         {canFullscreen && (
           <button 
               onClick={toggleFullscreen}

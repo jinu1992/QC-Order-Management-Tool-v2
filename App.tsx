@@ -113,7 +113,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (currentUser) {
         refreshData();
-        const intervalId = setInterval(() => refreshData(true), 30 * 60 * 1000);
+        const intervalId = setInterval(() => refreshData(true), 5 * 60 * 1000);
         return () => clearInterval(intervalId);
     }
   }, [refreshData, currentUser]);
@@ -282,6 +282,7 @@ const App: React.FC = () => {
           onViewLogs={() => { setActiveView('Admin'); setAdminTab('logs'); }} 
           activeView={activeView}
           onToggleSidebar={toggleSidebar}
+          lastSynced={lastSynced}
         />
         {renderContent()}
       </main>
