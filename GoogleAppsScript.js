@@ -88,8 +88,10 @@ function doPost(e) {
     else if (action === 'updatePrice') result = { status: 'success', message: 'Price updated' };
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
     else if (action === 'sendZeptoAppointmentRequestEmail') result = handleZeptoAppointmentRequest(data);
+    else if (action === 'sendInstamartAppointmentRequestEmail') result = handleInstamartAppointmentRequest(data);
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
+    else if (action === 'updateInstamartAppointmentDetails') result = updateInstamartAppointmentDetails(data);
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses();
@@ -440,6 +442,47 @@ function handleZeptoAppointmentRequest(data) {
   }
 }
 
+function handleInstamartAppointmentRequest(data) {
+  const { orders } = data;
+  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'No orders provided' };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_PO_DB);
+    const sheetData = sheet.getDataRange().getValues();
+    const headers = sheetData[0];
+    const refCol = headers.indexOf('EE_reference_code');
+    const requestIdCol = headers.indexOf('Appointment Request ID');
+    const requestTimestampCol = headers.indexOf('Appointment Request Timestamp');
+
+    if (requestIdCol === -1 || requestTimestampCol === -1 || refCol === -1) {
+        return { status: 'error', message: 'Required columns not found in sheet.' };
+    }
+
+    const requestId = 'INSTA-REQ-' + Date.now();
+    const timestamp = new Date().toLocaleString();
+
+    let updatedCount = 0;
+    orders.forEach(order => {
+      for (let i = 1; i < sheetData.length; i++) {
+        if (String(sheetData[i][refCol]) === order.id) {
+          sheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
+          sheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
+          updatedCount++;
+        }
+      }
+    });
+
+    return { 
+      status: 'success', 
+      message: `Instamart Appointment request sent for ${updatedCount} orders.`, 
+      requestId 
+    };
+  } catch (e) {
+    return { status: 'error', message: 'Error updating appointment request: ' + e.toString() };
+  }
+}
+
 function getBoxSummaryByEEReference(eeReferenceCode) {
   // Stub implementation for Amazon Box Details
   return {
@@ -522,6 +565,41 @@ function updateRTOStatus(data) {
 
   if (updated) {
     return { status: 'success', message: 'RTO Status updated successfully' };
+  } else {
+    return { status: 'error', message: 'Order not found' };
+  }
+}
+
+function updateInstamartAppointmentDetails(data) {
+  const { eeReferenceCode, appointmentId, appointmentDate } = data;
+  if (!eeReferenceCode || (!appointmentId && !appointmentDate)) {
+    return { status: 'error', message: 'Missing required fields' };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  const eeRefIdx = headers.indexOf("EE_reference_code");
+  const apptIdIdx = headers.indexOf("Appointment ID");
+  const apptDateIdx = headers.indexOf("Appointment Date");
+
+  if (eeRefIdx === -1 || apptIdIdx === -1 || apptDateIdx === -1) {
+    return { status: 'error', message: 'Required columns not found in PO_Database' };
+  }
+
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
+      if (appointmentId) sheet.getRange(i + 1, apptIdIdx + 1).setValue(appointmentId);
+      if (appointmentDate) sheet.getRange(i + 1, apptDateIdx + 1).setValue(appointmentDate);
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    return { status: 'success', message: 'Instamart appointment details updated successfully' };
   } else {
     return { status: 'error', message: 'Order not found' };
   }

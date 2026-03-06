@@ -462,12 +462,20 @@ export const sendZeptoAppointmentRequestEmail = async (params: any) => {
     return await postToScript({ action: 'sendZeptoAppointmentRequestEmail', ...params });
 };
 
+export const sendInstamartAppointmentRequestEmail = async (params: any) => {
+    return await postToScript({ action: 'sendInstamartAppointmentRequestEmail', ...params });
+};
+
 export const updateZeptoOrderStatus = async (poNumber: string, status: string) => {
     return await postToScript({ action: 'updateZeptoOrderStatus', poNumber, status });
 };
 
 export const updateZeptoAppointmentDetails = async (params: any) => {
     return await postToScript({ action: 'updateZeptoAppointmentDetails', ...params });
+};
+
+export const updateInstamartAppointmentDetails = async (params: any) => {
+    return await postToScript({ action: 'updateInstamartAppointmentDetails', ...params });
 };
 
 export const updateZeptoASN = async (eeReferenceCode: string, asnNumber: string) => {

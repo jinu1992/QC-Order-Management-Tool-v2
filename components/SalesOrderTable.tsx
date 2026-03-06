@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -756,6 +756,107 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     );
 };
 
+const InstamartAppointmentModal: FC<{ 
+    so: GroupedSalesOrder, 
+    onClose: () => void, 
+    addNotification: any, 
+    onComplete: () => void 
+}> = ({ so, onClose, addNotification, onComplete }) => {
+    const [appointmentId, setAppointmentId] = useState('');
+    const [appointmentDate, setAppointmentDate] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleComplete = async () => {
+        if (!appointmentId.trim() && !appointmentDate.trim()) {
+            addNotification("Please enter at least an Appointment ID or Date", "error");
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            const response = await updateInstamartAppointmentDetails({
+                eeReferenceCode: so.id,
+                appointmentId: appointmentId.trim(),
+                appointmentDate: appointmentDate.trim()
+            });
+
+            if (response.status === 'success') {
+                addNotification("Instamart Appointment Details Updated!", "success");
+                onComplete();
+                onClose();
+            } else {
+                addNotification(response.message || "Failed to update appointment details", "error");
+            }
+        } catch (error) {
+            addNotification("Error updating appointment details", "error");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-orange-100 flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-orange-50 border-b border-orange-100 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
+                            <CalendarIcon className="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-800">Instamart Appointment</h3>
+                            <p className="text-xs text-orange-600 font-medium">Update confirmation details</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-orange-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-orange-400"/></button>
+                </div>
+
+                <div className="p-8 space-y-6">
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment / Consignment ID</label>
+                            <input 
+                                type="text" 
+                                value={appointmentId}
+                                onChange={(e) => setAppointmentId(e.target.value)}
+                                placeholder="Enter ID from confirmation"
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Date</label>
+                            <input 
+                                type="date" 
+                                value={appointmentDate}
+                                onChange={(e) => setAppointmentDate(e.target.value)}
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex gap-3">
+                        <div className="bg-orange-200 p-1.5 rounded-lg h-fit"><QuestionMarkCircleIcon className="h-4 w-4 text-orange-700" /></div>
+                        <p className="text-[11px] text-orange-800 font-medium leading-relaxed">
+                            Once updated, the order will move to <span className="font-bold">Invoiced</span> status and will be ready for <span className="font-bold">Nimbus Post</span> shipping.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3">
+                    <button onClick={onClose} className="flex-1 px-4 py-3 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
+                    <button 
+                        onClick={handleComplete}
+                        disabled={isSubmitting}
+                        className="flex-[2] px-4 py-3 bg-orange-600 text-white text-sm font-bold rounded-xl shadow-lg shadow-orange-200 hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
+                        {isSubmitting ? 'Updating...' : 'Confirm Appointment'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ZeptoASNHelperModal: FC<{ 
     so: GroupedSalesOrder, 
     onClose: () => void, 
@@ -1140,12 +1241,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [isPushingNimbus, setIsPushingNimbus] = useState<string | null>(null);
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
+    const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
     const [isProcessingBlinkit, setIsProcessingBlinkit] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [shippingConfirm, setShippingConfirm] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [zeptoASNHelper, setZeptoASNHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    const [instamartApptModal, setInstamartApptModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [fbaShipmentModal, setFbaShipmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [flipkartConsignmentModal, setFlipkartConsignmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
@@ -1327,6 +1430,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
                     }
                 }
 
+                const isInstamart = po.channel.toLowerCase().includes('instamart');
+                if (isInstamart && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId || apptDate) {
+                        // Appointment confirmed, keep normal status (e.g. Invoiced)
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
                 if (!groups[refCode]) {
                     groups[refCode] = { 
                         id: refCode, 
@@ -1499,6 +1611,59 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
             addNotification('Error sending appointment request', 'error');
         } finally {
             setIsSendingZeptoAppointment(false);
+        }
+    };
+    
+    const instamartEligibility = useMemo(() => {
+        const instamartOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('instamart'));
+        if (instamartOrders.length === 0) return { eligible: false, reason: 'No Instamart orders' };
+
+        // Only consider orders that haven't had an appointment request yet
+        const activeInstamartOrders = instamartOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
+        
+        const openInstamartOrders = activeInstamartOrders.filter(so => 
+            ['Confirmed', 'Batch Created'].includes(so.status)
+        );
+
+        const invoicedInstamartOrders = activeInstamartOrders.filter(so => 
+            so.status === 'Invoiced' && !so.awb
+        );
+
+        const hasOpen = openInstamartOrders.length > 0;
+        
+        const missingBoxDetails = invoicedInstamartOrders.some(so => (so.boxCount || 0) === 0);
+
+        if (hasOpen) return { eligible: false, reason: 'Waiting for other Instamart orders to be invoiced', hasOpen: true };
+        if (invoicedInstamartOrders.length === 0) return { eligible: false, reason: 'No eligible invoiced Instamart orders' };
+        if (missingBoxDetails) return { eligible: false, reason: 'Box details missing for some orders' };
+
+        return { eligible: true, orders: invoicedInstamartOrders };
+    }, [allSalesOrders]);
+
+    const handleSendInstamartAppointmentRequest = async () => {
+        if (!instamartEligibility.eligible || isSendingInstamartAppointment) return;
+        
+        setIsSendingInstamartAppointment(true);
+        try {
+            const res = await sendInstamartAppointmentRequestEmail({
+                orders: instamartEligibility.orders?.map(o => ({
+                    id: o.id,
+                    poReference: o.poReference,
+                    boxCount: o.boxCount
+                }))
+            });
+
+            if (res.status === 'success') {
+                addNotification(res.message || 'Instamart appointment request sent successfully.', 'success');
+                onSync();
+            } else {
+                addNotification(res.message || 'Failed to send Instamart appointment request', 'error');
+            }
+        } catch (err) {
+            console.error('Error sending Instamart appointment request:', err);
+            addNotification('Error sending Instamart appointment request', 'error');
+        } finally {
+            setIsSendingInstamartAppointment(false);
         }
     };
 
@@ -2002,6 +2167,12 @@ let html = `
             if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
 
+        const isInstamart = so.channel.toLowerCase().includes('instamart');
+        if (isInstamart) {
+            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
+        }
+
         if (so.status === 'Invoiced' && !so.awb) {
             if (so.boxCount === 0 && !so.channel.toLowerCase().includes('flipkart')) {
                 return { 
@@ -2104,6 +2275,14 @@ let html = `
                     data={amazonBoxModal.data}
                 />
             )}
+            {instamartApptModal.isOpen && instamartApptModal.so && (
+                <InstamartAppointmentModal 
+                    so={instamartApptModal.so} 
+                    onClose={() => setInstamartApptModal({ isOpen: false, so: null })} 
+                    addNotification={addNotification}
+                    onComplete={onSync}
+                />
+            )}
             {shippingConfirm.isOpen && shippingConfirm.so && (
                 <ShippingConfirmationModal 
                     so={shippingConfirm.so} 
@@ -2152,7 +2331,18 @@ let html = `
                             title="All Zepto orders invoiced. Ready to send appointment request."
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingZeptoAppointment ? 'animate-pulse' : ''}`} />
-                            <span>Send Appt.</span>
+                            <span>Zepto Appt.</span>
+                        </button>
+                    )}
+                    {instamartEligibility.eligible && (
+                        <button 
+                            onClick={handleSendInstamartAppointmentRequest}
+                            disabled={isSendingInstamartAppointment}
+                            className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group"
+                            title="All Instamart orders invoiced. Ready to send appointment request."
+                        >
+                            <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingInstamartAppointment ? 'animate-pulse' : ''}`} />
+                            <span>Instamart Appt.</span>
                         </button>
                     )}
                     <button 
@@ -2224,8 +2414,10 @@ let html = `
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
                                 const isZepto = so.channel.toLowerCase().includes('zepto');
-                                const isGreyedOut = isZepto && so.status === 'Invoiced' && zeptoEligibility.hasOpen;
-                                const zeptoTooltip = isGreyedOut ? "Waiting for other Zepto orders to be invoiced" : undefined;
+                                const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
+                                const isGreyedOut = (isZepto && so.status === 'Invoiced' && zeptoEligibility.hasOpen) || 
+                                                    (isInstamartChannel && so.status === 'Invoiced' && instamartEligibility.hasOpen);
+                                const zeptoTooltip = isGreyedOut ? `Waiting for other ${isZepto ? 'Zepto' : 'Instamart'} orders to be invoiced` : undefined;
                                 
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
