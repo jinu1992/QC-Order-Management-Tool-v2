@@ -139,6 +139,40 @@ const formatDisplayTime = (timeInput?: any): string => {
     }
 };
 
+const formatDateForInput = (dateStr?: string): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+    }
+    // Handle DD-MM-YYYY
+    const parts = dateStr.split('-');
+    if (parts.length === 3 && parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    return dateStr;
+};
+
+const formatTimeForInput = (timeStr?: string): string => {
+    if (!timeStr) return '';
+    // Handle HH:MM AM/PM
+    const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
+    if (ampmMatch) {
+        let hours = parseInt(ampmMatch[1], 10);
+        const minutes = ampmMatch[2].padStart(2, '0');
+        const ampm = ampmMatch[3].toUpperCase();
+        if (ampm === 'PM' && hours < 12) hours += 12;
+        if (ampm === 'AM' && hours === 12) hours = 0;
+        return `${String(hours).padStart(2, '0')}:${minutes}`;
+    }
+    // Handle HH:MM:SS or HH:MM
+    const parts = timeStr.match(/(\d{1,2}):(\d{1,2})/);
+    if (parts) {
+        return `${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}`;
+    }
+    return timeStr;
+};
+
 // --- Flipkart Consignment Modal ---
 
 const FlipkartConsignmentModal: FC<{ 
@@ -762,13 +796,35 @@ const InstamartAppointmentModal: FC<{
     addNotification: any, 
     onComplete: () => void 
 }> = ({ so, onClose, addNotification, onComplete }) => {
-    const [appointmentId, setAppointmentId] = useState('');
-    const [appointmentDate, setAppointmentDate] = useState('');
+    const [appointmentId, setAppointmentId] = useState(so.appointmentId || '');
+    const [appointmentDate, setAppointmentDate] = useState(formatDateForInput(so.appointmentDate));
+    const [appointmentTime, setAppointmentTime] = useState(formatTimeForInput(so.appointmentTime));
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const isZepto = so.channel.toLowerCase().includes('zepto');
+    const isInstamart = so.channel.toLowerCase().includes('instamart');
+    const isBB = so.channel.toLowerCase().includes('bb');
+    const isRBL = so.channel.toLowerCase().includes('rbl');
+    const hideIdField = isZepto || isInstamart || isBB || isRBL;
+
+    const brandColor = isZepto ? 'bg-purple-600' : 'bg-orange-600';
+    const brandText = isZepto ? 'text-purple-600' : 'text-orange-600';
+    const brandBg = isZepto ? 'bg-purple-50' : 'bg-orange-50';
+    const brandBorder = isZepto ? 'border-purple-100' : 'border-orange-100';
+    const brandHover = isZepto ? 'hover:bg-purple-100' : 'hover:bg-orange-100';
+    const brandShadow = isZepto ? 'shadow-purple-100' : 'shadow-orange-100';
+    const brandRing = isZepto ? 'focus:ring-purple-500' : 'focus:ring-orange-500';
+
     const handleComplete = async () => {
-        if (!appointmentId.trim() && !appointmentDate.trim()) {
-            addNotification("Please enter at least an Appointment ID or Date", "error");
+        const hasId = !hideIdField && appointmentId.trim();
+        const hasDate = appointmentDate.trim();
+        const hasTime = appointmentTime.trim();
+
+        if (!hasId && !hasDate && !hasTime) {
+            const msg = hideIdField 
+                ? "Please enter at least an Appointment Date or Time" 
+                : "Please enter at least an Appointment ID, Date or Time";
+            addNotification(msg, "error");
             return;
         }
 
@@ -777,11 +833,12 @@ const InstamartAppointmentModal: FC<{
             const response = await updateInstamartAppointmentDetails({
                 eeReferenceCode: so.id,
                 appointmentId: appointmentId.trim(),
-                appointmentDate: appointmentDate.trim()
+                appointmentDate: appointmentDate.trim(),
+                appointmentTime: appointmentTime.trim()
             });
 
             if (response.status === 'success') {
-                addNotification("Instamart Appointment Details Updated!", "success");
+                addNotification("Appointment Details Updated!", "success");
                 onComplete();
                 onClose();
             } else {
@@ -796,47 +853,60 @@ const InstamartAppointmentModal: FC<{
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-orange-100 flex flex-col animate-in fade-in zoom-in-95 duration-200">
-                <div className="p-6 bg-orange-50 border-b border-orange-100 flex justify-between items-center">
+            <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border ${brandBorder} flex flex-col animate-in fade-in zoom-in-95 duration-200`}>
+                <div className={`p-6 ${brandBg} border-b ${brandBorder} flex justify-between items-center`}>
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
+                        <div className={`w-10 h-10 ${brandColor} rounded-xl flex items-center justify-center text-white shadow-lg ${brandShadow}`}>
                             <CalendarIcon className="h-6 w-6" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-gray-800">Instamart Appointment</h3>
-                            <p className="text-xs text-orange-600 font-medium">Update confirmation details</p>
+                            <h3 className="text-lg font-bold text-gray-800">{isZepto ? 'Zepto' : 'Instamart'} Appointment</h3>
+                            <p className={`text-xs ${brandText} font-medium`}>Update confirmation details</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-orange-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-orange-400"/></button>
+                    <button onClick={onClose} className={`p-2 ${brandHover} rounded-full transition-colors`}><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
                 </div>
 
                 <div className="p-8 space-y-6">
                     <div className="space-y-4">
-                        <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment / Consignment ID</label>
-                            <input 
-                                type="text" 
-                                value={appointmentId}
-                                onChange={(e) => setAppointmentId(e.target.value)}
-                                placeholder="Enter ID from confirmation"
-                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Date</label>
-                            <input 
-                                type="date" 
-                                value={appointmentDate}
-                                onChange={(e) => setAppointmentDate(e.target.value)}
-                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
-                            />
+                        {!hideIdField && (
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment / Consignment ID</label>
+                                <input 
+                                    type="text" 
+                                    value={appointmentId}
+                                    onChange={(e) => setAppointmentId(e.target.value)}
+                                    placeholder="Enter ID from confirmation"
+                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
+                                />
+                            </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Date</label>
+                                <input 
+                                    type="date" 
+                                    value={appointmentDate}
+                                    onChange={(e) => setAppointmentDate(e.target.value)}
+                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Time</label>
+                                <input 
+                                    type="time" 
+                                    value={appointmentTime}
+                                    onChange={(e) => setAppointmentTime(e.target.value)}
+                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
+                                />
+                            </div>
                         </div>
                     </div>
 
-                    <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex gap-3">
-                        <div className="bg-orange-200 p-1.5 rounded-lg h-fit"><QuestionMarkCircleIcon className="h-4 w-4 text-orange-700" /></div>
-                        <p className="text-[11px] text-orange-800 font-medium leading-relaxed">
-                            Once updated, the order will move to <span className="font-bold">Invoiced</span> status and will be ready for <span className="font-bold">Nimbus Post</span> shipping.
+                    <div className={`${brandBg} border ${brandBorder} p-4 rounded-2xl flex gap-3`}>
+                        <div className={`${isZepto ? 'bg-purple-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}><QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : 'text-orange-700'}`} /></div>
+                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : 'text-orange-800'} font-medium leading-relaxed`}>
+                            Once updated, the order will be ready for <span className="font-bold">Nimbus Post</span> shipping or final processing.
                         </p>
                     </div>
                 </div>
@@ -846,7 +916,7 @@ const InstamartAppointmentModal: FC<{
                     <button 
                         onClick={handleComplete}
                         disabled={isSubmitting}
-                        className="flex-[2] px-4 py-3 bg-orange-600 text-white text-sm font-bold rounded-xl shadow-lg shadow-orange-200 hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                        className={`flex-[2] px-4 py-3 ${brandColor} text-white text-sm font-bold rounded-xl shadow-lg ${brandShadow} hover:brightness-110 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2`}
                     >
                         {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
                         {isSubmitting ? 'Updating...' : 'Confirm Appointment'}
@@ -2154,6 +2224,14 @@ let html = `
         const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
         const isZepto = so.channel.toLowerCase().includes('zepto');
         
+        // Delivered, RTO, Returned orders should only show Track Order or Details
+        if (so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned') {
+            if (so.awb || so.status === 'Delivered') {
+                return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            }
+            return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+        }
+
         const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
                                 (so.storeCode.toUpperCase() === 'YEIO');
                                 
@@ -2163,8 +2241,8 @@ let html = `
         
         if (isZepto) {
             if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
-            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
-            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
         }
 
         const isInstamart = so.channel.toLowerCase().includes('instamart');
@@ -2414,7 +2492,12 @@ let html = `
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
                                 const isZepto = so.channel.toLowerCase().includes('zepto');
+                                const isBB = so.channel.toLowerCase().includes('bb');
+                                const isRBL = so.channel.toLowerCase().includes('rbl');
+                                const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
+                                
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
+                                const isFinalStatus = so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned';
                                 const isGreyedOut = (isZepto && so.status === 'Invoiced' && zeptoEligibility.hasOpen) || 
                                                     (isInstamartChannel && so.status === 'Invoiced' && instamartEligibility.hasOpen);
                                 const zeptoTooltip = isGreyedOut ? `Waiting for other ${isZepto ? 'Zepto' : 'Instamart'} orders to be invoiced` : undefined;
@@ -2422,24 +2505,27 @@ let html = `
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
                                 
-                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel;
-                                const showFlipkartPrintAction = isFlipkart && hasAppointmentId;
+                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus;
+                                const showFlipkartPrintAction = isFlipkart && hasAppointmentId && !isFinalStatus;
                                 
-                                const showFlipkartDownload = isFlipkart && hasLabel;
+                                const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkart) && hasLabel && (so.status !== 'Delivered');
-                                const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && (so.status !== 'Delivered');
+                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkart) && hasLabel && !isFinalStatus;
+                                const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && !isFinalStatus;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
                                                         (so.storeCode.toUpperCase() === 'YEIO');
                                 const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
-                                const showAmazonBoxDetails = isAmazon && (
+                                const showAmazonBoxDetails = isAmazon && !isFinalStatus && (
                                     (so.status === 'Invoiced' || so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered') ||
                                     (eeStatusLower === 'confirmed' && canInvoice)
                                 );
+
+                                const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
+                                const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
                                 return (
                                     <Fragment key={so.id}>
@@ -2451,22 +2537,30 @@ let html = `
                                             <td className="p-4 text-center sticky left-0 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]"><div className="text-gray-400 hover:text-partners-green">{isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}</div></td>
                                             <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">{so.id}</td>
                                             <td className="px-6 py-4">
-                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                                    so.status === 'Returned' ? 'bg-red-100 text-red-700' : 
-                                                    so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
-                                                    so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : 
-                                                    so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : 
-                                                    so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : 
-                                                    so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' : 
-                                                    so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' : 
-                                                    so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
-                                                    so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
-                                                    so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
-                                                    so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
-                                                    'bg-gray-100 text-gray-700'
-                                                }`}>
-                                                    {so.status}
-                                                </span>
+                                                <div className="flex flex-col gap-1">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit ${
+                                                        so.status === 'Returned' ? 'bg-red-100 text-red-700' : 
+                                                        so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                                        so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : 
+                                                        so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : 
+                                                        so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : 
+                                                        so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' : 
+                                                        so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' : 
+                                                        so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
+                                                        so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
+                                                        so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
+                                                        so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                                        'bg-gray-100 text-gray-700'
+                                                    }`}>
+                                                        {so.status}
+                                                    </span>
+                                                    {showApptMissing && (
+                                                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-red-50 text-red-600 border border-red-100 w-fit flex items-center gap-1 animate-pulse">
+                                                            <div className="h-1 w-1 rounded-full bg-red-600"></div>
+                                                            Appt. Missing
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-6 py-4 font-medium text-gray-800">{so.channel}</td>
                                             <td className="px-6 py-4">{so.storeCode}</td>
@@ -2553,6 +2647,19 @@ let html = `
                                                         <DotsVerticalIcon className="h-4 w-4" />
                                                         {openMenuId === so.id && (
                                                             <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                                                {canUpdateAppt && (
+                                                                    <button 
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setInstamartApptModal({ isOpen: true, so });
+                                                                            setOpenMenuId(null);
+                                                                        }}
+                                                                        className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-partners-green hover:bg-partners-light-green flex items-center gap-2 transition-colors"
+                                                                    >
+                                                                        <CalendarIcon className="h-3.5 w-3.5" />
+                                                                        Update Appointment
+                                                                    </button>
+                                                                )}
                                                                 {so.status === 'Shipped' && (
                                                                     <button 
                                                                         onClick={(e) => {

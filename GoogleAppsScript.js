@@ -571,8 +571,8 @@ function updateRTOStatus(data) {
 }
 
 function updateInstamartAppointmentDetails(data) {
-  const { eeReferenceCode, appointmentId, appointmentDate } = data;
-  if (!eeReferenceCode || (!appointmentId && !appointmentDate)) {
+  const { eeReferenceCode, appointmentId, appointmentDate, appointmentTime } = data;
+  if (!eeReferenceCode || (!appointmentId && !appointmentDate && !appointmentTime)) {
     return { status: 'error', message: 'Missing required fields' };
   }
 
@@ -584,8 +584,9 @@ function updateInstamartAppointmentDetails(data) {
   const eeRefIdx = headers.indexOf("EE_reference_code");
   const apptIdIdx = headers.indexOf("Appointment ID");
   const apptDateIdx = headers.indexOf("Appointment Date");
+  const apptTimeIdx = headers.indexOf("Appointment Time");
 
-  if (eeRefIdx === -1 || apptIdIdx === -1 || apptDateIdx === -1) {
+  if (eeRefIdx === -1 || apptIdIdx === -1 || apptDateIdx === -1 || apptTimeIdx === -1) {
     return { status: 'error', message: 'Required columns not found in PO_Database' };
   }
 
@@ -594,12 +595,13 @@ function updateInstamartAppointmentDetails(data) {
     if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
       if (appointmentId) sheet.getRange(i + 1, apptIdIdx + 1).setValue(appointmentId);
       if (appointmentDate) sheet.getRange(i + 1, apptDateIdx + 1).setValue(appointmentDate);
+      if (appointmentTime) sheet.getRange(i + 1, apptTimeIdx + 1).setValue(appointmentTime);
       updated = true;
     }
   }
 
   if (updated) {
-    return { status: 'success', message: 'Instamart appointment details updated successfully' };
+    return { status: 'success', message: 'Appointment details updated successfully' };
   } else {
     return { status: 'error', message: 'Order not found' };
   }
