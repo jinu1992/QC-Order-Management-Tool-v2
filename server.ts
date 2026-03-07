@@ -16,10 +16,17 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
+  const getRedirectUri = () => {
+    if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+    if (process.env.APP_URL) return `${process.env.APP_URL}/auth/google/callback`;
+    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}/auth/google/callback`;
+    return `http://localhost:3000/auth/google/callback`;
+  };
+
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || (process.env.APP_URL ? `${process.env.APP_URL}/auth/google/callback` : `http://localhost:3000/auth/google/callback`)
+    getRedirectUri()
   );
 
   // --- Auth Routes ---

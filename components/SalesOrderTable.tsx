@@ -1998,7 +1998,7 @@ let html = `
         }).sort((a, b) => {
             const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
             const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
-            return timeB - timeA; // Latest first
+            return timeA - timeB; // Ascending order
         });
 
         if (inTransitOrders.length === 0) {
@@ -2009,11 +2009,17 @@ let html = `
         if (!googleTokens) {
             try {
                 const res = await fetch('/api/auth/google/url');
+                if (!res.ok) {
+                    const text = await res.text();
+                    console.error('Failed to get auth URL:', text);
+                    throw new Error(`Server returned ${res.status}`);
+                }
                 const { url } = await res.json();
                 window.open(url, 'google_auth', 'width=600,height=700');
                 return;
-            } catch (err) {
-                addNotification('Failed to initiate Google login', 'error');
+            } catch (err: any) {
+                console.error('Error initiating Google login:', err);
+                addNotification(`Failed to initiate Google login: ${err.message || 'Unknown error'}`, 'error');
                 return;
             }
         }
@@ -2097,7 +2103,7 @@ let html = `
         }).sort((a, b) => {
             const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
             const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
-            return timeB - timeA; // Latest first
+            return timeA - timeB; // Ascending order
         });
 
         if (inTransitOrders.length === 0) {
