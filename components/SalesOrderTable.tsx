@@ -95,6 +95,8 @@ interface GroupedSalesOrder {
     qrCodeUrl?: string;
     ewb?: string;
     fbaShipmentId?: string;
+    shippingCharge?: number;
+    eeCustomerId?: string;
     // Specific for Flipkart
     consignmentQty?: number;
     consignmentProducts?: number;
@@ -725,7 +727,7 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
         }
     };
 
-    const amountWithTax = (so.amount * 1.05).toFixed(0);
+    const amountWithTax = ((so.amount * 1.05) + (so.shippingCharge || 0)).toFixed(0);
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
             <div className="bg-partners-gray-bg rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-white flex flex-col max-h-[90vh]">
@@ -1590,6 +1592,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         qrCodeUrl: po.qrCodeUrl,
                         ewb: item.ewb || po.ewb,
                         fbaShipmentId: item.fbaShipmentId || po.fbaShipmentId,
+                        shippingCharge: po.shippingCharge,
+                        eeCustomerId: po.eeCustomerId,
                         consignmentQty: po.consignmentQty,
                         consignmentProducts: po.consignmentProducts,
                         consignmentValue: po.consignmentValue
@@ -1627,6 +1631,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (!groups[refCode].fbaShipmentId) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
                     if (!groups[refCode].appointmentId) groups[refCode].appointmentId = po.appointmentId;
                     if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
+                    if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
+                    if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
                 }
                 groups[refCode].items.push(item);
                 groups[refCode].qty += effectiveQty;
@@ -2223,7 +2229,7 @@ let html = `
         }));
 
         try {
-            const res = await createZohoInvoice(eeRef);
+            const res = await createZohoInvoice(eeRef, soObj?.shippingCharge);
             if (res.status === 'success') {
                 addNotification(res.message || 'Invoice triggered successfully.', 'success');
                 addLog('Invoice Creation', `EE Ref: ${eeRef}`);
@@ -2901,7 +2907,7 @@ let html = `
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View Order PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
-                                </div>                                                      </div>
+                                                                </div>                                                      
                                                             </div>
                                                             <div className="lg:col-span-1">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><InvoiceIcon className="h-4 w-4 text-partners-purple" /> Invoice Information</h4>
@@ -3113,23 +3119,53 @@ let html = `
                                                             <div className="flex justify-between items-center mb-4">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><DotsVerticalIcon className="h-4 w-4 text-partners-green rotate-90" /> SKU Breakdown</h4>
                                                             </div>
-                                                            <div className="overflow-x-auto border rounded-xl"><table className="w-full text-[11px] text-left"><thead className="bg-gray-50 text-gray-500 uppercase"><tr><th className="py-2.5 px-4">Item Name / SKU</th><th className="py-2.5 text-right w-24">EE Item Qty</th><th className="py-2.5 text-right w-24 text-red-600">Cancelled</th><th className="py-2.5 text-right w-24 text-green-600">Shipped</th><th className="py-2.5 text-right w-24 text-orange-600">Returned</th><th className="py-2.5 px-4 text-center w-28">Item status</th></tr></thead><tbody className="divide-y divide-gray-100">{so.items.map((item, idx) => (<tr key={idx} className="hover:bg-gray-50"><td className="py-3 px-4"><p className="font-bold text-gray-800">{item.itemName}</p><p className="text-[10px] text-gray-400 font-mono">{item.masterSku || item.articleCode}</p></td><td className="py-3 text-right font-bold text-gray-900">{item.itemQuantity || 0}</td><td className="py-3 text-right text-red-600 font-bold">{item.cancelledQuantity || 0}</td><td className="py-3 text-right text-green-600 font-bold">{item.shippedQuantity || 0}</td><td className="py-3 text-right text-orange-600 font-bold">{item.returnedQuantity || 0}</td><td className="py-3 px-4 text-center"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase inline-block w-full ${item.itemStatus?.toLowerCase().includes('ship') ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{item.itemStatus || 'Processing'}</span></td></tr>))}</tbody></table></div>
+                                                            <div className="overflow-x-auto border rounded-xl">
+                                                                <table className="w-full text-[11px] text-left">
+                                                                    <thead className="bg-gray-50 text-gray-500 uppercase">
+                                                                        <tr>
+                                                                            <th className="py-2.5 px-4">Item Name / SKU</th>
+                                                                            <th className="py-2.5 text-right w-24">EE Item Qty</th>
+                                                                            <th className="py-2.5 text-right w-24 text-red-600">Cancelled</th>
+                                                                            <th className="py-2.5 text-right w-24 text-green-600">Shipped</th>
+                                                                            <th className="py-2.5 text-right w-24 text-orange-600">Returned</th>
+                                                                            <th className="py-2.5 px-4 text-center w-28">Item status</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-gray-100">
+                                                                        {so.items.map((item, idx) => (
+                                                                            <tr key={idx} className="hover:bg-gray-50">
+                                                                                <td className="py-3 px-4">
+                                                                                    <p className="font-bold text-gray-800">{item.itemName}</p>
+                                                                                    <p className="text-[10px] text-gray-400 font-mono">{item.masterSku || item.articleCode}</p>
+                                                                                </td>
+                                                                                <td className="py-3 text-right font-bold text-gray-900">{item.itemQuantity || 0}</td>
+                                                                                <td className="py-3 text-right text-red-600 font-bold">{item.cancelledQuantity || 0}</td>
+                                                                                <td className="py-3 text-right text-green-600 font-bold">{item.shippedQuantity || 0}</td>
+                                                                                <td className="py-3 text-right text-orange-600 font-bold">{item.returnedQuantity || 0}</td>
+                                                                                <td className="py-3 px-4 text-center">
+                                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase inline-block w-full ${item.itemStatus?.toLowerCase().includes('ship') ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                                                        {item.itemStatus || 'Processing'}
+                                                                                    </span>
+                                                                                </td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )}
-                            </Fragment>
-                        );
-                    })
-                )}
-            </tbody>
-        </table>
-    </div>
-</div>
-);
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </Fragment>
+                                );
+                            })
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
 };
 
 const PortalHelperModal_ = PortalHelperModal;
