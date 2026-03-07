@@ -170,6 +170,7 @@ export interface Quotation {
     quotationNumber: string;
     referenceNumber: string;
     amount: number;
+    subtotal: number;
     shippingCharges: number;
     taxAmount: number;
     status: string;

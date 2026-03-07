@@ -32,10 +32,16 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         setError(null);
         try {
             const res = await fetch('/api/auth/google/url');
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({ message: 'Server responded with ' + res.status }));
+                throw new Error(errorData.message || 'Failed to fetch auth URL');
+            }
             const { url } = await res.json();
+            if (!url) throw new Error('No auth URL returned from server');
             window.open(url, 'google_auth', 'width=600,height=700');
         } catch (e: any) {
-            setError('Failed to initiate login.');
+            console.error('Login Initiation Error:', e);
+            setError(e.message || 'Failed to initiate login.');
             setIsLoading(false);
         }
     };

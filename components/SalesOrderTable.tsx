@@ -726,7 +726,7 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
         }
     };
 
-    const amountWithTax = (so.amount * 1.05).toFixed(0);
+    const amountWithTax = ((so.amount + (so.shippingCharges || 0)) * 1.05).toFixed(0);
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
             <div className="bg-partners-gray-bg rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-white flex flex-col max-h-[90vh]">
@@ -1852,7 +1852,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const supplierName = "Brainlytic Solutions Pvt Ltd";
         const totalQty = so.consignmentQty || so.qty || 0; 
         const productCount = so.consignmentProducts || so.items.length || 0;
-        const totalValue = so.consignmentValue || (so.amount * 1.05).toFixed(2);
+        const totalValue = so.consignmentValue || ((so.amount + (so.shippingCharges || 0)) * 1.05).toFixed(2);
 
 let html = `
 <html>
@@ -2683,7 +2683,7 @@ let html = `
                         ) : (
                             salesOrders.map((so) => {
                                 const isExpanded = expandedRowId === so.id;
-                                const totalAmountIncTax = (so.amount * 1.05) + (so.shippingCharges || 0);
+                                const totalAmountIncTax = (so.amount + (so.shippingCharges || 0)) * 1.05;
                                 const action = getPrimaryAction(so);
                                 const isRefreshing = isRefreshingSo === so.poReference;
                                 

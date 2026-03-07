@@ -147,7 +147,8 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
                         quotationNumber: String(row['Quote Number'] || row['Quotation Number'] || ''),
                         referenceNumber: String(row['Reference Number'] || ''),
                         amount: 0,
-                        shippingCharges: parseFloat(row['Shipping Charges']) || 0,
+                        subtotal: 0,
+                        shippingCharges: parseFloat(row['Shipping Charge'] || row['Shipping Charges']) || 0,
                         taxAmount: 0,
                         status: row['Status'] || 'Pending',
                         expiryDate: formatSheetDate(row['Expiry Date']) || '',
@@ -160,7 +161,7 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
                 const lineAmount = rate * quantity;
                 const lineTax = parseFloat(row['Tax Amount']) || 0;
 
-                groups[estimateId].amount += lineAmount;
+                groups[estimateId].subtotal += lineAmount;
                 groups[estimateId].taxAmount += lineTax;
                 groups[estimateId].items.push({
                     estimateId: estimateId,
@@ -172,9 +173,11 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
                 });
             });
 
-            // Final total calculation: Subtotal + Tax + Shipping
+            // Final total calculation: Subtotal + Tax + Shipping (with 5% tax on shipping)
             Object.values(groups).forEach(q => {
-                q.amount = q.amount + q.taxAmount + q.shippingCharges;
+                const shippingTax = q.shippingCharges * 0.05;
+                q.taxAmount += shippingTax;
+                q.amount = q.subtotal + q.taxAmount + q.shippingCharges;
             });
 
             return Object.values(groups).sort((a, b) => {
@@ -387,7 +390,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             rtoStatus: row['RTO Status'] ? String(row['RTO Status']) : undefined,
             rtoAwb: row['RTO AWB'] ? String(row['RTO AWB']) : undefined,
             freightCharged: Number(row['Freight Charged'] || 0),
-            shippingCharges: Number(row['Shipping Charges'] || 0),
+            shippingCharges: Number(row['Shipping Charge'] || row['Shipping Charges'] || 0),
             zohoItemId: row['Zoho Item ID'] ? String(row['Zoho Item ID']) : undefined,
             appointmentRequestId: row['Appointment Request ID'] ? String(row['Appointment Request ID']) : undefined,
             appointmentRequestDate: formatSheetDate(row['Appointment Request Date']),
@@ -415,7 +418,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (po.consignmentQty === undefined && row['Consignment Qty']) po.consignmentQty = Number(row['Consignment Qty']);
             if (po.consignmentProducts === undefined && row['Consignment Products']) po.consignmentProducts = Number(row['Consignment Products']);
             if (!po.consignmentValue && row['Consignment Value']) po.consignmentValue = String(row['Consignment Value']);
-            if (!po.shippingCharges && row['Shipping Charges']) po.shippingCharges = Number(row['Shipping Charges']);
+            if (!po.shippingCharges && (row['Shipping Charge'] || row['Shipping Charges'])) po.shippingCharges = Number(row['Shipping Charge'] || row['Shipping Charges']);
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
@@ -439,7 +442,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 qrCodeUrl: row['QR Code URL'] ? String(row['QR Code URL']) : undefined,
                 contactVerified: !!row['Contact Verified'] || false,
                 fbaShipmentId: row['FBA Shipment IDs'] ? String(row['FBA Shipment IDs']) : undefined,
-                shippingCharges: Number(row['Shipping Charges'] || 0),
+                shippingCharges: Number(row['Shipping Charge'] || row['Shipping Charges'] || 0),
                 // Fix: Extracting consignment properties from sheet columns if they exist
                 consignmentQty: row['Consignment Qty'] ? Number(row['Consignment Qty']) : undefined,
                 consignmentProducts: row['Consignment Products'] ? Number(row['Consignment Products']) : undefined,

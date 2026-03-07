@@ -178,7 +178,7 @@ const PortalHelperModal: FC<{ po: PurchaseOrder, onClose: () => void }> = ({ po,
     const firstPushedItem = (po.items || []).find(i => !!i.invoiceNumber);
     const invoiceNumber = firstPushedItem?.invoiceNumber || po.invoiceId || 'N/A';
     const invoicePdfUrl = firstPushedItem?.invoicePdfUrl || po.poPdfUrl || 'N/A';
-    const amountWithTax = (po.amount * 1.05).toFixed(0);
+    const amountWithTax = ((po.amount + (po.shippingCharges || 0)) * 1.05).toFixed(0);
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[70] p-4">

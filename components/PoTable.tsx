@@ -110,8 +110,9 @@ const OrderRow: React.FC<OrderRowProps> = ({
     // Sum active quantity and active amount
     const activeTotalQty = useMemo(() => activeItems.reduce((sum, i) => sum + (i.qty || 0), 0), [activeItems]);
     const activeAmount = useMemo(() => activeItems.reduce((sum, i) => sum + ((i.qty || 0) * (i.unitCost || 0)), 0), [activeItems]);
-    const taxAmount = activeAmount * 0.05;
-    const amountIncTax = activeAmount + taxAmount + (po.shippingCharges || 0);
+    const subtotal = activeAmount + (po.shippingCharges || 0);
+    const taxAmount = subtotal * 0.05;
+    const amountIncTax = subtotal + taxAmount;
     
     // Calculate Fulfillable Quantity
     const totalFulfillable = activeItems.reduce((sum, item) => sum + (item.fulfillableQty || 0), 0);

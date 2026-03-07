@@ -31,6 +31,8 @@ async function startServer() {
     getRedirectUri()
   );
 
+  console.log("OAuth2 Client Initialized with Redirect URI:", getRedirectUri());
+
   // --- Auth Routes ---
   app.post("/api/login-google", async (req: Request, res: Response) => {
     const { idToken } = req.body;
@@ -80,16 +82,26 @@ async function startServer() {
   });
 
   app.get("/api/auth/google/url", (req: Request, res: Response) => {
-    const url = oauth2Client.generateAuthUrl({
-      access_type: "offline",
-      scope: [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile"
-      ],
-      prompt: "select_account",
-    });
-    res.json({ url });
+    try {
+      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        console.error("Missing Google Client ID or Secret in environment variables");
+        return res.status(500).json({ status: 'error', message: 'Server configuration error: Missing Google credentials' });
+      }
+
+      const url = oauth2Client.generateAuthUrl({
+        access_type: "offline",
+        scope: [
+          "https://www.googleapis.com/auth/spreadsheets",
+          "https://www.googleapis.com/auth/userinfo.email",
+          "https://www.googleapis.com/auth/userinfo.profile"
+        ],
+        prompt: "select_account",
+      });
+      res.json({ url });
+    } catch (error: any) {
+      console.error("Error generating Auth URL:", error);
+      res.status(500).json({ status: 'error', message: 'Failed to generate Auth URL: ' + error.message });
+    }
   });
 
   app.get("/auth/google/callback", async (req: Request, res: Response) => {
@@ -248,4 +260,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL: Failed to start server:", err);
+  process.exit(1);
+});
