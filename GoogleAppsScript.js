@@ -87,8 +87,14 @@ function doPost(e) {
     else if (action === 'saveSystemConfig') result = { status: 'success', message: 'System config saved' };
     else if (action === 'updatePrice') result = { status: 'success', message: 'Price updated' };
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
-    else if (action === 'sendZeptoAppointmentRequestEmail') result = handleZeptoAppointmentRequest(data);
-    else if (action === 'sendInstamartAppointmentRequestEmail') result = handleInstamartAppointmentRequest(data);
+    else if (action === 'sendZeptoAppointmentRequestEmail') {
+      const saleOrderList = data.orders?.map(o => String(o.id).trim()) || [];
+      result = processChannelAppointments("Zepto", saleOrderList);
+    }
+    else if (action === 'sendInstamartAppointmentRequestEmail') {
+      const saleOrderList = data.orders?.map(o => String(o.id).trim()) || [];
+      result = processChannelAppointments("Instamart", saleOrderList);
+    }
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
     else if (action === 'updateInstamartAppointmentDetails') result = updateInstamartAppointmentDetails(data);
@@ -399,52 +405,8 @@ function processBlinkitAppointmentPasses() {
   }
 }
 
-function handleZeptoAppointmentRequest(data) {
-  const { orders } = data;
-  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'No orders provided' };
-
-  try {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(SHEET_PO_DB);
-    const sheetData = sheet.getDataRange().getValues();
-    const headers = sheetData[0];
-    const poCol = headers.indexOf('PO Number');
-    const refCol = headers.indexOf('EE_reference_code');
-    const requestIdCol = headers.indexOf('Appointment Request ID');
-    const requestTimestampCol = headers.indexOf('Appointment Request Timestamp');
-
-    if (requestIdCol === -1 || requestTimestampCol === -1 || refCol === -1) {
-        return { status: 'error', message: 'Required columns (EE_reference_code, Appointment Request ID/Timestamp) not found in sheet.' };
-    }
-
-    const requestId = 'REQ-' + Date.now();
-    const timestamp = new Date().toLocaleString();
-
-    let updatedCount = 0;
-    orders.forEach(order => {
-      for (let i = 1; i < sheetData.length; i++) {
-        // Match by Sales Order ID (EE Reference Code)
-        if (String(sheetData[i][refCol]) === order.id) {
-          sheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
-          sheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
-          updatedCount++;
-        }
-      }
-    });
-
-    return { 
-      status: 'success', 
-      message: `Zepto Appointment request sent for ${updatedCount} orders.`, 
-      requestId 
-    };
-  } catch (e) {
-    return { status: 'error', message: 'Error updating appointment request: ' + e.toString() };
-  }
-}
-
-function handleInstamartAppointmentRequest(data) {
-  const { orders } = data;
-  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'No orders provided' };
+function processChannelAppointments(channelName, saleOrderList) {
+  if (!saleOrderList || !Array.isArray(saleOrderList)) return { status: 'error', message: 'No orders provided' };
 
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -459,13 +421,14 @@ function handleInstamartAppointmentRequest(data) {
         return { status: 'error', message: 'Required columns not found in sheet.' };
     }
 
-    const requestId = 'INSTA-REQ-' + Date.now();
+    const prefix = channelName === 'Instamart' ? 'INSTA-REQ-' : 'REQ-';
+    const requestId = prefix + Date.now();
     const timestamp = new Date().toLocaleString();
 
     let updatedCount = 0;
-    orders.forEach(order => {
+    saleOrderList.forEach(orderId => {
       for (let i = 1; i < sheetData.length; i++) {
-        if (String(sheetData[i][refCol]) === order.id) {
+        if (String(sheetData[i][refCol]) === orderId) {
           sheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
           sheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
           updatedCount++;
@@ -475,7 +438,7 @@ function handleInstamartAppointmentRequest(data) {
 
     return { 
       status: 'success', 
-      message: `Instamart Appointment request sent for ${updatedCount} orders.`, 
+      message: `${channelName} Appointment request sent for ${updatedCount} orders.`, 
       requestId 
     };
   } catch (e) {

@@ -483,11 +483,11 @@ export const cancelPOLineItem = async (poNumber: string, articleCode: string) =>
 };
 
 export const sendZeptoAppointmentRequestEmail = async (params: any) => {
-    return await postToScript({ action: 'sendZeptoAppointmentRequestEmail', ...params });
+    return await postToScript({ action: 'sendZeptoAppointmentRequestEmail', channelName: 'Zepto', ...params });
 };
 
 export const sendInstamartAppointmentRequestEmail = async (params: any) => {
-    return await postToScript({ action: 'sendInstamartAppointmentRequestEmail', ...params });
+    return await postToScript({ action: 'sendInstamartAppointmentRequestEmail', channelName: 'Instamart', ...params });
 };
 
 export const updateZeptoOrderStatus = async (poNumber: string, status: string) => {
