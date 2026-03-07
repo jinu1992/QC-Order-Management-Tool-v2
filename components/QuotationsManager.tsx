@@ -131,9 +131,11 @@ const QuotationsManager: React.FC<QuotationsManagerProps> = ({ quotations, onRef
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
-                                                <div className="flex items-center gap-1 text-partners-green font-black">
-                                                    <CurrencyIcon className="h-3.5 w-3.5" />
-                                                    <span>₹{q.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                                                <div className="flex flex-col items-start text-partners-green font-black">
+                                                    <div className="flex items-center gap-1">
+                                                        <CurrencyIcon className="h-3.5 w-3.5" />
+                                                        <span>₹{(q.amount + (q.shippingCharges || 0) + (q.taxAmount || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                                                    </div>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
@@ -193,10 +195,22 @@ const QuotationsManager: React.FC<QuotationsManagerProps> = ({ quotations, onRef
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
-                                                            <tfoot className="bg-gray-50/50 font-black">
+                                                            <tfoot className="bg-gray-50/50 font-black text-xs uppercase tracking-wider text-gray-400">
+                                                                <tr className="border-t border-gray-100/50">
+                                                                    <td colSpan={4} className="px-6 py-2 text-right">Items Subtotal</td>
+                                                                    <td className="px-6 py-2 text-right text-gray-900">₹{q.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                </tr>
                                                                 <tr>
-                                                                    <td colSpan={4} className="px-6 py-4 text-right text-xs uppercase tracking-wider text-gray-400">Grand Total</td>
-                                                                    <td className="px-6 py-4 text-right text-sm text-partners-green">₹{q.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                    <td colSpan={4} className="px-6 py-2 text-right">Shipping Charges</td>
+                                                                    <td className="px-6 py-2 text-right text-gray-900">₹{(q.shippingCharges || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                </tr>
+                                                                <tr>
+                                                                    <td colSpan={4} className="px-6 py-2 text-right">Tax Amount</td>
+                                                                    <td className="px-6 py-2 text-right text-gray-900">₹{(q.taxAmount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
+                                                                </tr>
+                                                                <tr className="border-t border-gray-200">
+                                                                    <td colSpan={4} className="px-6 py-4 text-right">Grand Total</td>
+                                                                    <td className="px-6 py-4 text-right text-sm text-partners-green">₹{(q.amount + (q.shippingCharges || 0) + (q.taxAmount || 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</td>
                                                                 </tr>
                                                             </tfoot>
                                                         </table>

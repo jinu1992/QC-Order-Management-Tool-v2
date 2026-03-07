@@ -106,8 +106,8 @@ export const processFlipkartConsignment = async (poNumber: string, fileText: str
     return await postToScript({ action: 'processFlipkartConsignment', poNumber, fileText, userEmail });
 };
 
-export const createZohoInvoice = async (eeReferenceCode: string): Promise<{status: string, message?: string}> => {
-    return await postToScript({ action: 'createZohoInvoice', eeReferenceCode });
+export const createZohoInvoice = async (eeReferenceCode: string, shippingCharge?: number): Promise<{status: string, message?: string}> => {
+    return await postToScript({ action: 'createZohoInvoice', eeReferenceCode, shippingCharge });
 };
 
 export const pushToNimbusPost = async (eeReferenceCode: string): Promise<{status: string, message?: string, awb?: string}> => {
@@ -147,6 +147,8 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
                         quotationNumber: String(row['Quote Number'] || row['Quotation Number'] || ''),
                         referenceNumber: String(row['Reference Number'] || ''),
                         amount: 0,
+                        shippingCharges: parseFloat(row['Shipping Charges']) || 0,
+                        taxAmount: parseFloat(row['Tax Amount']) || 0,
                         status: row['Status'] || 'Pending',
                         expiryDate: formatSheetDate(row['Expiry Date']) || '',
                         items: []
@@ -432,6 +434,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 consignmentQty: row['Consignment Qty'] ? Number(row['Consignment Qty']) : undefined,
                 consignmentProducts: row['Consignment Products'] ? Number(row['Consignment Products']) : undefined,
                 consignmentValue: row['Consignment Value'] ? String(row['Consignment Value']) : undefined,
+                shippingCharge: row['Shipping Charge'] ? Number(row['Shipping Charge']) : undefined,
             });
         }
     });
@@ -518,5 +521,11 @@ export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: st
     const itemsToSend = (po.items || [])
         .filter(item => selectedArticleCodes.includes(item.articleCode))
         .map(item => ({ ...item, unitCost: Number(((item.unitCost || 0) * 1.05).toFixed(2)) }));
-    return await postToScript({ action: 'pushToEasyEcom', ...po, items: itemsToSend, isPartial: po.items?.length !== itemsToSend.length });
+    return await postToScript({ 
+        action: 'pushToEasyEcom', 
+        ...po, 
+        items: itemsToSend, 
+        isPartial: po.items?.length !== itemsToSend.length,
+        shippingCharge: po.shippingCharge 
+    });
 };

@@ -129,7 +129,7 @@ const formatDisplayTime = (timeInput?: any): string => {
         const parts = timeStr.match(/(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
         if (parts) {
             let hours = parseInt(parts[1], 10);
-            const minutes = parts[2].padStart(2, '0');
+            const minutes = (parts[2] || '').padStart(2, '0');
             
             if (hours >= 0 && hours < 24) {
                 const ampm = hours >= 12 ? 'PM' : 'AM';
@@ -2661,12 +2661,12 @@ let html = `
                             <th className="p-4 w-4 sticky left-0 bg-gray-50 z-30 border-r border-gray-100"></th>
                             <th className="px-6 py-3 text-blue-600 sticky left-12 bg-gray-50 z-30 border-r border-gray-100 min-w-[150px]">
                                 <div className="flex items-center gap-2">SO ID (EE Ref)<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'id' ? null : 'id')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.id ? 'text-partners-green' : 'text-gray-400'}`}><SearchIcon className="h-3 w-3"/></button></div>
-                                {activeFilterColumn === 'id' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><input type="text" autoFocus placeholder="Search ID..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.id || ''} onChange={(e) => setColumnFilters({...columnFilters, id: e.target.value})} /></div>)}
+                                {activeFilterColumn === 'id' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><input type="text" autoFocus placeholder="Search ID..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.id || ''} onChange={(e: any) => setColumnFilters({...columnFilters, id: e.target.value})} /></div>)}
                             </th>
                             <th className="px-6 py-3">EE Status</th>
                             <th className="px-6 py-3 min-w-[140px]">
                                 <div className="flex items-center gap-2">Channel<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'channel' ? null : 'channel')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.channel ? 'text-partners-green' : 'text-gray-400'}`}><FilterIcon className="h-3 w-3"/></button></div>
-                                {activeFilterColumn === 'channel' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e) => setColumnFilters({...columnFilters, channel: e.target.value})}><option value="">All Channels</option>{uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
+                                {activeFilterColumn === 'channel' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e: any) => setColumnFilters({...columnFilters, channel: e.target.value})}><option value="">All Channels</option>{uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
                             </th>
                             <th className="px-6 py-3">Store</th>
                             <th className="px-6 py-3">Qty / Total</th>
@@ -2762,11 +2762,11 @@ let html = `
                                             <td className="px-6 py-4">{so.storeCode}</td>
                                             <td className="px-6 py-4 font-medium text-gray-900">{so.qty} / ₹{totalAmountIncTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
                                             <td className="px-6 py-4 whitespace-nowrap text-gray-400">{so.orderDate}</td>
-                                            <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e) => e.stopPropagation()}>
+                                            <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e: any) => e.stopPropagation()}>
                                                 <div className="flex items-center justify-center gap-2">
                                                     {showFlipkartDownload && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
                                                             title="Download Flipkart Minutes CSV Packing Slip"
                                                         >
@@ -2775,7 +2775,7 @@ let html = `
                                                     )}
                                                     {showZeptoDownload && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
                                                             title="Download Zepto ASN CSV"
                                                         >
@@ -2784,7 +2784,7 @@ let html = `
                                                     )}
                                                     {showBlinkitAppointmentBtn && (
                                                         <button 
-                                                            onClick={(e) => { 
+                                                            onClick={(e: any) => { 
                                                                 e.stopPropagation(); 
                                                                 if (isFlipkart) setFlipkartConsignmentModal({ isOpen: true, so });
                                                                 else if (hasAppointmentId) setActiveAppointmentPass(so);
@@ -2798,7 +2798,7 @@ let html = `
                                                     )}
                                                     {showFlipkartAppointmentBtn && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5"
                                                         >
                                                             <GlobeIcon className="h-3.5 w-3.5" /> Link Consignment
@@ -2806,7 +2806,7 @@ let html = `
                                                     )}
                                                     {showFlipkartPrintAction && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
                                                             title="Print Flipkart Box Labels"
                                                         >
@@ -2815,7 +2815,7 @@ let html = `
                                                     )}
                                                      {showInstamartPrintAction && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
                                                             title="Print Instamart Box Labels"
                                                         >
@@ -2824,7 +2824,7 @@ let html = `
                                                     )}
                                                     {showAmazonBoxDetails && (
                                                         <button 
-                                                            onClick={(e) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
+                                                            onClick={(e: any) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
                                                             disabled={isFetchingBoxDetails === so.id}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                                                         >
@@ -2832,10 +2832,10 @@ let html = `
                                                             {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
                                                         </button>
                                                     )}
-                                                    <button onClick={(e) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
+                                                    <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
                                                     <div 
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer"
-                                                        onClick={(e) => {
+                                                        onClick={(e: any) => {
                                                             e.stopPropagation();
                                                             setOpenMenuId(openMenuId === so.id ? null : so.id);
                                                         }}
@@ -2845,7 +2845,7 @@ let html = `
                                                             <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
                                                                 {canUpdateAppt && (
                                                                     <button 
-                                                                        onClick={(e) => {
+                                                                        onClick={(e: any) => {
                                                                             e.stopPropagation();
                                                                             setInstamartApptModal({ isOpen: true, so });
                                                                             setOpenMenuId(null);
@@ -2858,7 +2858,7 @@ let html = `
                                                                 )}
                                                                 {so.status === 'Shipped' && (
                                                                     <button 
-                                                                        onClick={(e) => {
+                                                                        onClick={(e: any) => {
                                                                             e.stopPropagation();
                                                                             handleMarkAsRTOInitiated(so);
                                                                         }}
@@ -2894,12 +2894,14 @@ let html = `
                                                                         {isRefreshing ? 'Refreshing...' : 'Refresh Targeted'}
                                                                     </button>
                                                                 </div>
-                                                                <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 bg-gray-50 rounded-lg border border-gray-100">
-                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Ref</p><p className="text-xs font-bold text-partners-green truncate" title={so.poReference}>{so.poReference}</p></div>
-                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date (EE)</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
-                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">EE Status</p><p className="text-xs font-bold text-cyan-600">{so.originalEeStatus || 'Processing'}</p></div>
-                                                                    <div className="col-span-1"><p className="text-[10px] uppercase font-bold text-gray-400">PO PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">N/A</p>}</div>
-                                                                </div>
+                                                                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{so.shippingCharge ? `₹${so.shippingCharge}` : 'N/A'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View Order PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
+                                </div>                                                      </div>
                                                             </div>
                                                             <div className="lg:col-span-1">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><InvoiceIcon className="h-4 w-4 text-partners-purple" /> Invoice Information</h4>
@@ -2973,7 +2975,7 @@ let html = `
                                                                 <div className="flex items-center gap-3">
                                                                     {showFlipkartDownload && (
                                                                         <button 
-                                                                            onClick={(e) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
+                                                                            onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
                                                                         >
                                                                             <DownloadIcon className="h-4 w-4" /> Download Flipkart CSV Slip
@@ -2981,7 +2983,7 @@ let html = `
                                                                     )}
                                                                     {showZeptoDownload && (
                                                                         <button 
-                                                                            onClick={(e) => { e.stopPropagation(); }}
+                                                                            onClick={(e: any) => { e.stopPropagation(); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
                                                                         >
                                                                             <DownloadIcon className="h-4 w-4" /> Download Zepto ASN CSV
@@ -2989,7 +2991,7 @@ let html = `
                                                                     )}
                                                                     {showBlinkitAppointmentBtn && (
                                                                         <button 
-                                                                            onClick={(e) => { 
+                                                                            onClick={(e: any) => { 
                                                                                 e.stopPropagation(); 
                                                                                 if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                                 else setPortalHelper({ isOpen: true, so });
@@ -3002,7 +3004,7 @@ let html = `
                                                                     )}
                                                                     {showFlipkartAppointmentBtn && (
                                                                         <button 
-                                                                            onClick={(e) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
+                                                                            onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
                                                                         >
                                                                             <GlobeIcon className="h-4 w-4" /> Link Consignment Details
@@ -3010,7 +3012,7 @@ let html = `
                                                                     )}
                                                                     {isFlipkart && hasAppointmentId && (
                                                                          <button 
-                                                                            onClick={(e) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
+                                                                            onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95"
                                                                         >
                                                                             <PrinterIcon className="h-4 w-4" /> Print Box Labels
@@ -3019,7 +3021,7 @@ let html = `
                                                                     {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0) && (
                                                                         <div className="flex gap-2">
                                                                             <button 
-                                                                                onClick={(e) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
+                                                                                onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                                                 className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95 animate-in fade-in zoom-in-95"
                                                                             >
                                                                                 <PrinterIcon className="h-4 w-4" /> Print Full Packset (PDF)
@@ -3099,7 +3101,7 @@ let html = `
                                                                         </div>
                                                                     </div>
                                                                     <button 
-                                                                        onClick={(e) => { e.stopPropagation(); setPortalHelper({ isOpen: true, so }); }} 
+                                                                        onClick={(e: any) => { e.stopPropagation(); setPortalHelper({ isOpen: true, so }); }} 
                                                                         className={`px-6 py-2.5 text-white text-[11px] font-bold rounded-xl shadow-md transition-all flex items-center gap-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600 hover:bg-purple-700' : 'bg-yellow-50 hover:bg-yellow-600'}`}
                                                                     >
                                                                         <CalendarIcon className="h-4 w-4" />Get Appointment Details

@@ -148,6 +148,7 @@ export interface PurchaseOrder {
     consignmentQty?: number;
     consignmentProducts?: number;
     consignmentValue?: string;
+    shippingCharge?: number;
 }
 
 export interface QuotationItem {
@@ -170,6 +171,8 @@ export interface Quotation {
     amount: number;
     status: string;
     expiryDate?: string;
+    shippingCharges?: number;
+    taxAmount?: number;
     items: QuotationItem[];
 }
 
