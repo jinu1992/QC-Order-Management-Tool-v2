@@ -27,6 +27,7 @@ const App: React.FC = () => {
   
   // Authenticated state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [googleTokens, setGoogleTokens] = useState<any>(null);
   const [isAuthChecked, setIsAuthChecked] = useState(true);
 
   const [users, setUsers] = useState<User[]>([]);
@@ -50,6 +51,7 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setGoogleTokens(null);
     setActiveView('Dashboard');
   };
 
@@ -241,6 +243,8 @@ const App: React.FC = () => {
                         onSync={() => refreshData(true)} 
                         isSyncing={isLoading} 
                         inventoryItems={inventoryItems} 
+                        googleTokens={googleTokens}
+                        setGoogleTokens={setGoogleTokens}
                     />
                 </div>
             );
@@ -255,7 +259,11 @@ const App: React.FC = () => {
 
   // Show login screen if no user
   if (!currentUser) {
-      return <Login onLoginSuccess={(user) => { setCurrentUser(user); addLog('Login', `User ${user.name} authenticated.`); }} />;
+      return <Login onLoginSuccess={(user, tokens) => { 
+          setCurrentUser(user); 
+          if (tokens) setGoogleTokens(tokens);
+          addLog('Login', `User ${user.name} authenticated.`); 
+      }} />;
   }
 
   return (

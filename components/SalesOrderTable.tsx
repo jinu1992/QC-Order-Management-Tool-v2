@@ -46,6 +46,8 @@ interface SalesOrderTableProps {
     onSync: () => void;
     isSyncing: boolean;
     inventoryItems?: InventoryItem[];
+    googleTokens?: any;
+    setGoogleTokens?: (tokens: any) => void;
 }
 
 interface GroupedSalesOrder {
@@ -1325,7 +1327,19 @@ const parseDateString = (dateStr: string | undefined): number => {
     } catch (e) { return 0; }
 };
 
-const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, addLog, addNotification, onSync, isSyncing, inventoryItems }) => {
+const SalesOrderTable: FC<SalesOrderTableProps> = ({ 
+    activeFilter, 
+    setActiveFilter, 
+    purchaseOrders, 
+    setPurchaseOrders, 
+    addLog, 
+    addNotification, 
+    onSync, 
+    isSyncing, 
+    inventoryItems,
+    googleTokens,
+    setGoogleTokens
+}) => {
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [isCreatingInvoice, setIsCreatingInvoice] = useState<string | null>(null);
     const [isPushingNimbus, setIsPushingNimbus] = useState<string | null>(null);
@@ -1346,6 +1360,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
+    const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
     
     // Close menu on click outside
     useEffect(() => {
@@ -1651,7 +1666,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
 
     const zeptoEligibility = useMemo(() => {
         const zeptoOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('zepto'));
-        if (zeptoOrders.length === 0) return { eligible: false, reason: 'No Zepto orders' };
+        if (zeptoOrders.length === 0) return { show: false, canRequest: false, reason: 'No Zepto orders' };
 
         // Only consider orders that haven't had an appointment request yet
         const activeZeptoOrders = zeptoOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
@@ -1665,19 +1680,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         );
 
         const hasOpen = openZeptoOrders.length > 0;
-        const allInvoiced = !hasOpen && invoicedZeptoOrders.length > 0;
-        
         const missingBoxDetails = invoicedZeptoOrders.some(so => (so.boxCount || 0) === 0);
 
-        if (hasOpen) return { eligible: false, reason: 'Waiting for other Zepto orders to be invoiced', hasOpen: true };
-        if (invoicedZeptoOrders.length === 0) return { eligible: false, reason: 'No eligible invoiced Zepto orders' };
-        if (missingBoxDetails) return { eligible: false, reason: 'Box details missing for some orders' };
+        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Zepto orders to be invoiced', hasOpen: true };
+        if (invoicedZeptoOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Zepto orders', hasOpen: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false };
 
-        return { eligible: true, orders: invoicedZeptoOrders };
+        return { show: true, canRequest: true, orders: invoicedZeptoOrders, hasOpen: false };
     }, [allSalesOrders]);
 
     const handleSendZeptoAppointmentRequest = async () => {
-        if (!zeptoEligibility.eligible || isSendingZeptoAppointment) return;
+        if (!zeptoEligibility.canRequest || isSendingZeptoAppointment) return;
         
         setIsSendingZeptoAppointment(true);
         try {
@@ -1706,7 +1719,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
     
     const instamartEligibility = useMemo(() => {
         const instamartOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('instamart'));
-        if (instamartOrders.length === 0) return { eligible: false, reason: 'No Instamart orders' };
+        if (instamartOrders.length === 0) return { show: false, canRequest: false, reason: 'No Instamart orders' };
 
         // Only consider orders that haven't had an appointment request yet
         const activeInstamartOrders = instamartOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
@@ -1720,18 +1733,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({ activeFilter, setActiveFilt
         );
 
         const hasOpen = openInstamartOrders.length > 0;
-        
         const missingBoxDetails = invoicedInstamartOrders.some(so => (so.boxCount || 0) === 0);
 
-        if (hasOpen) return { eligible: false, reason: 'Waiting for other Instamart orders to be invoiced', hasOpen: true };
-        if (invoicedInstamartOrders.length === 0) return { eligible: false, reason: 'No eligible invoiced Instamart orders' };
-        if (missingBoxDetails) return { eligible: false, reason: 'Box details missing for some orders' };
+        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Instamart orders to be invoiced', hasOpen: true };
+        if (invoicedInstamartOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Instamart orders', hasOpen: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false };
 
-        return { eligible: true, orders: invoicedInstamartOrders };
+        return { show: true, canRequest: true, orders: invoicedInstamartOrders, hasOpen: false };
     }, [allSalesOrders]);
 
     const handleSendInstamartAppointmentRequest = async () => {
-        if (!instamartEligibility.eligible || isSendingInstamartAppointment) return;
+        if (!instamartEligibility.canRequest || isSendingInstamartAppointment) return;
         
         setIsSendingInstamartAppointment(true);
         try {
@@ -1924,15 +1936,9 @@ let html = `
         printWindow.document.close();
     };
 
-    const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
-    const [googleTokens, setGoogleTokens] = useState<any>(() => {
-        const saved = localStorage.getItem('google_sheets_tokens');
-        return saved ? JSON.parse(saved) : null;
-    });
-
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
-            if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
+            if (event.data?.type === 'GOOGLE_AUTH_SUCCESS' && setGoogleTokens) {
                 setGoogleTokens(event.data.tokens);
                 localStorage.setItem('google_sheets_tokens', JSON.stringify(event.data.tokens));
                 addNotification('Google account connected successfully!', 'success');
@@ -1940,7 +1946,7 @@ let html = `
         };
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, []);
+    }, [setGoogleTokens, addNotification]);
 
     const parseAppointmentDateTime = (date?: string, time?: string) => {
         if (!date) return 0;
@@ -2051,8 +2057,8 @@ let html = `
                 ];
             });
 
-            const spreadsheetId = '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
-            const sheetId = '1014733683';
+            const spreadsheetId = import.meta.env.VITE_GOOGLE_SPREADSHEET_ID || '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
+            const sheetId = import.meta.env.VITE_GOOGLE_SHEET_ID || '1014733683';
 
             const response = await fetch('/api/update-google-sheet', {
                 method: 'POST',
@@ -2071,7 +2077,7 @@ let html = `
                 addLog('Google Sheet Update', `Updated sheet with ${inTransitOrders.length} orders`);
             } else {
                 if (result.error?.includes('invalid_grant') || result.error?.includes('expired')) {
-                    setGoogleTokens(null);
+                    if (setGoogleTokens) setGoogleTokens(null);
                     localStorage.removeItem('google_sheets_tokens');
                     addNotification('Session expired. Please click again to reconnect Google account.', 'warning');
                 } else {
@@ -2583,23 +2589,23 @@ let html = `
                     ))}
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
-                    {zeptoEligibility.eligible && (
+                    {zeptoEligibility.show && (
                         <button 
                             onClick={handleSendZeptoAppointmentRequest}
-                            disabled={isSendingZeptoAppointment}
-                            className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 group"
-                            title="All Zepto orders invoiced. Ready to send appointment request."
+                            disabled={!zeptoEligibility.canRequest || isSendingZeptoAppointment}
+                            className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 group ${!zeptoEligibility.canRequest ? 'grayscale' : ''}`}
+                            title={zeptoEligibility.canRequest ? "All Zepto orders invoiced. Ready to send appointment request." : zeptoEligibility.reason}
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingZeptoAppointment ? 'animate-pulse' : ''}`} />
                             <span>Zepto Appt.</span>
                         </button>
                     )}
-                    {instamartEligibility.eligible && (
+                    {instamartEligibility.show && (
                         <button 
                             onClick={handleSendInstamartAppointmentRequest}
-                            disabled={isSendingInstamartAppointment}
-                            className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group"
-                            title="All Instamart orders invoiced. Ready to send appointment request."
+                            disabled={!instamartEligibility.canRequest || isSendingInstamartAppointment}
+                            className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group ${!instamartEligibility.canRequest ? 'grayscale' : ''}`}
+                            title={instamartEligibility.canRequest ? "All Instamart orders invoiced. Ready to send appointment request." : instamartEligibility.reason}
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingInstamartAppointment ? 'animate-pulse' : ''}`} />
                             <span>Instamart Appt.</span>

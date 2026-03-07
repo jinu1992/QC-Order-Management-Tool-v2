@@ -5,7 +5,7 @@ import { InventoryItem, PurchaseOrder, POStatus, POItem, ChannelConfig, StorePoc
  * !!! IMPORTANT !!!
  * Ensure this URL matches your LATEST 'Anyone' deployment in GAS
  */
-const API_URL = 'https://script.google.com/macros/s/AKfycbwBDSNnN_xKlZc4cTwwKthd7-Nq8IE83csNdNHODP55EnVEz-gfWzcvzYdxGeNbJSPzZQ/exec'; 
+const API_URL = import.meta.env.VITE_GAS_API_URL; 
 
 /**
  * Shared helper for POST requests to Google Apps Script.
