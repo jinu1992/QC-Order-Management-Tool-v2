@@ -251,12 +251,17 @@ function sendAndAcceptEstimate(quotationData) {
   const estimateId = quotationData.estimateId;
   if (!estimateId) return { status: 'error', message: 'Estimate ID is required' };
   
+  const shippingCharges = quotationData.shippingCharges || 0;
+  
   // Log the complete data for debugging
   debugLog('ACCEPT_ESTIMATE_FULL_DATA', quotationData);
   
   // Stub for Zoho API call
   // In reality, this would use UrlFetchApp to call Zoho Books API with the full data
-  return { status: 'success', message: `Estimate ${quotationData.quotationNumber || estimateId} accepted and sent successfully in Zoho with complete data.` };
+  return { 
+    status: 'success', 
+    message: `Estimate ${quotationData.quotationNumber || estimateId} accepted and sent successfully in Zoho with shipping charges of ₹${shippingCharges}.` 
+  };
 }
 
 function fetchLast14DaysQuotations() {

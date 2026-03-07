@@ -17,10 +17,12 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   const getRedirectUri = () => {
-    if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
-    if (process.env.APP_URL) return `${process.env.APP_URL}/auth/google/callback`;
-    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}/auth/google/callback`;
-    return `http://localhost:3000/auth/google/callback`;
+    const uri = process.env.GOOGLE_REDIRECT_URI || 
+                (process.env.APP_URL ? `${process.env.APP_URL}/auth/google/callback` : null) ||
+                (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/auth/google/callback` : null) ||
+                `http://localhost:3000/auth/google/callback`;
+    console.log(`Using Redirect URI: ${uri}`);
+    return uri;
   };
 
   const oauth2Client = new google.auth.OAuth2(
@@ -80,7 +82,11 @@ async function startServer() {
   app.get("/api/auth/google/url", (req: Request, res: Response) => {
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
-      scope: ["https://www.googleapis.com/auth/spreadsheets"],
+      scope: [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ],
       prompt: "select_account",
     });
     res.json({ url });
@@ -90,21 +96,81 @@ async function startServer() {
     const { code } = req.query;
     try {
       const { tokens } = await oauth2Client.getToken(code as string);
-      // In a real app, you'd store this in a session or database
-      // For this demo, we'll send it back to the client to store in localStorage (not ideal for production but works for this environment)
+      oauth2Client.setCredentials(tokens);
+
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+      
+      const email = userInfo.data.email || "";
+      const name = userInfo.data.name || "User";
+
+      // Authorization check
+      if (!email.endsWith("@cubelelo.com") && email !== "jainendra@cubelelo.com") {
+        return res.send(`
+          <html>
+            <body>
+              <script>
+                if (window.opener) {
+                  window.opener.postMessage({ 
+                    type: 'GOOGLE_AUTH_ERROR', 
+                    message: 'Access Denied. This portal is restricted to @cubelelo.com accounts.' 
+                  }, '*');
+                  window.close();
+                } else {
+                  window.location.href = '/';
+                }
+              </script>
+            </body>
+          </html>
+        `);
+      }
+
+      const user = {
+        id: userInfo.data.id,
+        name: name,
+        email: email,
+        role: 'Admin',
+        avatarInitials: name.charAt(0).toUpperCase(),
+        contactNumber: ""
+      };
+
       res.send(`
         <html>
           <body>
             <script>
-              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
-              window.close();
+              if (window.opener) {
+                window.opener.postMessage({ 
+                  type: 'GOOGLE_AUTH_SUCCESS', 
+                  tokens: ${JSON.stringify(tokens)},
+                  user: ${JSON.stringify(user)}
+                }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
             </script>
           </body>
         </html>
       `);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error getting tokens:", error);
-      res.status(500).send("Authentication failed");
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ 
+                  type: 'GOOGLE_AUTH_ERROR', 
+                  message: 'Authentication failed: ${error.message}' 
+                }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+          </body>
+        </html>
+      `);
     }
   });
 

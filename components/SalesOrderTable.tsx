@@ -85,6 +85,7 @@ interface GroupedSalesOrder {
     rtoStatus?: string;
     rtoAwb?: string;
     boxCount: number;
+    shippingCharges?: number;
     appointmentDate?: string;
     appointmentRequestDate?: string;
     appointmentRequestId?: string;
@@ -1590,6 +1591,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         qrCodeUrl: po.qrCodeUrl,
                         ewb: item.ewb || po.ewb,
                         fbaShipmentId: item.fbaShipmentId || po.fbaShipmentId,
+                        shippingCharges: po.shippingCharges || 0,
                         consignmentQty: po.consignmentQty,
                         consignmentProducts: po.consignmentProducts,
                         consignmentValue: po.consignmentValue
@@ -1625,6 +1627,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (!groups[refCode].trackingUrl && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
                     if (!groups[refCode].ewb) groups[refCode].ewb = item.ewb || po.ewb;
                     if (!groups[refCode].fbaShipmentId) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
+                    if (!groups[refCode].shippingCharges && po.shippingCharges) groups[refCode].shippingCharges = po.shippingCharges;
                     if (!groups[refCode].appointmentId) groups[refCode].appointmentId = po.appointmentId;
                     if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
                 }
@@ -2680,7 +2683,7 @@ let html = `
                         ) : (
                             salesOrders.map((so) => {
                                 const isExpanded = expandedRowId === so.id;
-                                const totalAmountIncTax = so.amount * 1.05;
+                                const totalAmountIncTax = (so.amount * 1.05) + (so.shippingCharges || 0);
                                 const action = getPrimaryAction(so);
                                 const isRefreshing = isRefreshingSo === so.poReference;
                                 
@@ -2898,6 +2901,7 @@ let html = `
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Ref</p><p className="text-xs font-bold text-partners-green truncate" title={so.poReference}>{so.poReference}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date (EE)</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EE Status</p><p className="text-xs font-bold text-cyan-600">{so.originalEeStatus || 'Processing'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Charges</p><p className="text-xs font-bold text-gray-700">₹{(so.shippingCharges || 0).toLocaleString('en-IN')}</p></div>
                                                                     <div className="col-span-1"><p className="text-[10px] uppercase font-bold text-gray-400">PO PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">N/A</p>}</div>
                                                                 </div>
                                                             </div>

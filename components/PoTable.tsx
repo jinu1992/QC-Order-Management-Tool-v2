@@ -110,7 +110,8 @@ const OrderRow: React.FC<OrderRowProps> = ({
     // Sum active quantity and active amount
     const activeTotalQty = useMemo(() => activeItems.reduce((sum, i) => sum + (i.qty || 0), 0), [activeItems]);
     const activeAmount = useMemo(() => activeItems.reduce((sum, i) => sum + ((i.qty || 0) * (i.unitCost || 0)), 0), [activeItems]);
-    const amountIncTax = activeAmount * 1.05;
+    const taxAmount = activeAmount * 0.05;
+    const amountIncTax = activeAmount + taxAmount + (po.shippingCharges || 0);
     
     // Calculate Fulfillable Quantity
     const totalFulfillable = activeItems.reduce((sum, item) => sum + (item.fulfillableQty || 0), 0);
@@ -338,10 +339,11 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         {isRefreshing ? 'Refreshing...' : 'Refresh This Order Only'}
                                     </button>
                                 </div>
-                                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Ref</p><p className="text-xs font-bold text-partners-green truncate">{po.poNumber}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Date</p><p className="text-xs font-bold text-gray-700">{po.orderDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${po.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{po.eeCustomerId || 'Not Mapped'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Charges</p><p className="text-xs font-bold text-gray-700">₹{(po.shippingCharges || 0).toLocaleString('en-IN')}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{po.poExpiryDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO PDF</p>{po.poPdfUrl ? <a href={po.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View PO PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
                                 </div>

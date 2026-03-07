@@ -68,6 +68,7 @@ export interface POItem {
     rtoStatus?: string;
     rtoAwb?: string;
     freightCharged?: number;
+    shippingCharges?: number;
     zohoItemId?: string;
     appointmentRequestId?: string;
     appointmentRequestDate?: string;
@@ -142,6 +143,7 @@ export interface PurchaseOrder {
     inboundPlanId?: string;
     gst?: string;
     freightCharged?: number;
+    shippingCharges?: number;
     totalPoValue?: number;
     totalCostPrice?: number;
     // Fix: Added missing properties used in SalesOrderTable for Flipkart consignment handling
@@ -168,6 +170,8 @@ export interface Quotation {
     quotationNumber: string;
     referenceNumber: string;
     amount: number;
+    shippingCharges: number;
+    taxAmount: number;
     status: string;
     expiryDate?: string;
     items: QuotationItem[];
