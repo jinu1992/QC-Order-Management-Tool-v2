@@ -1682,11 +1682,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const hasOpen = openZeptoOrders.length > 0;
         const missingBoxDetails = invoicedZeptoOrders.some(so => (so.boxCount || 0) === 0);
 
-        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Zepto orders to be invoiced', hasOpen: true };
-        if (invoicedZeptoOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Zepto orders', hasOpen: false };
-        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false };
+        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Zepto orders to be invoiced', hasOpen: true, missingBoxDetails: false };
+        if (invoicedZeptoOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Zepto orders', hasOpen: false, missingBoxDetails: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false, missingBoxDetails: true };
 
-        return { show: true, canRequest: true, orders: invoicedZeptoOrders, hasOpen: false };
+        return { show: true, canRequest: true, orders: invoicedZeptoOrders, hasOpen: false, missingBoxDetails: false };
     }, [allSalesOrders]);
 
     const handleSendZeptoAppointmentRequest = async () => {
@@ -1735,11 +1735,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const hasOpen = openInstamartOrders.length > 0;
         const missingBoxDetails = invoicedInstamartOrders.some(so => (so.boxCount || 0) === 0);
 
-        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Instamart orders to be invoiced', hasOpen: true };
-        if (invoicedInstamartOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Instamart orders', hasOpen: false };
-        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false };
+        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other Instamart orders to be invoiced', hasOpen: true, missingBoxDetails: false };
+        if (invoicedInstamartOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced Instamart orders', hasOpen: false, missingBoxDetails: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false, missingBoxDetails: true };
 
-        return { show: true, canRequest: true, orders: invoicedInstamartOrders, hasOpen: false };
+        return { show: true, canRequest: true, orders: invoicedInstamartOrders, hasOpen: false, missingBoxDetails: false };
     }, [allSalesOrders]);
 
     const handleSendInstamartAppointmentRequest = async () => {
@@ -2597,7 +2597,7 @@ let html = `
                             title={zeptoEligibility.canRequest ? "All Zepto orders invoiced. Ready to send appointment request." : zeptoEligibility.reason}
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingZeptoAppointment ? 'animate-pulse' : ''}`} />
-                            <span>Zepto Appt.</span>
+                            <span>{zeptoEligibility.missingBoxDetails ? 'Box Data Missing' : 'Zepto Appt.'}</span>
                         </button>
                     )}
                     {instamartEligibility.show && (
@@ -2608,7 +2608,7 @@ let html = `
                             title={instamartEligibility.canRequest ? "All Instamart orders invoiced. Ready to send appointment request." : instamartEligibility.reason}
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingInstamartAppointment ? 'animate-pulse' : ''}`} />
-                            <span>Instamart Appt.</span>
+                            <span>{instamartEligibility.missingBoxDetails ? 'Box Data Missing' : 'Instamart Appt.'}</span>
                         </button>
                     )}
                     <button 
@@ -2694,8 +2694,8 @@ let html = `
                                 
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
                                 const isFinalStatus = so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned';
-                                const isGreyedOut = (isZepto && so.status === 'Invoiced' && zeptoEligibility.hasOpen) || 
-                                                    (isInstamartChannel && so.status === 'Invoiced' && instamartEligibility.hasOpen);
+                                const isGreyedOut = (isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) || 
+                                                    (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails));
                                 const zeptoTooltip = isGreyedOut ? `Waiting for other ${isZepto ? 'Zepto' : 'Instamart'} orders to be invoiced` : undefined;
                                 
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
