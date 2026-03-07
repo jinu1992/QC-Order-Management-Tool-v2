@@ -7,9 +7,6 @@ import { fileURLToPath } from "url";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
 
 app.use(express.json({ limit: '50mb' }));
@@ -21,30 +18,30 @@ app.get("/api/health", (req, res) => {
     env: process.env.NODE_ENV,
     hasClientId: !!process.env.GOOGLE_CLIENT_ID,
     hasClientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
+    hasRedirectUri: !!process.env.GOOGLE_REDIRECT_URI,
     vercelUrl: process.env.VERCEL_URL || 'not-set'
   });
 });
 
 const getRedirectUri = () => {
-  const uri = process.env.GOOGLE_REDIRECT_URI || 
-              (process.env.APP_URL ? `${process.env.APP_URL}/auth/google/callback` : null) ||
-              (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/auth/google/callback` : null) ||
-              `http://localhost:3000/auth/google/callback`;
-  return uri;
+  return process.env.GOOGLE_REDIRECT_URI || 
+         (process.env.APP_URL ? `${process.env.APP_URL}/auth/google/callback` : null) ||
+         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/auth/google/callback` : null) ||
+         `http://localhost:3000/auth/google/callback`;
 };
 
 const getOauth2Client = () => {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = getRedirectUri();
+
+  if (!clientId || !clientSecret) {
+    console.error("Missing Google credentials in environment");
     return null;
   }
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    getRedirectUri()
-  );
-};
 
-const oauth2Client = getOauth2Client();
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+};
 
 // --- Auth Routes ---
 app.post("/api/login-google", async (req: Request, res: Response) => {
@@ -53,12 +50,13 @@ app.post("/api/login-google", async (req: Request, res: Response) => {
     return res.status(400).json({ status: 'error', message: 'ID Token is required' });
   }
 
-  if (!oauth2Client) {
-    return res.status(500).json({ status: 'error', message: 'Server configuration error: OAuth2 client not initialized' });
+  const client = getOauth2Client();
+  if (!client) {
+    return res.status(500).json({ status: 'error', message: 'Server configuration error: OAuth2 client not initialized (Missing Credentials)' });
   }
 
   try {
-    const ticket = await oauth2Client.verifyIdToken({
+    const ticket = await client.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
@@ -98,12 +96,12 @@ app.post("/api/login-google", async (req: Request, res: Response) => {
 
 app.get("/api/auth/google/url", (req: Request, res: Response) => {
   try {
-    if (!oauth2Client) {
-      console.error("OAuth2 client not initialized");
+    const client = getOauth2Client();
+    if (!client) {
       return res.status(500).json({ status: 'error', message: 'Server configuration error: Missing Google credentials' });
     }
 
-    const url = oauth2Client.generateAuthUrl({
+    const url = client.generateAuthUrl({
       access_type: "offline",
       scope: [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -122,13 +120,14 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
 app.get("/auth/google/callback", async (req: Request, res: Response) => {
   const { code } = req.query;
   try {
-    if (!oauth2Client) {
+    const client = getOauth2Client();
+    if (!client) {
       throw new Error("OAuth2 client not initialized");
     }
-    const { tokens } = await oauth2Client.getToken(code as string);
-    oauth2Client.setCredentials(tokens);
+    const { tokens } = await client.getToken(code as string);
+    client.setCredentials(tokens);
 
-    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const oauth2 = google.oauth2({ version: 'v2', auth: client });
     const userInfo = await oauth2.userinfo.get();
     
     const email = userInfo.data.email || "";
@@ -213,13 +212,13 @@ app.post("/api/update-google-sheet", async (req: Request, res: Response) => {
   }
 
   try {
-    const auth = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    auth.setCredentials(tokens);
+    const client = getOauth2Client();
+    if (!client) {
+      throw new Error("OAuth2 client not initialized");
+    }
+    client.setCredentials(tokens);
 
-    const sheets = google.sheets({ version: "v4", auth });
+    const sheets = google.sheets({ version: "v4", auth: client });
 
     // 1. Find the sheet name by gid (sheetId)
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
@@ -261,6 +260,8 @@ export default app;
 
 async function startServer() {
   const PORT = 3000;
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -278,12 +279,19 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Redirect URI configured as: ${getRedirectUri()}`);
   });
 }
 
-if (process.env.NODE_ENV !== "production" || import.meta.url === `file://${process.argv[1]}`) {
-  startServer().catch(err => {
-    console.error("CRITICAL: Failed to start server:", err);
-    process.exit(1);
-  });
+if (process.env.NODE_ENV !== "production" || process.env.VERCEL !== "1") {
+  // Only start the server if not in Vercel environment
+  // Vercel uses the exported 'app' directly
+  if (typeof process !== 'undefined' && process.argv && process.argv[1]) {
+    const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+    if (isMainModule || process.env.NODE_ENV !== "production") {
+      startServer().catch(err => {
+        console.error("CRITICAL: Failed to start server:", err);
+      });
+    }
+  }
 }
