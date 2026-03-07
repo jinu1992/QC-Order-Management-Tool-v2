@@ -727,7 +727,7 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
         }
     };
 
-    const amountWithTax = ((so.amount * 1.05) + (so.shippingCharge || 0)).toFixed(0);
+    const amountWithTax = ((so.amount + (so.shippingCharge || 0)) * 1.05).toFixed(0);
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
             <div className="bg-partners-gray-bg rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-white flex flex-col max-h-[90vh]">
@@ -2686,7 +2686,7 @@ let html = `
                         ) : (
                             salesOrders.map((so) => {
                                 const isExpanded = expandedRowId === so.id;
-                                const totalAmountIncTax = so.amount * 1.05;
+                                const totalAmountIncTax = (so.amount + (so.shippingCharge || 0)) * 1.05;
                                 const action = getPrimaryAction(so);
                                 const isRefreshing = isRefreshingSo === so.poReference;
                                 
@@ -2903,7 +2903,7 @@ let html = `
                                                                 <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{so.shippingCharge ? `₹${so.shippingCharge}` : 'N/A'}</p></div>
+                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof so.shippingCharge === 'number' ? `₹${so.shippingCharge}` : '₹0'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View Order PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
