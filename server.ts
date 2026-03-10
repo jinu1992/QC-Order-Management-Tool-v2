@@ -81,7 +81,7 @@ async function startServer() {
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: ["https://www.googleapis.com/auth/spreadsheets"],
-      prompt: "select_account",
+      prompt: "consent",
     });
     res.json({ url });
   });

@@ -493,6 +493,10 @@ export const sendInstamartAppointmentRequestEmail = async (params: any) => {
     return await postToScript({ action: 'sendInstamartAppointmentRequestEmail', channelName: 'Instamart', ...params });
 };
 
+export const sendBBAppointmentRequestEmail = async (params: any) => {
+    return await postToScript({ action: 'sendBBAppointmentRequestEmail', channelName: 'BB', ...params });
+};
+
 export const updateZeptoOrderStatus = async (poNumber: string, status: string) => {
     return await postToScript({ action: 'updateZeptoOrderStatus', poNumber, status });
 };

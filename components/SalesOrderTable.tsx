@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
+import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -831,13 +831,48 @@ const InstamartAppointmentModal: FC<{
     const isRBL = so.channel.toLowerCase().includes('rbl');
     const hideIdField = isZepto || isInstamart || isBB || isRBL;
 
-    const brandColor = isZepto ? 'bg-purple-600' : 'bg-orange-600';
-    const brandText = isZepto ? 'text-purple-600' : 'text-orange-600';
-    const brandBg = isZepto ? 'bg-purple-50' : 'bg-orange-50';
-    const brandBorder = isZepto ? 'border-purple-100' : 'border-orange-100';
-    const brandHover = isZepto ? 'hover:bg-purple-100' : 'hover:bg-orange-100';
-    const brandShadow = isZepto ? 'shadow-purple-100' : 'shadow-orange-100';
-    const brandRing = isZepto ? 'focus:ring-purple-500' : 'focus:ring-orange-500';
+    const getBrandDetails = () => {
+        if (isZepto) return {
+            color: 'bg-purple-600',
+            text: 'text-purple-600',
+            bg: 'bg-purple-50',
+            border: 'border-purple-100',
+            hover: 'hover:bg-purple-100',
+            shadow: 'shadow-purple-100',
+            ring: 'focus:ring-purple-500',
+            label: 'Zepto'
+        };
+        if (isBB) return {
+            color: 'bg-partners-green',
+            text: 'text-partners-green',
+            bg: 'bg-partners-light-green',
+            border: 'border-green-100',
+            hover: 'hover:bg-green-100',
+            shadow: 'shadow-green-100',
+            ring: 'focus:ring-partners-green',
+            label: 'Big Basket'
+        };
+        return {
+            color: 'bg-orange-600',
+            text: 'text-orange-600',
+            bg: 'bg-orange-50',
+            border: 'border-orange-100',
+            hover: 'hover:bg-orange-100',
+            shadow: 'shadow-orange-100',
+            ring: 'focus:ring-orange-500',
+            label: 'Instamart'
+        };
+    };
+
+    const brand = getBrandDetails();
+    const brandColor = brand.color;
+    const brandText = brand.text;
+    const brandBg = brand.bg;
+    const brandBorder = brand.border;
+    const brandHover = brand.hover;
+    const brandShadow = brand.shadow;
+    const brandRing = brand.ring;
+    const brandLabel = brand.label;
 
     const handleComplete = async () => {
         const hasId = !hideIdField && appointmentId.trim();
@@ -884,7 +919,7 @@ const InstamartAppointmentModal: FC<{
                             <CalendarIcon className="h-6 w-6" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-gray-800">{isZepto ? 'Zepto' : 'Instamart'} Appointment</h3>
+                            <h3 className="text-lg font-bold text-gray-800">{brandLabel} Appointment</h3>
                             <p className={`text-xs ${brandText} font-medium`}>Update confirmation details</p>
                         </div>
                     </div>
@@ -928,8 +963,8 @@ const InstamartAppointmentModal: FC<{
                     </div>
 
                     <div className={`${brandBg} border ${brandBorder} p-4 rounded-2xl flex gap-3`}>
-                        <div className={`${isZepto ? 'bg-purple-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}><QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : 'text-orange-700'}`} /></div>
-                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : 'text-orange-800'} font-medium leading-relaxed`}>
+                        <div className={`${isZepto ? 'bg-purple-200' : isBB ? 'bg-green-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}><QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : isBB ? 'text-green-700' : 'text-orange-700'}`} /></div>
+                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : isBB ? 'text-green-800' : 'text-orange-800'} font-medium leading-relaxed`}>
                             Once updated, the order will be ready for <span className="font-bold">Nimbus Post</span> shipping or final processing.
                         </p>
                     </div>
@@ -1348,6 +1383,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
+    const [isSendingBBAppointment, setIsSendingBBAppointment] = useState(false);
     const [isProcessingBlinkit, setIsProcessingBlinkit] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -1772,6 +1808,60 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification('Error sending Instamart appointment request', 'error');
         } finally {
             setIsSendingInstamartAppointment(false);
+        }
+    };
+
+    const bbEligibility = useMemo(() => {
+        const bbOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('bb'));
+        if (bbOrders.length === 0) return { show: false, canRequest: false, reason: 'No BB orders' };
+
+        // Only consider orders that haven't had an appointment request yet
+        const activeBBOrders = bbOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
+        
+        const openBBOrders = activeBBOrders.filter(so => 
+            ['Confirmed', 'Batch Created'].includes(so.status)
+        );
+
+        const invoicedBBOrders = activeBBOrders.filter(so => 
+            so.status === 'Invoiced' && !so.awb
+        );
+
+        const hasOpen = openBBOrders.length > 0;
+        const missingBoxDetails = invoicedBBOrders.some(so => (so.boxCount || 0) === 0);
+
+        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other BB orders to be invoiced', hasOpen: true, missingBoxDetails: false };
+        if (invoicedBBOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced BB orders', hasOpen: false, missingBoxDetails: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false, missingBoxDetails: true };
+
+        return { show: true, canRequest: true, orders: invoicedBBOrders, hasOpen: false, missingBoxDetails: false };
+    }, [allSalesOrders]);
+
+    const handleSendBBAppointmentRequest = async (specificSo?: GroupedSalesOrder) => {
+        const ordersToRequest = specificSo ? [specificSo] : bbEligibility.orders;
+        if (!ordersToRequest || ordersToRequest.length === 0 || isSendingBBAppointment) return;
+        
+        setIsSendingBBAppointment(true);
+        try {
+            const res = await sendBBAppointmentRequestEmail({
+                orders: ordersToRequest.map(o => ({
+                    id: o.id,
+                    poReference: o.poReference,
+                    boxCount: o.boxCount,
+                    storeCode: o.storeCode
+                }))
+            });
+
+            if (res.status === 'success') {
+                addNotification(res.message || 'BB appointment request sent successfully.', 'success');
+                onSync();
+            } else {
+                addNotification(res.message || 'Failed to send BB appointment request', 'error');
+            }
+        } catch (err) {
+            console.error('Error sending BB appointment request:', err);
+            addNotification('Error sending BB appointment request', 'error');
+        } finally {
+            setIsSendingBBAppointment(false);
         }
     };
 
@@ -2477,6 +2567,26 @@ let html = `
                 };
             }
 
+            const isBB = so.channel.toLowerCase().includes('bb');
+            const apptMissing = (isZepto || isInstamart || isBB) && !so.appointmentDate && !so.appointmentId;
+
+            if (apptMissing && (isZepto || isInstamart || isBB)) {
+                const canReq = isBB 
+                    ? (so.boxCount > 0)
+                    : (isZepto ? zeptoEligibility.canRequest : instamartEligibility.canRequest);
+
+                return { 
+                    label: isSendingBBAppointment || isSendingZeptoAppointment || isSendingInstamartAppointment ? 'Requesting...' : 'Request Appt.', 
+                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100', 
+                    onClick: () => {
+                        if (isBB) handleSendBBAppointmentRequest(so);
+                        else if (isZepto) handleSendZeptoAppointmentRequest();
+                        else handleSendInstamartAppointmentRequest();
+                    }, 
+                    disabled: !canReq || isExecuting 
+                };
+            }
+
             return { 
                 label: isPushingNimbus === so.id ? 'Shipping...' : 'Ship Nimbus', 
                 color: 'bg-blue-600 text-white hover:bg-blue-700', 
@@ -2615,6 +2725,17 @@ let html = `
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingInstamartAppointment ? 'animate-pulse' : ''}`} />
                             <span>{instamartEligibility.missingBoxDetails ? 'Box Data Missing' : 'Instamart Appt.'}</span>
+                        </button>
+                    )}
+                    {bbEligibility.show && (
+                        <button 
+                            onClick={() => handleSendBBAppointmentRequest()}
+                            disabled={!bbEligibility.canRequest || isSendingBBAppointment}
+                            className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 group ${!bbEligibility.canRequest ? 'grayscale' : ''}`}
+                            title={bbEligibility.canRequest ? "All BB orders invoiced. Ready to send appointment request." : bbEligibility.reason}
+                        >
+                            <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingBBAppointment ? 'animate-pulse' : ''}`} />
+                            <span>{bbEligibility.missingBoxDetails ? 'Box Data Missing' : 'BB Appt.'}</span>
                         </button>
                     )}
                     <button 
@@ -2840,7 +2961,7 @@ let html = `
                                                     )}
                                                     <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
                                                     <div 
-                                                        className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer"
+                                                        className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
                                                         onClick={(e: any) => {
                                                             e.stopPropagation();
                                                             setOpenMenuId(openMenuId === so.id ? null : so.id);

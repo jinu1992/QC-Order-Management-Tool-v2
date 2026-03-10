@@ -26,8 +26,14 @@ const App: React.FC = () => {
   const [lastSynced, setLastSynced] = useState<number>(0);
   
   // Authenticated state
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [googleTokens, setGoogleTokens] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('qc_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [googleTokens, setGoogleTokens] = useState<any>(() => {
+    const saved = localStorage.getItem('google_sheets_tokens');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [isAuthChecked, setIsAuthChecked] = useState(true);
 
   const [users, setUsers] = useState<User[]>([]);
@@ -52,6 +58,8 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setCurrentUser(null);
     setGoogleTokens(null);
+    localStorage.removeItem('qc_user');
+    localStorage.removeItem('google_sheets_tokens');
     setActiveView('Dashboard');
   };
 
@@ -83,6 +91,20 @@ const App: React.FC = () => {
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('qc_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('qc_user');
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (googleTokens) {
+      localStorage.setItem('google_sheets_tokens', JSON.stringify(googleTokens));
+    }
+  }, [googleTokens]);
 
   const refreshData = useCallback(async (force = false) => {
       if (!currentUser) return;

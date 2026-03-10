@@ -107,6 +107,7 @@ function doPost(e) {
     else if (action === 'saveUser') result = { status: 'success', message: 'User saved' };
     else if (action === 'deleteUser') result = { status: 'success', message: 'User deleted' };
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
+    else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
     else {
       return responseJSON({status: 'error', message: 'Invalid action: ' + action});
     }
@@ -568,4 +569,110 @@ function updateInstamartAppointmentDetails(data) {
   } else {
     return { status: 'error', message: 'Order not found' };
   }
+}
+
+function sendBBAppointmentRequestEmail(data) {
+  const { eeReferenceCode, userEmail } = data;
+  if (!eeReferenceCode) return { status: 'error', message: 'Missing EE Reference Code' };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const poSheet = ss.getSheetByName(SHEET_PO_DB);
+    const zohoSheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
+    
+    if (!poSheet || !zohoSheet) return { status: 'error', message: 'Required sheets not found' };
+
+    const poData = poSheet.getDataRange().getValues();
+    const poHeaders = poData[0];
+    const refCol = poHeaders.indexOf('EE_reference_code');
+    const statusCol = poHeaders.indexOf('Status');
+    const companyCol = poHeaders.indexOf('Company Name'); // Assuming company name is stored to map to Zoho
+
+    let orderRow = -1;
+    let companyName = "";
+
+    for (let i = 1; i < poData.length; i++) {
+      if (String(poData[i][refCol]).trim() === String(eeReferenceCode).trim()) {
+        orderRow = i + 1;
+        companyName = String(poData[i][companyCol]).trim();
+        break;
+      }
+    }
+
+    if (orderRow === -1) return { status: 'error', message: 'Order not found in PO_Database' };
+
+    // Find POC Email from Zoho Customers
+    const zohoData = zohoSheet.getDataRange().getValues();
+    const zohoHeaders = zohoData[0];
+    const contactNameCol = zohoHeaders.indexOf('Contact Name');
+    const emailCol = zohoHeaders.indexOf('Email');
+
+    let pocEmail = "";
+    let pocName = "";
+
+    for (let j = 1; j < zohoData.length; j++) {
+      // BB Contact Names usually start with BB_ (e.g., BB_Ahmedabad-FV-FMCG-DC)
+      // We match the companyName from PO_Database to Contact Name in Zoho
+      if (String(zohoData[j][contactNameCol]).trim() === companyName) {
+        pocEmail = String(zohoData[j][emailCol]).trim();
+        pocName = String(zohoData[j][zohoHeaders.indexOf('First Name')]).trim();
+        break;
+      }
+    }
+
+    if (!pocEmail) {
+      // Fallback or error if POC not found
+      return { status: 'error', message: 'POC email not found for ' + companyName };
+    }
+
+    // Send Email
+    const subject = "Appointment Request for Order: " + eeReferenceCode;
+    const body = "Dear " + (pocName || "Team") + ",\n\n" +
+                 "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
+                 "Please provide the appointment slot at the earliest.\n\n" +
+                 "Best regards,\n" +
+                 "QC Team";
+
+    MailApp.sendEmail(pocEmail, subject, body);
+
+    // Update Status to 'Awaiting Appointment Details'
+    poSheet.getRange(orderRow, statusCol + 1).setValue('Awaiting Appointment Details');
+
+    return { 
+      status: 'success', 
+      message: 'Appointment request email sent to ' + pocEmail,
+      pocEmail: pocEmail
+    };
+
+  } catch (e) {
+    return { status: 'error', message: 'Error sending BB appointment: ' + e.toString() };
+  }
+}
+
+function getChannelConfigs() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_CHANNEL_CONFIG);
+  if (!sheet) return { status: 'success', data: [] };
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const formatted = data.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+  return { status: 'success', data: formatted };
+}
+
+function getUsers() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_USERS);
+  if (!sheet) return { status: 'success', data: [] };
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const formatted = data.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = row[i]);
+    return obj;
+  });
+  return { status: 'success', data: formatted };
 }
