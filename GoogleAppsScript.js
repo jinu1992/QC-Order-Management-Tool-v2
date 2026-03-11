@@ -572,8 +572,8 @@ function updateInstamartAppointmentDetails(data) {
 }
 
 function sendBBAppointmentRequestEmail(data) {
-  const { eeReferenceCode, userEmail } = data;
-  if (!eeReferenceCode) return { status: 'error', message: 'Missing EE Reference Code' };
+  const { orders } = data;
+  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'Missing orders array' };
 
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -586,66 +586,75 @@ function sendBBAppointmentRequestEmail(data) {
     const poHeaders = poData[0];
     const refCol = poHeaders.indexOf('EE_reference_code');
     const statusCol = poHeaders.indexOf('Status');
-    const companyCol = poHeaders.indexOf('Company Name'); // Assuming company name is stored to map to Zoho
+    const companyCol = poHeaders.indexOf('Company Name');
 
-    let orderRow = -1;
-    let companyName = "";
-
-    for (let i = 1; i < poData.length; i++) {
-      if (String(poData[i][refCol]).trim() === String(eeReferenceCode).trim()) {
-        orderRow = i + 1;
-        companyName = String(poData[i][companyCol]).trim();
-        break;
-      }
-    }
-
-    if (orderRow === -1) return { status: 'error', message: 'Order not found in PO_Database' };
-
-    // Find POC Email from Zoho Customers
     const zohoData = zohoSheet.getDataRange().getValues();
     const zohoHeaders = zohoData[0];
     const contactNameCol = zohoHeaders.indexOf('Contact Name');
     const emailCol = zohoHeaders.indexOf('Email');
+    const firstNameCol = zohoHeaders.indexOf('First Name');
 
-    let pocEmail = "";
-    let pocName = "";
+    let successCount = 0;
+    let errors = [];
 
-    for (let j = 1; j < zohoData.length; j++) {
-      // BB Contact Names usually start with BB_ (e.g., BB_Ahmedabad-FV-FMCG-DC)
-      // We match the companyName from PO_Database to Contact Name in Zoho
-      if (String(zohoData[j][contactNameCol]).trim() === companyName) {
-        pocEmail = String(zohoData[j][emailCol]).trim();
-        pocName = String(zohoData[j][zohoHeaders.indexOf('First Name')]).trim();
-        break;
+    orders.forEach(order => {
+      const eeReferenceCode = order.poReference; // Frontend sends poReference as the reference code
+      let orderRow = -1;
+      let companyName = "";
+
+      for (let i = 1; i < poData.length; i++) {
+        if (String(poData[i][refCol]).trim() === String(eeReferenceCode).trim()) {
+          orderRow = i + 1;
+          companyName = String(poData[i][companyCol]).trim();
+          break;
+        }
       }
-    }
 
-    if (!pocEmail) {
-      // Fallback or error if POC not found
-      return { status: 'error', message: 'POC email not found for ' + companyName };
-    }
+      if (orderRow === -1) {
+        errors.push(`Order ${eeReferenceCode} not found`);
+        return;
+      }
 
-    // Send Email
-    const subject = "Appointment Request for Order: " + eeReferenceCode;
-    const body = "Dear " + (pocName || "Team") + ",\n\n" +
-                 "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
-                 "Please provide the appointment slot at the earliest.\n\n" +
-                 "Best regards,\n" +
-                 "QC Team";
+      let pocEmail = "";
+      let pocName = "";
 
-    MailApp.sendEmail(pocEmail, subject, body);
+      for (let j = 1; j < zohoData.length; j++) {
+        if (String(zohoData[j][contactNameCol]).trim() === companyName) {
+          pocEmail = String(zohoData[j][emailCol]).trim();
+          pocName = String(zohoData[j][firstNameCol]).trim();
+          break;
+        }
+      }
 
-    // Update Status to 'Awaiting Appointment Details'
-    poSheet.getRange(orderRow, statusCol + 1).setValue('Awaiting Appointment Details');
+      if (!pocEmail) {
+        errors.push(`POC email not found for ${companyName}`);
+        return;
+      }
+
+      // Send Email
+      const subject = "Appointment Request for Order: " + eeReferenceCode;
+      const body = "Dear " + (pocName || "Team") + ",\n\n" +
+                   "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
+                   "Please provide the appointment slot at the earliest.\n\n" +
+                   "Best regards,\n" +
+                   "QC Team";
+
+      MailApp.sendEmail(pocEmail, subject, body);
+
+      // Update Status to 'Awaiting Appointment Details'
+      poSheet.getRange(orderRow, statusCol + 1).setValue('Awaiting Appointment Details');
+      successCount++;
+    });
 
     return { 
-      status: 'success', 
-      message: 'Appointment request email sent to ' + pocEmail,
-      pocEmail: pocEmail
+      status: successCount > 0 ? 'success' : 'error', 
+      message: `Successfully processed ${successCount} orders. ${errors.length > 0 ? ' Errors: ' + errors.join(', ') : ''}`,
+      successCount,
+      errors
     };
 
   } catch (e) {
-    return { status: 'error', message: 'Error sending BB appointment: ' + e.toString() };
+    return { status: 'error', message: 'Error sending BB appointments: ' + e.toString() };
   }
 }
 

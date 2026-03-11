@@ -1829,7 +1829,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const hasOpen = openBBOrders.length > 0;
         const missingBoxDetails = invoicedBBOrders.some(so => (so.boxCount || 0) === 0);
 
-        if (hasOpen) return { show: true, canRequest: false, reason: 'Waiting for other BB orders to be invoiced', hasOpen: true, missingBoxDetails: false };
         if (invoicedBBOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced BB orders', hasOpen: false, missingBoxDetails: false };
         if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false, missingBoxDetails: true };
 
@@ -2821,8 +2820,9 @@ let html = `
                                 
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
                                 const isFinalStatus = so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned';
-                                const isGreyedOut = (isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) || 
-                                                    (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails));
+                                const isGreyedOut = ((isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) || 
+                                                    (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails))) &&
+                                                    !so.appointmentId && !so.appointmentDate;
                                 const zeptoTooltip = isGreyedOut ? `Waiting for other ${isZepto ? 'Zepto' : 'Instamart'} orders to be invoiced` : undefined;
                                 
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
