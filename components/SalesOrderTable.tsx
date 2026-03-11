@@ -978,7 +978,7 @@ const InstamartAppointmentModal: FC<{
                         className={`flex-[2] px-4 py-3 ${brandColor} text-white text-sm font-bold rounded-xl shadow-lg ${brandShadow} hover:brightness-110 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2`}
                     >
                         {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
-                        {isSubmitting ? 'Updating...' : 'Confirm Appointment'}
+                        {isSubmitting ? 'Updating...' : 'Update Appointment details'}
                     </button>
                 </div>
             </div>
@@ -2515,6 +2515,8 @@ let html = `
         const isExecuting = isCreatingInvoice === so.id || isPushingNimbus === so.id;
         const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
         const isZepto = so.channel.toLowerCase().includes('zepto');
+        const isInstamart = so.channel.toLowerCase().includes('instamart');
+        const isBB = so.channel.toLowerCase().includes('bb');
         
         // Delivered, RTO, Returned orders should only show Track Order or Details
         if (so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned') {
@@ -2531,16 +2533,23 @@ let html = `
 
         if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
         
-        if (isZepto) {
-            if (so.status === 'Create ASN') return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
-            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
-            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
-        }
+        if (isZepto || isInstamart || isBB) {
+            if (so.status === 'Awaiting Appointment Confirmation' || (isBB && !!so.appointmentRequestId)) {
+                return { 
+                    label: 'Update Appt.', 
+                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md', 
+                    onClick: () => setInstamartApptModal({ isOpen: true, so }), 
+                    disabled: isExecuting 
+                };
+            }
+            
+            if (isZepto && so.status === 'Create ASN') {
+                return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
+            }
 
-        const isInstamart = so.channel.toLowerCase().includes('instamart');
-        if (isInstamart) {
-            if (so.status === 'Awaiting Appointment Confirmation') return { label: 'Awaiting Appt.', color: 'bg-yellow-500 text-white hover:bg-yellow-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
-            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) {
+                return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
+            }
         }
 
         if (so.status === 'Invoiced' && !so.awb) {

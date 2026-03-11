@@ -15,7 +15,8 @@ import {
     CubeIcon,
     XCircleIcon,
     CalendarIcon,
-    CloudDownloadIcon as FileIcon
+    CloudDownloadIcon as FileIcon,
+    LogoutIcon
 } from './icons/Icons';
 
 interface SidebarProps {
@@ -85,11 +86,19 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
                 <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-sm font-bold shadow-md shadow-blue-50">
                     {currentUser.avatarInitials}
                 </div>
-                <div className="ml-3 overflow-hidden">
+                <div className="ml-3 overflow-hidden flex-1">
                     <p className="text-sm font-bold text-gray-800 truncate">{currentUser.name}</p>
                     <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{currentUser.role}</p>
                 </div>
             </div>
+
+            <button 
+                onClick={onLogout}
+                className="flex items-center gap-3 p-3 w-full rounded-xl text-sm font-bold text-red-600 bg-red-50 border border-red-100 hover:bg-red-100 transition-all active:scale-95 group shadow-sm"
+            >
+                <LogoutIcon className="h-5 w-5 text-red-500 group-hover:text-red-700 transition-colors" />
+                <span>Logout Session</span>
+            </button>
         </div>
       </div>
     </aside>

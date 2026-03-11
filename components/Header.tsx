@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { DownloadIcon, BellIcon, CheckCircleIcon, InfoIcon, AdminIcon, MenuIcon, ArrowsExpandIcon, ArrowsMinimizeIcon, RefreshIcon } from './icons/Icons';
+import { DownloadIcon, BellIcon, CheckCircleIcon, InfoIcon, AdminIcon, MenuIcon, ArrowsExpandIcon, ArrowsMinimizeIcon, RefreshIcon, LogoutIcon } from './icons/Icons';
 import { NotificationItem, ViewType } from '../types';
 
 interface HeaderProps {
@@ -10,10 +10,11 @@ interface HeaderProps {
     onViewLogs: () => void;
     activeView: ViewType;
     onToggleSidebar: () => void;
+    onLogout: () => void;
     lastSynced?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, onViewLogs, activeView, onToggleSidebar, lastSynced }) => {
+const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, onViewLogs, activeView, onToggleSidebar, onLogout, lastSynced }) => {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [canFullscreen, setCanFullscreen] = useState(true);
@@ -234,6 +235,15 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
                 <span className="hidden sm:inline">Bulk Export</span>
             </button>
         )}
+
+        <button 
+            onClick={onLogout}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-red-600 border border-red-200 bg-red-50/50 rounded-lg hover:bg-red-100 transition-all active:scale-95 shadow-sm ml-2 group"
+            title="Logout Session"
+        >
+            <LogoutIcon className="h-5 w-5 text-red-500 group-hover:text-red-700" />
+            <span className="hidden sm:inline">Logout</span>
+        </button>
       </div>
     </header>
   );

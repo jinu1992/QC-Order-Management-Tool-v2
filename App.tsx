@@ -34,6 +34,16 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('google_sheets_tokens');
     return saved ? JSON.parse(saved) : null;
   });
+
+  // Session Management State
+  const [sessionStartTime] = useState<number>(() => {
+    const saved = localStorage.getItem('qc_session_start');
+    if (saved) return parseInt(saved);
+    const now = Date.now();
+    localStorage.setItem('qc_session_start', now.toString());
+    return now;
+  });
+  const [lastActivity, setLastActivity] = useState<number>(Date.now());
   const [isAuthChecked, setIsAuthChecked] = useState(true);
 
   const [users, setUsers] = useState<User[]>([]);
@@ -54,16 +64,6 @@ const App: React.FC = () => {
   ]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [toasts, setToasts] = useState<NotificationItem[]>([]);
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setGoogleTokens(null);
-    localStorage.removeItem('qc_user');
-    localStorage.removeItem('google_sheets_tokens');
-    setActiveView('Dashboard');
-  };
-
-  const toggleSidebar = () => setSidebarOpen(!isSidebarOpen);
 
   const addLog = useCallback((action: string, details: string) => {
     const newLog: ActivityLog = {
@@ -87,6 +87,66 @@ const App: React.FC = () => {
     setNotifications(prev => [newNotification, ...prev]);
     setToasts(prev => [...prev, newNotification]);
   }, []);
+
+  const handleLogout = useCallback(() => {
+    setCurrentUser(null);
+    setGoogleTokens(null);
+    localStorage.removeItem('qc_user');
+    localStorage.removeItem('google_sheets_tokens');
+    localStorage.removeItem('qc_session_start');
+    localStorage.removeItem('qc_last_activity');
+    setActiveView('Dashboard');
+  }, []);
+
+  // Session Expiry and Inactivity Logic
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const checkSession = () => {
+        const now = Date.now();
+        const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
+        const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
+        // Check absolute session expiry
+        if (now - sessionStartTime > SESSION_TIMEOUT) {
+            addNotification("Session expired. Please login again.", "warning");
+            handleLogout();
+            return;
+        }
+
+        // Check inactivity
+        const lastAct = parseInt(localStorage.getItem('qc_last_activity') || now.toString());
+        if (now - lastAct > INACTIVITY_TIMEOUT) {
+            addNotification("Logged out due to inactivity.", "info");
+            handleLogout();
+            return;
+        }
+    };
+
+    const updateActivity = () => {
+        const now = Date.now();
+        setLastActivity(now);
+        localStorage.setItem('qc_last_activity', now.toString());
+    };
+
+    // Listen for user activity
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('click', updateActivity);
+    window.addEventListener('scroll', updateActivity);
+
+    const intervalId = setInterval(checkSession, 60000); // Check every minute
+
+    return () => {
+        window.removeEventListener('mousemove', updateActivity);
+        window.removeEventListener('keydown', updateActivity);
+        window.removeEventListener('click', updateActivity);
+        window.removeEventListener('scroll', updateActivity);
+        clearInterval(intervalId);
+    };
+  }, [currentUser, sessionStartTime, handleLogout, addNotification]);
+
+  const toggleSidebar = () => setSidebarOpen(!isSidebarOpen);
 
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
@@ -312,6 +372,7 @@ const App: React.FC = () => {
           onViewLogs={() => { setActiveView('Admin'); setAdminTab('logs'); }} 
           activeView={activeView}
           onToggleSidebar={toggleSidebar}
+          onLogout={handleLogout}
           lastSynced={lastSynced}
         />
         {renderContent()}
