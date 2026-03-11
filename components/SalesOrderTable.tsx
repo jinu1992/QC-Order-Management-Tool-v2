@@ -1582,6 +1582,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     }
                 }
 
+                const isBB = po.channel.toLowerCase().includes('bb');
+                if (isBB && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId || apptDate) {
+                        // Appointment confirmed, keep normal status (e.g. Invoiced)
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
                 if (!groups[refCode]) {
                     groups[refCode] = { 
                         id: refCode, 
