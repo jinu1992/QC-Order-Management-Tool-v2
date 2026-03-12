@@ -39,6 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
     { name: 'Appointments', icon: <CalendarIcon /> },
     { name: 'File Uploader', icon: <FileIcon className="h-5 w-5" /> },
     { name: 'Inventory', icon: <CubeIcon /> },
+    { name: 'Shipment Tracking', icon: <TruckIcon /> },
     { name: 'Finance', icon: <CurrencyIcon /> },
     { name: 'Reports', icon: <ReportIcon /> },
     { name: 'Admin', icon: <AdminIcon /> },

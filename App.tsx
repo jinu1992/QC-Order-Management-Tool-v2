@@ -11,6 +11,7 @@ import FinanceManager from './components/FinanceManager';
 import InventoryManager from './components/InventoryManager';
 import ReportsManager from './components/ReportsManager';
 import QuotationsManager from './components/QuotationsManager';
+import ShipmentManager from './components/ShipmentManager';
 import FileUploader from './components/FileUploader';
 import ToastContainer from './components/ToastContainer';
 import Login from './components/Login';
@@ -308,6 +309,7 @@ const App: React.FC = () => {
             return <FileUploader currentUser={currentUser} addLog={addLog} addNotification={addNotification} />;
         case 'Inventory': return <InventoryManager addLog={addLog} inventoryItems={inventoryItems} purchaseOrders={purchaseOrders} setInventoryItems={setInventoryItems} onSync={() => refreshData(true)} isSyncing={isLoading} activeTab={activeInventoryTab} setActiveTab={setActiveInventoryTab} addNotification={addNotification} />;
         case 'Finance': return <FinanceManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
+        case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} />;
         case 'Reports': return <ReportsManager purchaseOrders={purchaseOrders} inventoryItems={inventoryItems} />;
         case 'Appointments':
             return <AppointmentManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;

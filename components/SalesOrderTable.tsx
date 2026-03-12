@@ -2534,7 +2534,7 @@ let html = `
         if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
         
         if (isZepto || isInstamart || isBB) {
-            if (so.status === 'Awaiting Appointment Confirmation' || (isBB && !!so.appointmentRequestId)) {
+            if (so.status === 'Awaiting Appointment Confirmation' || (isBB && !!so.appointmentRequestId && !so.appointmentDate && !so.appointmentId)) {
                 return { 
                     label: 'Update Appt.', 
                     color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md', 
