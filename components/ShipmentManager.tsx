@@ -22,7 +22,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     // Get unique channels for filter dropdown
     const uniqueChannels = useMemo(() => {
         const channels = new Set<string>();
-        purchaseOrders.forEach(po => {
+        purchaseOrders.forEach((po: PurchaseOrder) => {
             if (po.channel) channels.add(po.channel);
         });
         return Array.from(channels).sort();
@@ -47,7 +47,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
 
     // Filter POs
     const trackingOrders = useMemo(() => {
-        const filtered = purchaseOrders.filter(po => {
+        const filtered = purchaseOrders.filter((po: PurchaseOrder) => {
             const channelLower = (po.channel || '').toLowerCase();
             const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
@@ -79,20 +79,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             const matchesChannel = channelFilter === '' || po.channel === channelFilter;
 
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
-
             // Determine delivered status
-            const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate || po.status === 'Delivered');
+            const currentTrackingStatusLower = (po.trackingStatus || '').toLowerCase();
+            const currentIsActuallyDelivered = (currentTrackingStatusLower === 'delivered' || currentTrackingStatusLower === 'successfully delivered' || !!po.deliveredDate || po.status === 'Delivered');
 
             // Apply Tab filter
             if (activeTab === 'Today') {
-                return isSameDay(po.appointmentDate, todayDate) && !isActuallyDelivered;
+                return isSameDay(po.appointmentDate, todayDate) && !currentIsActuallyDelivered;
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(po.appointmentDate, tomorrowDate) && !isActuallyDelivered;
+                return isSameDay(po.appointmentDate, tomorrowDate) && !currentIsActuallyDelivered;
             } else if (activeTab === 'Missed') {
                 // Missed delivery implies appointment date has passed but not delivered
-                const missedAppt = isPastDate(po.appointmentDate, todayDate) && !isActuallyDelivered;
-                const missedEdd = !po.appointmentDate && isPastDate(po.edd, todayDate) && !isActuallyDelivered;
+                const missedAppt = isPastDate(po.appointmentDate, todayDate) && !currentIsActuallyDelivered;
+                const missedEdd = !po.appointmentDate && isPastDate(po.edd, todayDate) && !currentIsActuallyDelivered;
                 return missedAppt || missedEdd;
             }
 
@@ -100,7 +99,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         });
 
         // ASCEND order of appointment date
-        filtered.sort((a, b) => {
+        filtered.sort((a: PurchaseOrder, b: PurchaseOrder) => {
             const hasApptA = !!a.appointmentDate;
             const hasApptB = !!b.appointmentDate;
 
@@ -197,7 +196,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                             onChange={(e) => setChannelFilter(e.target.value)}
                         >
                             <option value="">All Channels</option>
-                            {uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}
+                            {uniqueChannels.map((c: string) => <option key={c} value={c}>{c}</option>)}
                         </select>
                     </div>
 
@@ -231,7 +230,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {trackingOrders.length > 0 ? trackingOrders.map((so) => {
+                            {trackingOrders.length > 0 ? trackingOrders.map((so: PurchaseOrder) => {
                                 const isToday = isSameDay(so.appointmentDate, todayDate);
                                 const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
                                 const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate);
@@ -268,7 +267,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                     {/* Quantities */}
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxes || so.eeReferenceBoxCount || '-'}</span></div>
-                                        <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc, item) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
+                                        <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc: number, item: any) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
                                     </td>
 
                                     {/* Tracking Details */}

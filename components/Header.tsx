@@ -20,7 +20,7 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
   const [canFullscreen, setCanFullscreen] = useState(true);
   const dropdownRef = useRef<HTMLDivElement>(null);
   
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter((n: NotificationItem) => !n.read).length;
 
   useEffect(() => {
     // Robust check for fullscreen support
@@ -45,10 +45,10 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
     };
 
     const events = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
-    events.forEach(event => document.addEventListener(event, handleFullscreenChange));
+    events.forEach((event: string) => document.addEventListener(event, handleFullscreenChange));
 
     return () => {
-      events.forEach(event => document.removeEventListener(event, handleFullscreenChange));
+      events.forEach((event: string) => document.removeEventListener(event, handleFullscreenChange));
     };
   }, []);
 
@@ -186,7 +186,7 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
                             </div>
                         ) : (
                             <ul className="divide-y divide-gray-50">
-                                {notifications.map((notification) => (
+                                {notifications.map((notification: NotificationItem) => (
                                     <li 
                                         key={notification.id} 
                                         className={`p-4 hover:bg-gray-50 transition-colors cursor-pointer group ${!notification.read ? 'bg-blue-50/50' : ''}`}
