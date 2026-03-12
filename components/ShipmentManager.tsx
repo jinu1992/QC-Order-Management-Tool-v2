@@ -48,9 +48,20 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     // Filter POs
     const trackingOrders = useMemo(() => {
         const filtered = purchaseOrders.filter(po => {
-            // "Only show shipments which are in status Shipped in Sale orders"
-            if ((po.status as unknown as string) !== 'Shipped' && (po.status as unknown as string) !== 'Delivered' && (po.status as unknown as string) !== 'RTO Initiated' && (po.status as unknown as string) !== 'Returned') {
-                return false;
+            const channelLower = (po.channel || '').toLowerCase();
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
+            
+            if (!isAllowedChannel) return false;
+
+            const isAmazon = channelLower.includes('amazon');
+            const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate);
+            
+            if ((po.status as unknown as string) !== 'Shipped' && (po.status as unknown as string) !== 'RTO Initiated' && (po.status as unknown as string) !== 'Returned') {
+                if (!(isAmazon && (po.status as unknown as string) === 'Delivered' && !isActuallyDelivered)) {
+                    return false;
+                }
             }
 
             // Apply search filters
