@@ -58,8 +58,15 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate);
             
-            if ((po.status as unknown as string) !== 'Shipped' && (po.status as unknown as string) !== 'RTO Initiated' && (po.status as unknown as string) !== 'Returned') {
-                if (!(isAmazon && (po.status as unknown as string) === 'Delivered' && !isActuallyDelivered)) {
+            // Allow only specific statuses
+            const currentStatus = String(po.status || '');
+            const isTargetStatus = currentStatus === 'Shipped' || currentStatus === 'RTO Initiated' || currentStatus === 'Returned';
+            
+            if (!isTargetStatus) {
+                // If it's Amazon, 'Delivered' is allowed ONLY if not *actually* delivered yet
+                const isAmazonDelivered = isAmazon && currentStatus === 'Delivered' && !isActuallyDelivered;
+                
+                if (!isAmazonDelivered) {
                     return false;
                 }
             }
