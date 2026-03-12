@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { PurchaseOrder } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon } from './icons/Icons';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon } from './icons/Icons';
 
 interface ShipmentManagerProps {
     purchaseOrders: PurchaseOrder[];
@@ -8,8 +8,9 @@ interface ShipmentManagerProps {
 
 const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => {
     const [searchTerm, setSearchTerm] = useState('');
+    const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow'>('All');
+    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed'>('All');
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -18,40 +19,70 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         return d;
     }, []);
 
+    // Get unique channels for filter dropdown
+    const uniqueChannels = useMemo(() => {
+        const channels = new Set<string>();
+        purchaseOrders.forEach(po => {
+            if (po.channel) channels.add(po.channel);
+        });
+        return Array.from(channels).sort();
+    }, [purchaseOrders]);
+
     const isSameDay = (dateStr: string | undefined, targetDate: Date) => {
         if (!dateStr) return false;
-        // Basic parsing, trying to format to standard date
-        // Usually date formats are yyyy-mm-dd or similar, JS Date can typically parse reasonably
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return false;
         return d.toDateString() === targetDate.toDateString();
     };
 
-    // Filter POs to only those that might have tracking (Invoiced or beyond)
-    // and apply search/AWB/Tab filters
+    const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
+        // Strip time for strict day comparison
+        const d1 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const compare = new Date(compareDate.getFullYear(), compareDate.getMonth(), compareDate.getDate());
+        return d1 < compare;
+    };
+
+    // Filter POs
     const trackingOrders = useMemo(() => {
         const filtered = purchaseOrders.filter(po => {
-            // Include orders that have some tracking info or are beyond basic confirmation
-            const hasTrackingInfo = po.awb || po.trackingStatus || po.latestTrackingStatus || po.currentLocation || po.appointmentDate;
-            const isAdvancedState = ['Invoiced', 'In-Transit', 'Delivered', 'RTO Initiated', 'Returned', 'Appointment to be taken'].includes(po.status as string);
-            
-            if (!hasTrackingInfo && !isAdvancedState) return false;
+            // "Only show shipments which are in status Shipped in Sale orders"
+            if (po.status !== 'Shipped' && po.status !== 'Delivered' && po.status !== 'RTO Initiated' && po.status !== 'Returned') {
+                return false;
+            }
 
             // Apply search filters
+            const safePoNumber = po.poNumber || '';
+            const safeChannel = po.channel || '';
+            const safeAwb = po.awb || '';
+
             const matchesSearch = searchTerm === '' || 
-                po.poNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                po.channel.toLowerCase().includes(searchTerm.toLowerCase());
+                safePoNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                safeChannel.toLowerCase().includes(searchTerm.toLowerCase());
                 
             const matchesAwb = awbSearch === '' || 
-                (po.awb && po.awb.toLowerCase().includes(awbSearch.toLowerCase()));
+                safeAwb.toLowerCase().includes(awbSearch.toLowerCase());
+                
+            const matchesChannel = channelFilter === '' || po.channel === channelFilter;
 
-            if (!matchesSearch || !matchesAwb) return false;
+            if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
+
+            // Determine delivered status
+            const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate || po.status === 'Delivered');
 
             // Apply Tab filter
             if (activeTab === 'Today') {
-                return isSameDay(po.appointmentDate, todayDate);
+                return isSameDay(po.appointmentDate, todayDate) && !isActuallyDelivered;
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(po.appointmentDate, tomorrowDate);
+                return isSameDay(po.appointmentDate, tomorrowDate) && !isActuallyDelivered;
+            } else if (activeTab === 'Missed') {
+                // Missed delivery implies appointment date has passed but not delivered
+                const missedAppt = isPastDate(po.appointmentDate, todayDate) && !isActuallyDelivered;
+                const missedEdd = !po.appointmentDate && isPastDate(po.edd, todayDate) && !isActuallyDelivered;
+                return missedAppt || missedEdd;
             }
 
             return true;
@@ -72,79 +103,93 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             if (hasApptA && !hasApptB) return -1;
             if (!hasApptA && hasApptB) return 1;
 
-            // If no appointment, sort by EDD ascending as fallback, or order date
             const fallbackA = new Date(a.edd || a.orderDate || 0).getTime();
             const fallbackB = new Date(b.edd || b.orderDate || 0).getTime();
-            return fallbackB - fallbackA; // Descending for others as secondary fallback
+            return fallbackB - fallbackA; // Descending for others
         });
 
         return filtered;
-    }, [purchaseOrders, searchTerm, awbSearch, activeTab, todayDate, tomorrowDate]);
+    }, [purchaseOrders, searchTerm, awbSearch, channelFilter, activeTab, todayDate, tomorrowDate]);
 
     const getStatusBadge = (so: PurchaseOrder) => {
-        const status = (so.status as string) || 'Pending';
-        
-        if (status === 'Delivered') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-        if (status === 'RTO Initiated' || status === 'Returned' || status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+        const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+        const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered;
+
+        if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
+        if (so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        if (isMissed) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> Missed</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1 w-fit"><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
         
-        return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 w-fit">{status}</span>;
+        return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 w-fit">{so.status || 'Pending'}</span>;
     };
 
     return (
         <div className="flex-1 flex flex-col min-h-0 bg-gray-50">
             {/* Header & Filters */}
             <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 bg-indigo-50 rounded-lg">
-                            <TruckIcon className="w-6 h-6 text-indigo-600" />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-900">Shipment Tracking</h2>
-                            <p className="text-sm text-gray-500">Track deliveries, appointments, and priority orders</p>
-                        </div>
-                    </div>
-                </div>
+                {/* Header title removed to avoid duplication with App.tsx */}
 
                 {/* Priority Tabs */}
-                <div className="flex space-x-4 mb-4 border-b border-gray-200 pb-2">
+                <div className="flex space-x-4 mb-4 border-b border-gray-200 pb-2 overflow-x-auto">
                     <button
-                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 ${activeTab === 'All' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 whitespace-nowrap ${activeTab === 'All' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
                         onClick={() => setActiveTab('All')}
                     >
                         All Shipments
                     </button>
                     <button
-                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 ${activeTab === 'Today' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'Today' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
                         onClick={() => setActiveTab('Today')}
                     >
                         Today's Appts
                         <span className="bg-orange-100 text-orange-600 py-0.5 px-2 rounded-full text-xs">Priority</span>
                     </button>
                     <button
-                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 ${activeTab === 'Tomorrow' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'Tomorrow' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
                         onClick={() => setActiveTab('Tomorrow')}
                     >
                         Tomorrow's Appts
                         <span className="bg-blue-100 text-blue-600 py-0.5 px-2 rounded-full text-xs">Upcoming</span>
                     </button>
+                    <button
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'Missed' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        onClick={() => setActiveTab('Missed')}
+                    >
+                        Missed Deliveries
+                        <span className="bg-red-100 text-red-600 py-0.5 px-2 rounded-full text-xs">Action Required</span>
+                    </button>
                 </div>
 
                 <div className="flex flex-wrap gap-4 items-center">
-                    <div className="relative flex-1 min-w-[200px] max-w-md">
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <SearchIcon className="h-4 w-4 text-gray-400" />
                         </div>
                         <input
                             type="text"
-                            placeholder="Search by PO Number or Channel..."
-                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-partners-green focus:border-partners-green"
+                            placeholder="Search by PO Number or Store..."
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
+                    
+                    <div className="relative flex-1 min-w-[150px] max-w-[200px]">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <FilterIcon className="h-4 w-4 text-gray-400" />
+                        </div>
+                        <select
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                            value={channelFilter}
+                            onChange={(e) => setChannelFilter(e.target.value)}
+                        >
+                            <option value="">All Channels</option>
+                            {uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+
                     <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <SearchIcon className="h-4 w-4 text-gray-400" />
@@ -152,7 +197,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                         <input
                             type="text"
                             placeholder="Filter by AWB Number..."
-                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-partners-green focus:border-partners-green bg-blue-50/30"
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-blue-50/30"
                             value={awbSearch}
                             onChange={(e) => setAwbSearch(e.target.value)}
                         />
@@ -166,29 +211,37 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                     <table className="min-w-full divide-y divide-gray-200 shrink-0">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Channel &amp; Store</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">PO Details</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[140px]">Channel &amp; Store</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[150px]">PO Details</th>
                                 <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Quantities</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Tracking</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status &amp; EDD</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Appointment</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[220px]">Tracking Details</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[180px]">Status &amp; EDD</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[200px]">Appointment</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {trackingOrders.length > 0 ? trackingOrders.map((so) => {
                                 const isToday = isSameDay(so.appointmentDate, todayDate);
                                 const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
+                                const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate);
                                 
+                                const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+                                const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+
                                 let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent";
-                                if (isToday) {
+                                if (isToday && !isActuallyDelivered) {
                                     rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500";
-                                } else if (isTomorrow) {
+                                } else if (isTomorrow && !isActuallyDelivered) {
                                     rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500";
+                                } else if (isMissed && !isActuallyDelivered) {
+                                    rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500";
+                                } else if (isActuallyDelivered) {
+                                    rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-default";
                                 }
 
                                 return (
                                 <tr key={so.id} className={rowClass}>
-                                    {/* Channel & Store Array */}
+                                    {/* Channel & Store */}
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="font-semibold text-gray-900">{so.channel}</div>
                                         <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
@@ -201,28 +254,32 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                         {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
                                     </td>
                                     
-                                    {/* Quantities (Box Count & Shipped) */}
+                                    {/* Quantities */}
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxes || so.eeReferenceBoxCount || '-'}</span></div>
-                                        <div className="text-sm text-gray-500">Shipped: <span className="font-medium">{so.items?.reduce((acc, item) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
+                                        <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc, item) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
                                     </td>
 
-                                    {/* Tracking (AWB, Carrier, URL) */}
+                                    {/* Tracking Details */}
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex flex-col">
+                                        <div className="flex flex-col gap-0.5">
                                             {so.awb ? (
                                                 <>
-                                                    {so.trackingUrl ? (
-                                                        <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline flex items-center gap-1">
-                                                            {so.awb}
-                                                        </a>
-                                                    ) : (
-                                                        <span className="text-sm font-medium text-gray-900">{so.awb}</span>
-                                                    )}
-                                                    <span className="text-xs text-gray-500">{so.carrier || '-'}</span>
+                                                    <div className="text-sm text-gray-900 flex items-center gap-1.5">
+                                                        <span className="font-semibold">AWB:</span>
+                                                        {so.trackingUrl ? (
+                                                            <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline">
+                                                                {so.awb}
+                                                            </a>
+                                                        ) : (
+                                                            <span>{so.awb}</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {so.carrier || '-'}</div>
+                                                    {so.currentLocation && <div className="text-xs text-gray-500 truncate mt-1" title={so.currentLocation}>📍 {so.currentLocation}</div>}
                                                 </>
                                             ) : (
-                                                <span className="text-sm text-gray-400 italic">No AWB yet</span>
+                                                <span className="text-sm text-gray-400 italic">No AWB Extracted</span>
                                             )}
                                         </div>
                                     </td>
@@ -231,28 +288,35 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="mb-1.5 flex flex-col gap-1">
                                             {getStatusBadge(so)}
-                                            {so.latestTrackingStatus && <span className="text-xs text-gray-400 w-40 truncate" title={so.latestTrackingStatus}>{so.latestTrackingStatus}</span>}
+                                            {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
+                                            {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
                                         </div>
-                                        <div className="text-xs text-gray-500 mt-1">
-                                            <span className="font-medium">EDD:</span> {so.edd || so.poEdd || '-'}
+                                        <div className="text-xs text-gray-700 mt-1">
+                                            <span className="font-bold border-t border-gray-200 pt-1 mt-1 block w-full">EDD: <span className="font-medium text-gray-600">{so.edd || so.poEdd || '-'}</span></span>
                                         </div>
                                     </td>
 
-                                    {/* Appointment Date & Time, ID */}
+                                    {/* Appointment */}
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {isToday && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider">Today</div>}
-                                        {isTomorrow && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
+                                        {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
+                                        {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
+                                        {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Passed Deadline</div>}
                                         
-                                        <div className="font-medium text-gray-900">
+                                        <div className="font-medium text-gray-900 mt-0.5">
                                             {so.appointmentDate ? (
-                                                `${so.appointmentDate} ${so.appointmentTime || ''}`
+                                                <div className="flex flex-col">
+                                                    <span>{so.appointmentDate}</span>
+                                                    <span className="text-xs text-gray-600 font-normal">{so.appointmentTime || ''}</span>
+                                                </div>
                                             ) : (
                                                 <span className="text-gray-400 italic font-normal">Pending Appt</span>
                                             )}
                                         </div>
                                         
                                         {so.appointmentId && (
-                                            <div className="text-xs text-gray-500 mt-0.5">ID: {so.appointmentId}</div>
+                                            <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded mt-1.5 inline-block font-medium w-fit border border-indigo-100">
+                                                ID: {so.appointmentId}
+                                            </div>
                                         )}
                                     </td>
                                 </tr>
@@ -260,8 +324,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                 <tr>
                                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                                         <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-                                        <p className="text-lg font-medium">No tracking records found</p>
-                                        <p className="text-sm">Try adjusting your filters or AWB search.</p>
+                                        <p className="text-lg font-medium">No shipments matching criteria</p>
+                                        <p className="text-sm mt-1">Adjust filters or select another tab.</p>
                                     </td>
                                 </tr>
                             )}
