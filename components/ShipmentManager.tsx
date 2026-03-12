@@ -49,7 +49,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     const trackingOrders = useMemo(() => {
         const filtered = purchaseOrders.filter(po => {
             // "Only show shipments which are in status Shipped in Sale orders"
-            if (po.status !== 'Shipped' && po.status !== 'Delivered' && po.status !== 'RTO Initiated' && po.status !== 'Returned') {
+            if ((po.status as unknown as string) !== 'Shipped' && (po.status as unknown as string) !== 'Delivered' && (po.status as unknown as string) !== 'RTO Initiated' && (po.status as unknown as string) !== 'Returned') {
                 return false;
             }
 
@@ -117,7 +117,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered;
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-        if (so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        if ((so.status as unknown as string) === 'RTO Initiated' || (so.status as unknown as string) === 'Returned' || (so.status as unknown as string) === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
         if (isMissed) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> Missed</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1 w-fit"><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
