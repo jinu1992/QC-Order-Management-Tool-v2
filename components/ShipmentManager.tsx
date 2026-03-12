@@ -16,7 +16,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         return purchaseOrders.filter(po => {
             // Include orders that have some tracking info or are beyond basic confirmation
             const hasTrackingInfo = po.awb || po.trackingStatus || po.latestTrackingStatus || po.currentLocation || po.appointmentDate;
-            const isAdvancedState = ['Invoiced', 'In-Transit', 'Delivered', 'RTO Initiated', 'Returned', 'Appointment to be taken'].includes(po.status);
+            const isAdvancedState = ['Invoiced', 'In-Transit', 'Delivered', 'RTO Initiated', 'Returned', 'Appointment to be taken'].includes(po.status as string);
             
             if (!hasTrackingInfo && !isAdvancedState) return false;
 
@@ -38,10 +38,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     }, [purchaseOrders, searchTerm, awbSearch]);
 
     const getStatusBadge = (so: PurchaseOrder) => {
-        const status = so.status || 'Pending';
+        const status = (so.status as string) || 'Pending';
         
         if (status === 'Delivered') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-        if (status === 'RTO Initiated' || status === 'Returned') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        if (status === 'RTO Initiated' || status === 'Returned' || status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1"><CalendarIcon className="w-3 h-3" /> Appt: {so.appointmentDate}</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1"><TruckIcon className="w-3 h-3" /> In Transit</span>;
         
