@@ -1,24 +1,24 @@
 
 import React, { useState, Fragment, useMemo, FC, useRef, useEffect } from 'react';
 import { type PurchaseOrder, type InventoryItem, POItem } from '../types';
-import { 
-    DotsVerticalIcon, 
-    CloudDownloadIcon, 
-    ChevronDownIcon, 
-    ChevronRightIcon, 
-    TruckIcon, 
-    CalendarIcon, 
-    CheckCircleIcon, 
-    CubeIcon, 
-    InvoiceIcon, 
-    ClipboardListIcon, 
-    ExternalLinkIcon, 
-    PaperclipIcon, 
-    RefreshIcon, 
-    PlusIcon, 
-    SendIcon, 
-    LockClosedIcon, 
-    GlobeIcon, 
+import {
+    DotsVerticalIcon,
+    CloudDownloadIcon,
+    ChevronDownIcon,
+    ChevronRightIcon,
+    TruckIcon,
+    CalendarIcon,
+    CheckCircleIcon,
+    CubeIcon,
+    InvoiceIcon,
+    ClipboardListIcon,
+    ExternalLinkIcon,
+    PaperclipIcon,
+    RefreshIcon,
+    PlusIcon,
+    SendIcon,
+    LockClosedIcon,
+    GlobeIcon,
     InfoIcon,
     XCircleIcon,
     CurrencyIcon,
@@ -107,13 +107,13 @@ interface GroupedSalesOrder {
 
 const formatDisplayTime = (timeInput?: any): string => {
     if (!timeInput) return 'N/A';
-    
+
     const timeStr = String(timeInput).trim();
-    
+
     if (timeStr.toUpperCase().includes('AM') || timeStr.toUpperCase().includes('PM')) {
         return timeStr;
     }
-    
+
     try {
         if (timeStr.includes('T') || timeStr.includes('GMT') || (timeStr.length > 12 && timeStr.includes('-'))) {
             const dateObj = new Date(timeStr);
@@ -132,7 +132,7 @@ const formatDisplayTime = (timeInput?: any): string => {
         if (parts) {
             let hours = parseInt(parts[1], 10);
             const minutes = (parts[2] || '').padStart(2, '0');
-            
+
             if (hours >= 0 && hours < 24) {
                 const ampm = hours >= 12 ? 'PM' : 'AM';
                 hours = hours % 12;
@@ -141,7 +141,7 @@ const formatDisplayTime = (timeInput?: any): string => {
                 return formatted;
             }
         }
-        
+
         return timeStr;
     } catch (e) {
         return timeStr;
@@ -199,9 +199,9 @@ const formatTimeForInput = (timeInput?: any): string => {
 
 // --- Flipkart Consignment Modal ---
 
-const FlipkartConsignmentModal: FC<{ 
-    so: GroupedSalesOrder, 
-    onClose: () => void, 
+const FlipkartConsignmentModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
     onSuccess: () => void,
     addNotification: any,
     userEmail: string
@@ -214,10 +214,10 @@ const FlipkartConsignmentModal: FC<{
         const arrayBuffer = await file.arrayBuffer();
         const pdfjsLib = (window as any)['pdfjs-dist/build/pdf'];
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        
+
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         let fullText = "";
-        
+
         for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
             const content = await page.getTextContent();
@@ -232,14 +232,14 @@ const FlipkartConsignmentModal: FC<{
         if (!file) return;
 
         setIsUploading(true);
-        
+
         try {
             // 1. Extract text from PDF using pdf.js
             const extractedText = await extractTextFromPdf(file);
-            
+
             // 2. Send extracted text to backend API
             const res = await processFlipkartConsignment(so.poReference, extractedText, userEmail);
-            
+
             if (res.status === 'success') {
                 setUploadComplete(true);
                 addNotification(res.message, 'success');
@@ -265,36 +265,36 @@ const FlipkartConsignmentModal: FC<{
                     <h3 className="text-xl font-black text-white uppercase tracking-tight">Flipkart Consignment Portal</h3>
                     <p className="text-xs text-blue-100 mt-1">Order Ref: <span className="font-bold text-white">{so.id}</span></p>
                 </div>
-                
+
                 <div className="p-8">
                     <div className="grid grid-cols-2 gap-4 mb-8">
-                        <CopyField 
-                            label="Target PO" 
-                            value={so.poReference} 
-                            icon={<ClipboardListIcon className="h-3 w-3"/>} 
+                        <CopyField
+                            label="Target PO"
+                            value={so.poReference}
+                            icon={<ClipboardListIcon className="h-3 w-3" />}
                         />
-                        <CopyField 
-                            label="AWB / Tracking" 
-                            value={so.awb || 'N/A'} 
-                            icon={<GlobeIcon className="h-3 w-3"/>} 
+                        <CopyField
+                            label="AWB / Tracking"
+                            value={so.awb || 'N/A'}
+                            icon={<GlobeIcon className="h-3 w-3" />}
                         />
-                        <CopyField 
-                            label="Carrier" 
-                            value={so.carrier || 'N/A'} 
-                            icon={<TruckIcon className="h-3 w-3"/>} 
+                        <CopyField
+                            label="Carrier"
+                            value={so.carrier || 'N/A'}
+                            icon={<TruckIcon className="h-3 w-3" />}
                         />
-                        <CopyField 
-                            label="Status" 
-                            value={so.status} 
-                            icon={<InfoIcon className="h-3 w-3"/>} 
+                        <CopyField
+                            label="Status"
+                            value={so.status}
+                            icon={<InfoIcon className="h-3 w-3" />}
                         />
                         {so.consignmentValue && (
                             <div className="col-span-2">
-                                <CopyField 
-                                    label="Consignment Value" 
-                                    value={so.consignmentValue} 
+                                <CopyField
+                                    label="Consignment Value"
+                                    value={so.consignmentValue}
                                     copyValue={so.consignmentValue.replace(/[₹,]/g, '')}
-                                    icon={<CurrencyIcon className="h-3 w-3"/>} 
+                                    icon={<CurrencyIcon className="h-3 w-3" />}
                                 />
                             </div>
                         )}
@@ -306,16 +306,16 @@ const FlipkartConsignmentModal: FC<{
                                 <InfoIcon className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
                                 <p className="text-xs text-blue-800 leading-relaxed">Please upload the <b>Consignment PDF</b> file generated from the Flipkart portal. Our AI will extract the Consignment ID and Delivery Schedule automatically.</p>
                             </div>
-                            
-                            <input 
-                                type="file" 
-                                ref={fileInputRef} 
-                                className="hidden" 
-                                accept=".pdf" 
-                                onChange={handleFileUpload} 
+
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept=".pdf"
+                                onChange={handleFileUpload}
                             />
-                            
-                            <button 
+
+                            <button
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploading}
                                 className="w-full py-6 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-3 group disabled:opacity-50"
@@ -338,7 +338,7 @@ const FlipkartConsignmentModal: FC<{
                             </div>
                             <h4 className="text-lg font-bold text-gray-800">Linked Successfully</h4>
                             <p className="text-sm text-gray-500 mt-2">The PO database has been updated with real consignment details. You can now print box labels.</p>
-                            <button 
+                            <button
                                 onClick={onClose}
                                 className="mt-8 w-full py-4 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95"
                             >
@@ -348,7 +348,7 @@ const FlipkartConsignmentModal: FC<{
                     )}
 
                     {!uploadComplete && (
-                        <button 
+                        <button
                             onClick={onClose}
                             className="w-full py-3 mt-4 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
                         >
@@ -365,7 +365,7 @@ const FlipkartConsignmentModal: FC<{
 
 const FbaShipmentModal: FC<{ so: GroupedSalesOrder, onSave: (id: string) => void, onClose: () => void, isSaving: boolean }> = ({ so, onSave, onClose, isSaving }) => {
     const [fbaId, setFbaId] = useState(so.fbaShipmentId || '');
-    
+
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[150] p-4">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-amber-100 animate-in fade-in zoom-in-95 duration-200">
@@ -378,14 +378,14 @@ const FbaShipmentModal: FC<{ so: GroupedSalesOrder, onSave: (id: string) => void
                 </div>
                 <div className="p-8">
                     <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 mb-6 flex gap-3">
-                         <AlertIcon className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                         <p className="text-xs text-amber-800 leading-relaxed">FBA Shipment ID is required for Amazon fulfillment. This ID will be recorded in the PO Database before invoice generation.</p>
+                        <AlertIcon className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-800 leading-relaxed">FBA Shipment ID is required for Amazon fulfillment. This ID will be recorded in the PO Database before invoice generation.</p>
                     </div>
-                    
+
                     <div className="space-y-4">
                         <div>
                             <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">FBA Shipment ID</label>
-                            <input 
+                            <input
                                 type="text"
                                 autoFocus
                                 value={fbaId}
@@ -397,15 +397,15 @@ const FbaShipmentModal: FC<{ so: GroupedSalesOrder, onSave: (id: string) => void
                     </div>
 
                     <div className="flex flex-col gap-3 mt-8">
-                        <button 
+                        <button
                             disabled={!fbaId.trim() || isSaving}
                             onClick={() => onSave(fbaId.trim())}
                             className="w-full py-4 bg-[#FF9900] text-gray-900 font-black rounded-2xl shadow-xl shadow-amber-100 hover:bg-[#FF8C00] transition-all active:scale-[0.98] text-sm uppercase flex items-center justify-center gap-2 disabled:opacity-50"
                         >
-                            {isSaving ? <RefreshIcon className="h-5 w-5 animate-spin"/> : <CheckCircleIcon className="h-5 w-5" />}
+                            {isSaving ? <RefreshIcon className="h-5 w-5 animate-spin" /> : <CheckCircleIcon className="h-5 w-5" />}
                             {isSaving ? 'Saving & Generating...' : 'Confirm & Create Invoice'}
                         </button>
-                        <button 
+                        <button
                             disabled={isSaving}
                             onClick={onClose}
                             className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
@@ -436,18 +436,18 @@ const InstamartPrintManager: FC<{ so: GroupedSalesOrder, onClose: () => void, ad
 
     const groupedBoxes: Record<string, any[]> = useMemo(() => {
         const boxes: Record<string, any[]> = {};
-        
+
         packingData.forEach(row => {
             const boxId = String(row['Box ID'] || 'UNKNOWN').trim();
             if (!boxes[boxId]) boxes[boxId] = [];
-            
+
             const masterSku = String(row['SKU']).trim();
             const poItem = so.items.find(i => String(i.masterSku).trim() === masterSku || String(i.articleCode).trim() === masterSku);
             const itemCode = poItem?.articleCode || masterSku;
             const quantity = Number(row['Item Quantity'] || 0);
 
             const existingItem = (boxes[boxId] as any[]).find(item => item.itemCode === itemCode);
-            
+
             if (existingItem) {
                 existingItem.quantity += quantity;
             } else {
@@ -469,7 +469,7 @@ const InstamartPrintManager: FC<{ so: GroupedSalesOrder, onClose: () => void, ad
             addNotification("No packing data found for this order ID.", "warning");
             return;
         }
-        
+
         const printWindow = window.open('', '_blank');
         if (!printWindow) {
             addNotification("Popup blocked! Please allow popups to print labels.", "error");
@@ -511,8 +511,8 @@ const InstamartPrintManager: FC<{ so: GroupedSalesOrder, onClose: () => void, ad
   </div>
 `;
 
-boxEntries.forEach(([boxId, items], idx) => {
-  html += `
+        boxEntries.forEach(([boxId, items], idx) => {
+            html += `
   <div class="min-h-screen p-6 font-mono ${idx < totalBoxes - 1 ? 'page-break' : ''}">
     <div class="flex justify-between items-end gap-4 border-b-2 border-black pb-2 mb-4">
       <p class="text-xl font-black uppercase">Instamart Box Label</p>
@@ -538,7 +538,7 @@ boxEntries.forEach(([boxId, items], idx) => {
     </div>
   </div>
   `;
-});
+        });
 
         html += `
                     <script>
@@ -562,13 +562,13 @@ boxEntries.forEach(([boxId, items], idx) => {
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-partners-green text-white rounded-lg"><PrinterIcon className="h-6 w-6"/></div>
+                        <div className="p-2 bg-partners-green text-white rounded-lg"><PrinterIcon className="h-6 w-6" /></div>
                         <div>
                             <h3 className="text-xl font-bold text-gray-800">Instamart Label Pack (Master + Box)</h3>
                             <p className="text-xs text-gray-500">Order: <span className="font-bold text-partners-green">{so.id}</span></p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
                 </div>
 
                 <div className="p-8 overflow-y-auto bg-gray-100 flex-1">
@@ -596,7 +596,7 @@ boxEntries.forEach(([boxId, items], idx) => {
 
                             {(Object.entries(groupedBoxes) as [string, any[]][]).map(([boxId, items], i) => (
                                 <div key={boxId} className="bg-white p-6 border rounded-2xl shadow-sm relative group overflow-hidden flex flex-col border-l-4 border-l-partners-green">
-                                    <div className="absolute top-0 right-0 p-2 bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">BOX {i+1} OF {Object.keys(groupedBoxes).length}</div>
+                                    <div className="absolute top-0 right-0 p-2 bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">BOX {i + 1} OF {Object.keys(groupedBoxes).length}</div>
                                     <div className="mb-4">
                                         <p className="text-[10px] font-bold text-gray-400 uppercase">Unique Box ID</p>
                                         <p className="text-xl font-black text-gray-900 leading-none">{boxId}</p>
@@ -627,8 +627,8 @@ boxEntries.forEach(([boxId, items], idx) => {
 
                 <div className="p-6 bg-gray-50 border-t flex justify-end gap-3">
                     <button onClick={onClose} className="px-6 py-2.5 text-sm font-bold text-gray-500 bg-white border rounded-xl hover:bg-gray-100">Cancel</button>
-                    <button 
-                        onClick={handlePrintPack} 
+                    <button
+                        onClick={handlePrintPack}
                         disabled={packingData.length === 0}
                         className="px-10 py-2.5 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50"
                     >
@@ -655,26 +655,26 @@ const ShippingConfirmationModal: FC<{ so: GroupedSalesOrder, onConfirm: () => vo
                 </div>
                 <div className="p-8">
                     <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 mb-6 flex gap-4">
-                         <div className="bg-amber-100 p-2.5 rounded-xl h-fit shadow-sm"><PrinterIcon className="h-6 w-6 text-amber-600"/></div>
-                         <div>
+                        <div className="bg-amber-100 p-2.5 rounded-xl h-fit shadow-sm"><PrinterIcon className="h-6 w-6 text-amber-600" /></div>
+                        <div>
                             <p className="text-sm font-bold text-amber-900">Are the labels pasted on boxes?</p>
                             <p className="text-xs text-amber-700 mt-1.5 leading-relaxed">For Instamart fulfillment, labels must be physically pasted on all <span className="font-bold text-amber-900 underline">{so.boxCount} boxes</span> before triggering Nimbus shipment.</p>
-                         </div>
+                        </div>
                     </div>
                     <div className="flex flex-col gap-3">
-                        <button 
+                        <button
                             onClick={onConfirm}
                             className="w-full py-4 bg-blue-600 text-white font-bold rounded-2xl shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-[0.98] text-sm"
                         >
                             Yes, Labels Pasted. Ship now.
                         </button>
-                        <button 
+                        <button
                             onClick={onPrint}
                             className="w-full py-3 bg-partners-green/10 text-partners-green font-bold rounded-2xl border border-partners-green/20 hover:bg-partners-green/20 transition-all flex items-center justify-center gap-2 text-sm"
                         >
                             <PrinterIcon className="h-4 w-4" /> No, Print Labels First
                         </button>
-                        <button 
+                        <button
                             onClick={onClose}
                             className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
                         >
@@ -740,8 +740,8 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                     </div>
                     <div className="flex items-center gap-2">
                         {isBlinkit && (
-                            <button 
-                                onClick={() => setShowHelp(!showHelp)} 
+                            <button
+                                onClick={() => setShowHelp(!showHelp)}
                                 className={`p-2 rounded-full transition-all flex items-center gap-1.5 text-xs font-bold ${showHelp ? 'bg-partners-green text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                                 title="Blinkit Portal Instructions"
                             >
@@ -749,7 +749,7 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                                 <span className="hidden sm:inline">{showHelp ? 'Hide Guide' : 'How to Schedule?'}</span>
                             </button>
                         )}
-                        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
+                        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
                     </div>
                 </div>
 
@@ -779,7 +779,7 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                     )}
 
                     {!showHelp && (
-                         <div className="bg-partners-light-green border-2 border-dashed border-partners-green/30 p-4 rounded-2xl flex gap-4 items-center shadow-sm">
+                        <div className="bg-partners-light-green border-2 border-dashed border-partners-green/30 p-4 rounded-2xl flex gap-4 items-center shadow-sm">
                             <div className="bg-partners-green p-2 rounded-lg text-white shadow-sm shadow-green-100"><CalendarIcon className="h-5 w-5" /></div>
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-partners-green">Ready for Scheduling</p>
@@ -792,18 +792,18 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <CopyField label="PO Number" value={so.poReference} icon={<ClipboardListIcon className="h-3 w-3"/>} />
-                        <CopyField label="Fulfilled Quantity" value={String(so.qty)} icon={<CubeIcon className="h-3 w-3"/>} />
-                        <CopyField label="Courier Name" value={so.carrier || 'Standard'} icon={<TruckIcon className="h-3 w-3"/>} />
-                        <CopyField label="AWB Number" value={so.awb || 'N/A'} icon={<GlobeIcon className="h-3 w-3"/>} />
-                        <CopyField label="Invoice Number" value={so.invoiceNumber || 'N/A'} icon={<InvoiceIcon className="h-3 w-3"/>} />
-                        <CopyField 
-                            label="Total Amount (Inc. Tax)" 
-                            value={`₹${amountWithTax}`} 
+                        <CopyField label="PO Number" value={so.poReference} icon={<ClipboardListIcon className="h-3 w-3" />} />
+                        <CopyField label="Fulfilled Quantity" value={String(so.qty)} icon={<CubeIcon className="h-3 w-3" />} />
+                        <CopyField label="Courier Name" value={so.carrier || 'Standard'} icon={<TruckIcon className="h-3 w-3" />} />
+                        <CopyField label="AWB Number" value={so.awb || 'N/A'} icon={<GlobeIcon className="h-3 w-3" />} />
+                        <CopyField label="Invoice Number" value={so.invoiceNumber || 'N/A'} icon={<InvoiceIcon className="h-3 w-3" />} />
+                        <CopyField
+                            label="Total Amount (Inc. Tax)"
+                            value={`₹${amountWithTax}`}
                             copyValue={amountWithTax}
-                            icon={<CurrencyIcon className="h-3 w-3"/>} 
+                            icon={<CurrencyIcon className="h-3 w-3" />}
                         />
-                        <div className="md:col-span-2"><CopyField label="Invoice PDF URL" value={so.invoicePdfUrl || 'N/A'} icon={<ExternalLinkIcon className="h-3 w-3"/>} /></div>
+                        <div className="md:col-span-2"><CopyField label="Invoice PDF URL" value={so.invoicePdfUrl || 'N/A'} icon={<ExternalLinkIcon className="h-3 w-3" />} /></div>
                     </div>
                     <div className="flex flex-col items-center pt-2">
                         <button onClick={handleOpenPortal} className={`w-full py-4 ${brandColor} text-white font-bold rounded-2xl shadow-xl ${shadowColor} hover:brightness-95 transition-all flex items-center justify-center gap-3 active:scale-95`}><ExternalLinkIcon className="h-5 w-5" /> Open {portalName} Portal</button>
@@ -814,11 +814,11 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     );
 };
 
-const InstamartAppointmentModal: FC<{ 
-    so: GroupedSalesOrder, 
-    onClose: () => void, 
-    addNotification: any, 
-    onComplete: () => void 
+const InstamartAppointmentModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
+    addNotification: any,
+    onComplete: () => void
 }> = ({ so, onClose, addNotification, onComplete }) => {
     const [appointmentId, setAppointmentId] = useState(so.appointmentId || '');
     const [appointmentDate, setAppointmentDate] = useState(formatDateForInput(so.appointmentDate));
@@ -880,8 +880,8 @@ const InstamartAppointmentModal: FC<{
         const hasTime = appointmentTime.trim();
 
         if (!hasId && !hasDate && !hasTime) {
-            const msg = hideIdField 
-                ? "Please enter at least an Appointment Date or Time" 
+            const msg = hideIdField
+                ? "Please enter at least an Appointment Date or Time"
                 : "Please enter at least an Appointment ID, Date or Time";
             addNotification(msg, "error");
             return;
@@ -923,7 +923,7 @@ const InstamartAppointmentModal: FC<{
                             <p className={`text-xs ${brandText} font-medium`}>Update confirmation details</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className={`p-2 ${brandHover} rounded-full transition-colors`}><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
+                    <button onClick={onClose} className={`p-2 ${brandHover} rounded-full transition-colors`}><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
                 </div>
 
                 <div className="p-8 space-y-6">
@@ -931,8 +931,8 @@ const InstamartAppointmentModal: FC<{
                         {!hideIdField && (
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment / Consignment ID</label>
-                                <input 
-                                    type="text" 
+                                <input
+                                    type="text"
                                     value={appointmentId}
                                     onChange={(e) => setAppointmentId(e.target.value)}
                                     placeholder="Enter ID from confirmation"
@@ -943,8 +943,8 @@ const InstamartAppointmentModal: FC<{
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Date</label>
-                                <input 
-                                    type="date" 
+                                <input
+                                    type="date"
                                     value={appointmentDate}
                                     onChange={(e) => setAppointmentDate(e.target.value)}
                                     className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
@@ -952,8 +952,8 @@ const InstamartAppointmentModal: FC<{
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Time</label>
-                                <input 
-                                    type="time" 
+                                <input
+                                    type="time"
                                     value={appointmentTime}
                                     onChange={(e) => setAppointmentTime(e.target.value)}
                                     className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
@@ -972,7 +972,7 @@ const InstamartAppointmentModal: FC<{
 
                 <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3">
                     <button onClick={onClose} className="flex-1 px-4 py-3 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
-                    <button 
+                    <button
                         onClick={handleComplete}
                         disabled={isSubmitting}
                         className={`flex-[2] px-4 py-3 ${brandColor} text-white text-sm font-bold rounded-xl shadow-lg ${brandShadow} hover:brightness-110 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2`}
@@ -986,10 +986,10 @@ const InstamartAppointmentModal: FC<{
     );
 };
 
-const ZeptoASNHelperModal: FC<{ 
-    so: GroupedSalesOrder, 
-    onClose: () => void, 
-    addNotification: any, 
+const ZeptoASNHelperModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
+    addNotification: any,
     onComplete: () => void,
     inventoryItems: InventoryItem[]
 }> = ({ so, onClose, addNotification, onComplete, inventoryItems }) => {
@@ -1002,7 +1002,7 @@ const ZeptoASNHelperModal: FC<{
         const headers = ["SKU Name", "SKU Code", "SKU Image Url", "Po Quantity", "Asn Quantity", "Po MRP", "EAN Number"];
         const rows = so.items.map(item => {
             // Find mapping to get EAN and other details if missing
-            const mapping = inventoryItems?.find(inv => 
+            const mapping = inventoryItems?.find(inv =>
                 (inv.sku === item.masterSku || inv.articleCode === item.articleCode)
             );
 
@@ -1067,7 +1067,7 @@ const ZeptoASNHelperModal: FC<{
                         </div>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-purple-100 rounded-full transition-colors">
-                        <XCircleIcon className="h-6 w-6 text-gray-400"/>
+                        <XCircleIcon className="h-6 w-6 text-gray-400" />
                     </button>
                 </div>
 
@@ -1077,49 +1077,49 @@ const ZeptoASNHelperModal: FC<{
                             <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        <CopyField 
-                                            label="PO Number" 
-                                            value={so.poReference} 
-                                            icon={<ClipboardListIcon className="h-3 w-3"/>} 
+                                        <CopyField
+                                            label="PO Number"
+                                            value={so.poReference}
+                                            icon={<ClipboardListIcon className="h-3 w-3" />}
                                         />
                                         <div className="px-1">
-                                            <a 
-                                                href={`https://brands.zepto.co.in/vendor/po/lifecycle/${so.poReference}?tab=ASN`} 
-                                                target="_blank" 
-                                                rel="noreferrer" 
+                                            <a
+                                                href={`https://brands.zepto.co.in/vendor/po/lifecycle/${so.poReference}?tab=ASN`}
+                                                target="_blank"
+                                                rel="noreferrer"
                                                 className="text-[10px] font-black uppercase text-purple-600 hover:underline flex items-center gap-1"
                                             >
                                                 <ExternalLinkIcon className="h-3 w-3" /> Open in Zepto Portal
                                             </a>
                                         </div>
                                     </div>
-                                    <CopyField 
-                                        label="Invoice No." 
-                                        value={so.invoiceNumber || 'N/A'} 
-                                        icon={<InvoiceIcon className="h-3 w-3"/>} 
+                                    <CopyField
+                                        label="Invoice No."
+                                        value={so.invoiceNumber || 'N/A'}
+                                        icon={<InvoiceIcon className="h-3 w-3" />}
                                     />
-                                    <CopyField 
-                                        label="Invoice Value" 
-                                        value={`₹${so.invoiceTotal || '0'}`} 
+                                    <CopyField
+                                        label="Invoice Value"
+                                        value={`₹${so.invoiceTotal || '0'}`}
                                         copyValue={String(so.invoiceTotal || '0')}
-                                        icon={<CurrencyIcon className="h-3 w-3"/>} 
+                                        icon={<CurrencyIcon className="h-3 w-3" />}
                                     />
-                                    <CopyField 
-                                        label="Delivery Date" 
+                                    <CopyField
+                                        label="Delivery Date"
                                         value={(() => {
                                             if (!so.appointmentDate || so.appointmentDate === 'TBD') return 'TBD';
                                             const d = new Date(so.appointmentDate);
                                             if (isNaN(d.getTime())) return so.appointmentDate;
                                             return `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}/${d.getFullYear()}`;
-                                        })()} 
-                                        icon={<CalendarIcon className="h-3 w-3"/>} 
+                                        })()}
+                                        icon={<CalendarIcon className="h-3 w-3" />}
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <CopyField 
-                                        label="Invoice PDF URL" 
-                                        value={so.invoicePdfUrl || 'N/A'} 
-                                        icon={<ExternalLinkIcon className="h-3 w-3"/>} 
+                                    <CopyField
+                                        label="Invoice PDF URL"
+                                        value={so.invoicePdfUrl || 'N/A'}
+                                        icon={<ExternalLinkIcon className="h-3 w-3" />}
                                     />
                                     {so.invoicePdfUrl && (
                                         <div className="px-1">
@@ -1132,13 +1132,13 @@ const ZeptoASNHelperModal: FC<{
                             </div>
 
                             <div className="flex flex-col gap-3">
-                                <button 
+                                <button
                                     onClick={handleDownloadASN}
                                     className="w-full py-3.5 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-all flex items-center justify-center gap-2 text-sm"
                                 >
                                     <DownloadIcon className="h-4 w-4" /> Download ASN File
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setStep(2)}
                                     className="w-full py-3.5 bg-purple-600 text-white font-bold rounded-2xl shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all active:scale-95 text-sm"
                                 >
@@ -1151,8 +1151,8 @@ const ZeptoASNHelperModal: FC<{
                             <div className="space-y-4">
                                 <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100">
                                     <p className="text-xs font-bold text-purple-800 mb-2">Enter ASN Number from Zepto Portal</p>
-                                    <input 
-                                        type="text" 
+                                    <input
+                                        type="text"
                                         value={asnNumber}
                                         onChange={(e) => setAsnNumber(e.target.value)}
                                         placeholder="e.g. ASN12345678"
@@ -1164,7 +1164,7 @@ const ZeptoASNHelperModal: FC<{
                             </div>
 
                             <div className="flex flex-col gap-3">
-                                <button 
+                                <button
                                     onClick={handleComplete}
                                     disabled={isSubmitting || !asnNumber.trim()}
                                     className="w-full py-3.5 bg-green-600 text-white font-bold rounded-2xl shadow-xl shadow-green-100 hover:bg-green-700 transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
@@ -1172,7 +1172,7 @@ const ZeptoASNHelperModal: FC<{
                                     {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
                                     Complete Process
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setStep(1)}
                                     className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
                                 >
@@ -1187,9 +1187,9 @@ const ZeptoASNHelperModal: FC<{
     );
 };
 
-const AmazonBoxDetailsModal: FC<{ 
-    so: GroupedSalesOrder, 
-    onClose: () => void, 
+const AmazonBoxDetailsModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
     addNotification: any,
     data?: any[]
 }> = ({ so, onClose, addNotification, data = [] }) => {
@@ -1267,10 +1267,10 @@ const AmazonBoxDetailsModal: FC<{
                         </div>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                        <XCircleIcon className="h-6 w-6 text-gray-400"/>
+                        <XCircleIcon className="h-6 w-6 text-gray-400" />
                     </button>
                 </div>
-                
+
                 <div className="p-6 overflow-y-auto flex-1 bg-gray-50">
                     {isLoading ? (
                         <div className="flex flex-col items-center justify-center h-64">
@@ -1302,12 +1302,12 @@ const AmazonBoxDetailsModal: FC<{
                                 </div>
                             </div>
 
-                            
+
                             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
                                 <table className="w-full text-sm text-left">
                                     <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b">
                                         <tr>
-                                            
+
                                             <th className="px-6 py-4">Box Qty</th>
                                             <th className="px-6 py-4">Weight (kg)</th>
                                             <th className="px-6 py-4">Dimensions  (L×B×H) in cms</th>
@@ -1317,11 +1317,11 @@ const AmazonBoxDetailsModal: FC<{
                                     <tbody className="divide-y divide-gray-100">
                                         {groupedBoxes.map((group, idx) => (
                                             <tr key={idx} className="hover:bg-gray-50 transition-colors">
- 
+
                                                 <td className="text-xl px-6 py-4 font-bold text-gray-700 whitespace-nowrap">
-                                                {group.count}
+                                                    {group.count}
                                                 </td>
-                                                 <td className="text-xl px-6 py-4 font-bold text-gray-700 whitespace-nowrap">
+                                                <td className="text-xl px-6 py-4 font-bold text-gray-700 whitespace-nowrap">
                                                     {group.weight}
                                                 </td>
                                                 <td className="text-xl px-6 py-4 font-bold text-gray-700 whitespace-nowrap">
@@ -1337,7 +1337,7 @@ const AmazonBoxDetailsModal: FC<{
                 </div>
 
                 <div className="p-6 bg-gray-50 border-t flex justify-end">
-                    <button 
+                    <button
                         onClick={onClose}
                         className="px-8 py-3 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm"
                     >
@@ -1364,15 +1364,15 @@ const parseDateString = (dateStr: string | undefined): number => {
     } catch (e) { return 0; }
 };
 
-const SalesOrderTable: FC<SalesOrderTableProps> = ({ 
-    activeFilter, 
-    setActiveFilter, 
-    purchaseOrders, 
-    setPurchaseOrders, 
-    addLog, 
-    addNotification, 
-    onSync, 
-    isSyncing, 
+const SalesOrderTable: FC<SalesOrderTableProps> = ({
+    activeFilter,
+    setActiveFilter,
+    purchaseOrders,
+    setPurchaseOrders,
+    addLog,
+    addNotification,
+    onSync,
+    isSyncing,
     inventoryItems,
     googleTokens,
     setGoogleTokens
@@ -1399,7 +1399,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
-    
+
     // Close menu on click outside
     useEffect(() => {
         const handleClickOutside = () => setOpenMenuId(null);
@@ -1409,19 +1409,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleMarkAsRTOInitiated = async (so: GroupedSalesOrder) => {
         if (!window.confirm(`Are you sure you want to mark ${so.id} as RTO Initiated?`)) return;
-        
+
         setIsUpdatingRTO(so.id);
         try {
-            const timestamp = new Date().toLocaleString('en-IN', { 
-                day: '2-digit', 
-                month: '2-digit', 
-                year: 'numeric', 
-                hour: '2-digit', 
-                minute: '2-digit', 
+            const timestamp = new Date().toLocaleString('en-IN', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
                 second: '2-digit',
-                hour12: false 
+                hour12: false
             }).replace(/\//g, '-');
-            
+
             const res = await updateRTOStatus(so.id, timestamp);
             if (res.status === 'success') {
                 addNotification(`Order ${so.id} marked as RTO Initiated`, 'success');
@@ -1437,7 +1437,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             setOpenMenuId(null);
         }
     };
-    
+
     const handleFetchBoxDetails = async (so: GroupedSalesOrder) => {
         setIsFetchingBoxDetails(so.id);
         const payload = { action: 'FETCH_BOX_DETAILS', eeReferenceCode: so.id };
@@ -1445,7 +1445,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         try {
             const res = await fetchBoxDetails(so.id);
             console.log("FETCH_BOX_DETAILS response:", res);
-            
+
             // Requirement 2 & 3: Success/Error Handling
             if (res && res.status === 'error') {
                 addNotification(res.message || "Failed to fetch box details", "error");
@@ -1461,13 +1461,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             setIsFetchingBoxDetails(null);
         }
     };
-    
+
     const [columnFilters, setColumnFilters] = useState<{ [key: string]: string }>({});
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
     const filterMenuRef = useRef<HTMLDivElement>(null);
 
     // Get current user email for logging (from bypass logic or system)
-    const userEmail = "jainendra@cubelelo.com"; 
+    const userEmail = "jainendra@cubelelo.com";
 
     const tabs = [
         { id: 'All POs', name: 'All POs' },
@@ -1486,19 +1486,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const { salesOrders, salesTabCounts, allSalesOrders } = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
-        const counts: Record<string, number> = { 
-            'All POs': 0, 
-            'Confirmed': 0, 
-            'Batch Created': 0, 
-            'Invoiced': 0, 
+        const counts: Record<string, number> = {
+            'All POs': 0,
+            'Confirmed': 0,
+            'Batch Created': 0,
+            'Invoiced': 0,
             'Awaiting Appointment Confirmation': 0,
             'Create ASN': 0,
-            'Label Generated': 0, 
-            'Shipped': 0, 
-            'Delivered': 0, 
+            'Label Generated': 0,
+            'Shipped': 0,
+            'Delivered': 0,
             'RTO Initiated': 0,
-            'Returned': 0, 
-            'Closed': 0 
+            'Returned': 0,
+            'Closed': 0
         };
 
         purchaseOrders.forEach(po => {
@@ -1506,10 +1506,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const rawRef = item.eeReferenceCode;
                 if (!rawRef || String(rawRef).trim() === "") return;
                 const refCode = String(rawRef).trim();
-                
+
                 const effectiveQty = item.shippedQuantity || 0;
                 const effectiveLineAmount = effectiveQty * (item.unitCost || 0);
-                
+
                 const eeBoxCount = Number(item.eeBoxCount || 0);
                 const carrier = item.carrier || po.carrier;
                 const awb = item.awb || po.awb;
@@ -1519,18 +1519,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const batchDate = item.eeBatchCreatedAt || po.eeBatchCreatedAt;
                 const invNum = item.invoiceNumber;
                 const hasInvoice = !!invNum && invNum !== 'GENERATING...';
-                
+
                 const isAmazon = po.channel.toLowerCase().includes('amazon');
-                const isAmazonFbaYeio = (po.channel.toLowerCase().includes('amazon_fba') || po.channel.toLowerCase().includes('amazon fba')) && 
-                                        (po.storeCode.toUpperCase() === 'YEIO');
+                const isAmazonFbaYeio = (po.channel.toLowerCase().includes('amazon_fba') || po.channel.toLowerCase().includes('amazon fba')) &&
+                    (po.storeCode.toUpperCase() === 'YEIO');
                 const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
 
                 const maniDate = item.eeManifestDate || po.eeManifestDate;
                 const eeStatus = (item.eeOrderStatus || po.eeOrderStatus || 'Processing').trim();
                 const eeStatusLower = eeStatus.toLowerCase();
-                
+
                 const effectiveOrderDate = item.eeOrderDate || po.eeOrderDate || 'N/A';
-                
+
                 let displayStatus = 'Processing';
 
                 const trackingStatusLower = (trackingStatus || '').toLowerCase();
@@ -1550,12 +1550,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
                 }
                 else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
-                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced'; 
+                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced';
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
 
                 const isZepto = po.channel.toLowerCase().includes('zepto');
-                
+
                 // Use item-level appointment data if available (Sales Order ID reference)
                 const apptDate = item.appointmentDate || po.appointmentDate;
                 const apptId = item.appointmentId || po.appointmentId;
@@ -1592,40 +1592,40 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 }
 
                 if (!groups[refCode]) {
-                    groups[refCode] = { 
-                        id: refCode, 
-                        poReference: String(po.id || ''), 
-                        status: displayStatus, 
-                        originalEeStatus: eeStatus, 
-                        channel: po.channel, 
-                        storeCode: po.storeCode, 
-                        orderDate: effectiveOrderDate, 
-                        poEdd: po.poEdd, 
-                        poExpiryDate: po.poExpiryDate, 
-                        poPdfUrl: po.poPdfUrl, 
-                        qty: 0, 
-                        amount: 0, 
-                        items: [], 
-                        batchCreatedAt: batchDate, 
-                        invoiceDate: item.invoiceDate, 
-                        manifestDate: maniDate, 
-                        invoiceId: item.invoiceId, 
-                        invoiceStatus: item.invoiceStatus, 
-                        invoiceNumber: invNum, 
-                        invoiceTotal: item.invoiceTotal, 
-                        invoiceUrl: item.invoiceUrl, 
-                        invoicePdfUrl: item.invoicePdfUrl, 
-                        carrier: carrier, 
-                        awb: awb, 
-                        trackingStatus: trackingStatus, 
+                    groups[refCode] = {
+                        id: refCode,
+                        poReference: String(po.id || ''),
+                        status: displayStatus,
+                        originalEeStatus: eeStatus,
+                        channel: po.channel,
+                        storeCode: po.storeCode,
+                        orderDate: effectiveOrderDate,
+                        poEdd: po.poEdd,
+                        poExpiryDate: po.poExpiryDate,
+                        poPdfUrl: po.poPdfUrl,
+                        qty: 0,
+                        amount: 0,
+                        items: [],
+                        batchCreatedAt: batchDate,
+                        invoiceDate: item.invoiceDate,
+                        manifestDate: maniDate,
+                        invoiceId: item.invoiceId,
+                        invoiceStatus: item.invoiceStatus,
+                        invoiceNumber: invNum,
+                        invoiceTotal: item.invoiceTotal,
+                        invoiceUrl: item.invoiceUrl,
+                        invoicePdfUrl: item.invoicePdfUrl,
+                        carrier: carrier,
+                        awb: awb,
+                        trackingStatus: trackingStatus,
                         trackingUrl: trackingUrl,
-                        edd: item.edd || po.edd, 
-                        latestStatus: item.latestStatus || po.latestStatus, 
-                        latestStatusDate: item.latestStatusDate || po.latestStatusDate, 
-                        currentLocation: item.currentLocation || po.currentLocation, 
-                        deliveredDate: item.deliveredDate || po.deliveredDate, 
-                        rtoStatus: item.rtoStatus || po.rtoStatus, 
-                        rtoAwb: item.rtoAwb || po.rtoAwb, 
+                        edd: item.edd || po.edd,
+                        latestStatus: item.latestStatus || po.latestStatus,
+                        latestStatusDate: item.latestStatusDate || po.latestStatusDate,
+                        currentLocation: item.currentLocation || po.currentLocation,
+                        deliveredDate: item.deliveredDate || po.deliveredDate,
+                        rtoStatus: item.rtoStatus || po.rtoStatus,
+                        rtoAwb: item.rtoAwb || po.rtoAwb,
                         boxCount: eeBoxCount,
                         appointmentDate: item.appointmentDate || po.appointmentDate,
                         appointmentRequestDate: item.appointmentRequestDate || po.appointmentRequestDate,
@@ -1646,19 +1646,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 } else {
                     const curPo = String(po.id || '');
                     if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
-                    const statusRank = (s: string) => { 
+                    const statusRank = (s: string) => {
                         if (s === 'Returned') return 13;
                         if (s === 'RTO Initiated') return 12;
                         if (s === 'Closed') return 11;
                         if (s === 'Delivered') return 10;
-                        if (s === 'Shipped') return 9; 
+                        if (s === 'Shipped') return 9;
                         if (s === 'Label Generated') return 8;
                         if (s === 'Create ASN') return 7;
                         if (s === 'Awaiting Appointment Confirmation') return 6;
-                        if (s === 'Invoiced') return 4; 
-                        if (s === 'Batch Created') return 3; 
-                        if (s === 'Confirmed') return 2; 
-                        return 1; 
+                        if (s === 'Invoiced') return 4;
+                        if (s === 'Batch Created') return 3;
+                        if (s === 'Confirmed') return 2;
+                        return 1;
                     };
                     if (statusRank(displayStatus) > statusRank(groups[refCode].status)) groups[refCode].status = displayStatus;
                     if (groups[refCode].orderDate === 'N/A' && effectiveOrderDate !== 'N/A') groups[refCode].orderDate = effectiveOrderDate;
@@ -1666,7 +1666,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (!groups[refCode].invoiceDate) groups[refCode].invoiceDate = item.invoiceDate;
                     if (!groups[refCode].manifestDate) groups[refCode].manifestDate = maniDate;
                     if (!groups[refCode].invoiceNumber) groups[refCode].invoiceNumber = invNum;
-                    
+
                     groups[refCode].boxCount = eeBoxCount;
 
                     if (!groups[refCode].awb && awb) groups[refCode].awb = awb;
@@ -1690,9 +1690,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         results.forEach(so => {
             const hasInvoice = !!so.invoiceNumber && so.invoiceNumber !== 'GENERATING...';
             const progressRequiringInvoice = ['Label Generated', 'Shipped', 'Delivered'].includes(so.status);
-            
-            const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
-                                    (so.storeCode.toUpperCase() === 'YEIO');
+
+            const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
+                (so.storeCode.toUpperCase() === 'YEIO');
 
             if (!hasInvoice && progressRequiringInvoice && !isAmazonFbaYeio) {
                 so.status = 'Batch Created';
@@ -1721,12 +1721,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         // Only consider orders that haven't had an appointment request yet
         const activeZeptoOrders = zeptoOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
-        
-        const openZeptoOrders = activeZeptoOrders.filter(so => 
+
+        const openZeptoOrders = activeZeptoOrders.filter(so =>
             ['Confirmed', 'Batch Created'].includes(so.status)
         );
 
-        const invoicedZeptoOrders = activeZeptoOrders.filter(so => 
+        const invoicedZeptoOrders = activeZeptoOrders.filter(so =>
             so.status === 'Invoiced' && !so.awb
         );
 
@@ -1742,7 +1742,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleSendZeptoAppointmentRequest = async () => {
         if (!zeptoEligibility.canRequest || isSendingZeptoAppointment) return;
-        
+
         setIsSendingZeptoAppointment(true);
         try {
             const res = await sendZeptoAppointmentRequestEmail({
@@ -1767,19 +1767,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             setIsSendingZeptoAppointment(false);
         }
     };
-    
+
     const instamartEligibility = useMemo(() => {
         const instamartOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('instamart'));
         if (instamartOrders.length === 0) return { show: false, canRequest: false, reason: 'No Instamart orders' };
 
         // Only consider orders that haven't had an appointment request yet
         const activeInstamartOrders = instamartOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
-        
-        const openInstamartOrders = activeInstamartOrders.filter(so => 
+
+        const openInstamartOrders = activeInstamartOrders.filter(so =>
             ['Confirmed', 'Batch Created'].includes(so.status)
         );
 
-        const invoicedInstamartOrders = activeInstamartOrders.filter(so => 
+        const invoicedInstamartOrders = activeInstamartOrders.filter(so =>
             so.status === 'Invoiced' && !so.awb
         );
 
@@ -1795,7 +1795,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleSendInstamartAppointmentRequest = async () => {
         if (!instamartEligibility.canRequest || isSendingInstamartAppointment) return;
-        
+
         setIsSendingInstamartAppointment(true);
         try {
             const res = await sendInstamartAppointmentRequestEmail({
@@ -1826,12 +1826,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         // Only consider orders that haven't had an appointment request yet
         const activeBBOrders = bbOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
-        
-        const openBBOrders = activeBBOrders.filter(so => 
+
+        const openBBOrders = activeBBOrders.filter(so =>
             ['Confirmed', 'Batch Created'].includes(so.status)
         );
 
-        const invoicedBBOrders = activeBBOrders.filter(so => 
+        const invoicedBBOrders = activeBBOrders.filter(so =>
             so.status === 'Invoiced' && !so.awb
         );
 
@@ -1847,7 +1847,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const handleSendBBAppointmentRequest = async (specificSo?: GroupedSalesOrder) => {
         const ordersToRequest = specificSo ? [specificSo] : bbEligibility.orders;
         if (!ordersToRequest || ordersToRequest.length === 0 || isSendingBBAppointment) return;
-        
+
         setIsSendingBBAppointment(true);
         try {
             const res = await sendBBAppointmentRequestEmail({
@@ -1932,7 +1932,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 addNotification(`Failed to refresh orders: ${lastMessage}`, 'error');
             }
         }
-        
+
         setIsRefreshingSo(null);
     };
 
@@ -1951,11 +1951,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const deliveryDate = so.appointmentDate || 'TBD';
         const consignmentId = so.appointmentId || 'N/A';
         const supplierName = "Brainlytic Solutions Pvt Ltd";
-        const totalQty = so.consignmentQty || so.qty || 0; 
+        const totalQty = so.consignmentQty || so.qty || 0;
         const productCount = so.consignmentProducts || so.items.length || 0;
         const totalValue = so.consignmentValue || (so.amount * 1.05).toFixed(2);
 
-let html = `
+        let html = `
 <html>
   <head>
     <title>Flipkart Minutes Packing Slip - ${so.id}</title>
@@ -2066,7 +2066,7 @@ let html = `
                     }
                 }
             }
-            
+
             if (time && !isNaN(d.getTime())) {
                 const timeStr = String(time).trim();
                 const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
@@ -2137,8 +2137,8 @@ let html = `
         setIsUpdatingSheet(true);
         try {
             const headers = [
-                'Booked Date', 'PO Number', 'Channel', 'Store Code', 'AWB', 
-                'Tracking Status', 'Latest Status', 'Current Location', 'EDD', 
+                'Booked Date', 'PO Number', 'Channel', 'Store Code', 'AWB',
+                'Tracking Status', 'Latest Status', 'Current Location', 'EDD',
                 'Appointment Date & Time', 'Appointment ID', 'PO PDF', 'Invoice Url'
             ];
 
@@ -2200,13 +2200,13 @@ let html = `
             const channelLower = so.channel.toLowerCase();
             const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
-            
+
             if (!isAllowedChannel) return false;
 
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
-            
+
             if (so.status === 'Shipped') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
@@ -2312,13 +2312,13 @@ let html = `
         }
 
         setIsCreatingInvoice(eeRef);
-        
+
         const parentPoNumbers = poRef.split(',').map(s => s.trim());
         setPurchaseOrders(prev => prev.map(po => {
             if (parentPoNumbers.includes(po.poNumber)) {
                 return {
                     ...po,
-                    items: po.items?.map(item => 
+                    items: po.items?.map(item =>
                         item.eeReferenceCode === eeRef ? { ...item, invoiceNumber: 'GENERATING...', invoiceStatus: 'PROCESSING' } : item
                     )
                 };
@@ -2338,7 +2338,7 @@ let html = `
                     if (parentPoNumbers.includes(po.poNumber)) {
                         return {
                             ...po,
-                            items: po.items?.map(item => 
+                            items: po.items?.map(item =>
                                 (item.eeReferenceCode === eeRef && item.invoiceNumber === 'GENERATING...') ? { ...item, invoiceNumber: undefined, invoiceStatus: undefined } : item
                             )
                         };
@@ -2358,14 +2358,14 @@ let html = `
         if (!so) return;
 
         setIsCreatingInvoice(so.id);
-        
+
         const parentPoNumbers = so.poReference.split(',').map(s => s.trim());
         setPurchaseOrders(prev => prev.map(po => {
             if (parentPoNumbers.includes(po.poNumber)) {
                 return {
                     ...po,
                     fbaShipmentId: fbaId,
-                    items: po.items?.map(item => 
+                    items: po.items?.map(item =>
                         item.eeReferenceCode === so.id ? { ...item, invoiceNumber: 'GENERATING...', fbaShipmentId: fbaId } : item
                     )
                 };
@@ -2397,14 +2397,14 @@ let html = `
 
     const handlePushToNimbusAction = async (eeRef: string, poRef: string) => {
         setIsPushingNimbus(eeRef);
-        
+
         const parentPoNumbers = poRef.split(',').map(s => s.trim());
         setPurchaseOrders(prev => prev.map(po => {
             if (parentPoNumbers.includes(po.poNumber)) {
                 return {
                     ...po,
                     awb: 'SYNCING...',
-                    items: po.items?.map(item => 
+                    items: po.items?.map(item =>
                         item.eeReferenceCode === eeRef ? { ...item, awb: 'SYNCING...', carrier: 'Nimbus Post', trackingStatus: 'Assigned' } : item
                     )
                 };
@@ -2424,7 +2424,7 @@ let html = `
                     if (parentPoNumbers.includes(po.poNumber)) {
                         return {
                             ...po,
-                            items: po.items?.map(item => 
+                            items: po.items?.map(item =>
                                 (item.eeReferenceCode === eeRef && item.awb === 'SYNCING...') ? { ...item, awb: undefined, carrier: undefined, trackingStatus: undefined } : item
                             )
                         };
@@ -2451,8 +2451,8 @@ let html = `
         const headers = ["FSN", "Article Code", "EAN Code", "MRP", "Size", "Qty", "Unit Price", "Tax %", "Invoice No", "PO No"];
         const rows = so.items.map(item => {
             // Locate the mapping based on SKU and Flipkart channel
-            const mapping = inventoryItems.find(inv => 
-                (inv.sku === item.masterSku || inv.articleCode === item.articleCode) && 
+            const mapping = inventoryItems.find(inv =>
+                (inv.sku === item.masterSku || inv.articleCode === item.articleCode) &&
                 inv.channel.toLowerCase().includes('flipkart')
             );
 
@@ -2517,7 +2517,7 @@ let html = `
         const isZepto = so.channel.toLowerCase().includes('zepto');
         const isInstamart = so.channel.toLowerCase().includes('instamart');
         const isBB = so.channel.toLowerCase().includes('bb');
-        
+
         // Delivered, RTO, Returned orders should only show Track Order or Details
         if (so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned') {
             if (so.awb || so.status === 'Delivered') {
@@ -2526,23 +2526,26 @@ let html = `
             return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
 
-        const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
-                                (so.storeCode.toUpperCase() === 'YEIO');
-                                
+        const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
+            (so.storeCode.toUpperCase() === 'YEIO');
+
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
         if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
-        
+
         if (isZepto || isInstamart || isBB) {
-            if (so.status === 'Awaiting Appointment Confirmation' || (isBB && !!so.appointmentRequestId && !so.appointmentDate && !so.appointmentId)) {
-                return { 
-                    label: 'Update Appt.', 
-                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md', 
-                    onClick: () => setInstamartApptModal({ isOpen: true, so }), 
-                    disabled: isExecuting 
+            // Do not show "Update Appt." for BB if appointment is already confirmed
+            const bbApptConfirmed = isBB && (!!so.appointmentDate || !!so.appointmentId);
+
+            if (!bbApptConfirmed && (so.status === 'Awaiting Appointment Confirmation' || (isBB && !!so.appointmentRequestId && !so.appointmentDate && !so.appointmentId))) {
+                return {
+                    label: 'Update Appt.',
+                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md',
+                    onClick: () => setInstamartApptModal({ isOpen: true, so }),
+                    disabled: isExecuting
                 };
             }
-            
+
             if (isZepto && so.status === 'Create ASN') {
                 return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
             }
@@ -2554,11 +2557,11 @@ let html = `
 
         if (so.status === 'Invoiced' && !so.awb) {
             if (so.boxCount === 0 && !so.channel.toLowerCase().includes('flipkart')) {
-                return { 
-                    label: 'Box Data Missing', 
-                    color: 'bg-orange-50 text-orange-600 border border-orange-200 cursor-default', 
-                    onClick: () => addNotification('Update box count in backend to enable shipping.', 'warning'), 
-                    disabled: false 
+                return {
+                    label: 'Box Data Missing',
+                    color: 'bg-orange-50 text-orange-600 border border-orange-200 cursor-default',
+                    onClick: () => addNotification('Update box count in backend to enable shipping.', 'warning'),
+                    disabled: false
                 };
             }
 
@@ -2567,20 +2570,20 @@ let html = `
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
             if (isAmazonFba) {
-                return { 
-                    label: 'FBA Handled', 
-                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed', 
-                    onClick: () => addNotification('Amazon FBA orders are fulfilled by Amazon, not Nimbus.', 'info'), 
-                    disabled: true 
+                return {
+                    label: 'FBA Handled',
+                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
+                    onClick: () => addNotification('Amazon FBA orders are fulfilled by Amazon, not Nimbus.', 'info'),
+                    disabled: true
                 };
             }
 
             if (ewbMissing) {
-                return { 
-                    label: 'EWB Missing', 
-                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed', 
-                    onClick: () => addNotification('E-Way Bill required for orders >= ₹50,000.', 'warning'), 
-                    disabled: true 
+                return {
+                    label: 'EWB Missing',
+                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
+                    onClick: () => addNotification('E-Way Bill required for orders >= ₹50,000.', 'warning'),
+                    disabled: true
                 };
             }
 
@@ -2588,33 +2591,33 @@ let html = `
             const apptMissing = (isZepto || isInstamart || isBB) && !so.appointmentDate && !so.appointmentId;
 
             if (apptMissing && (isZepto || isInstamart || isBB)) {
-                const canReq = isBB 
+                const canReq = isBB
                     ? (so.boxCount > 0)
                     : (isZepto ? zeptoEligibility.canRequest : instamartEligibility.canRequest);
 
-                return { 
-                    label: isSendingBBAppointment || isSendingZeptoAppointment || isSendingInstamartAppointment ? 'Requesting...' : 'Request Appt.', 
-                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100', 
+                return {
+                    label: isSendingBBAppointment || isSendingZeptoAppointment || isSendingInstamartAppointment ? 'Requesting...' : 'Request Appt.',
+                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100',
                     onClick: () => {
                         if (isBB) handleSendBBAppointmentRequest(so);
                         else if (isZepto) handleSendZeptoAppointmentRequest();
                         else handleSendInstamartAppointmentRequest();
-                    }, 
-                    disabled: !canReq || isExecuting 
+                    },
+                    disabled: !canReq || isExecuting
                 };
             }
 
-            return { 
-                label: isPushingNimbus === so.id ? 'Shipping...' : 'Ship Nimbus', 
-                color: 'bg-blue-600 text-white hover:bg-blue-700', 
+            return {
+                label: isPushingNimbus === so.id ? 'Shipping...' : 'Ship Nimbus',
+                color: 'bg-blue-600 text-white hover:bg-blue-700',
                 onClick: () => {
                     if (isInstamart) {
                         setShippingConfirm({ isOpen: true, so });
                     } else {
                         handlePushToNimbusAction(so.id, so.poReference);
                     }
-                }, 
-                disabled: isExecuting 
+                },
+                disabled: isExecuting
             };
         }
         if (so.status === 'Label Generated' || so.status === 'Shipped' || so.awb) return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
@@ -2624,33 +2627,33 @@ let html = `
     return (
         <div className="bg-white p-6 rounded-xl shadow-sm">
             {portalHelper.isOpen && portalHelper.so && (
-                <PortalHelperModal 
-                    so={portalHelper.so} 
-                    onClose={() => setPortalHelper({ isOpen: false, so: null })} 
+                <PortalHelperModal
+                    so={portalHelper.so}
+                    onClose={() => setPortalHelper({ isOpen: false, so: null })}
                     addNotification={addNotification}
                 />
             )}
 
             {zeptoASNHelper.isOpen && zeptoASNHelper.so && (
-                <ZeptoASNHelperModal 
-                    so={zeptoASNHelper.so} 
-                    onClose={() => setZeptoASNHelper({ isOpen: false, so: null })} 
+                <ZeptoASNHelperModal
+                    so={zeptoASNHelper.so}
+                    onClose={() => setZeptoASNHelper({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     onComplete={onSync}
                     inventoryItems={inventoryItems || []}
                 />
             )}
             {instamartPrintPackModal.isOpen && instamartPrintPackModal.so && (
-                <InstamartPrintManager 
-                    so={instamartPrintPackModal.so} 
-                    onClose={() => setInstamartPrintPackModal({ isOpen: false, so: null })} 
+                <InstamartPrintManager
+                    so={instamartPrintPackModal.so}
+                    onClose={() => setInstamartPrintPackModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                 />
             )}
-            
+
             {flipkartConsignmentModal.isOpen && flipkartConsignmentModal.so && (
-                <FlipkartConsignmentModal 
-                    so={flipkartConsignmentModal.so} 
+                <FlipkartConsignmentModal
+                    so={flipkartConsignmentModal.so}
                     userEmail={userEmail}
                     addNotification={addNotification}
                     onClose={() => setFlipkartConsignmentModal({ isOpen: false, so: null })}
@@ -2659,15 +2662,15 @@ let html = `
             )}
 
             {fbaShipmentModal.isOpen && fbaShipmentModal.so && (
-                <FbaShipmentModal 
-                    so={fbaShipmentModal.so} 
+                <FbaShipmentModal
+                    so={fbaShipmentModal.so}
                     isSaving={isCreatingInvoice === fbaShipmentModal.so.id}
                     onClose={() => setFbaShipmentModal({ isOpen: false, so: null })}
                     onSave={handleFbaSaveAndInvoice}
                 />
             )}
             {amazonBoxModal.isOpen && amazonBoxModal.so && (
-                <AmazonBoxDetailsModal 
+                <AmazonBoxDetailsModal
                     so={amazonBoxModal.so}
                     onClose={() => setAmazonBoxModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
@@ -2675,17 +2678,17 @@ let html = `
                 />
             )}
             {instamartApptModal.isOpen && instamartApptModal.so && (
-                <InstamartAppointmentModal 
-                    so={instamartApptModal.so} 
-                    onClose={() => setInstamartApptModal({ isOpen: false, so: null })} 
+                <InstamartAppointmentModal
+                    so={instamartApptModal.so}
+                    onClose={() => setInstamartApptModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     onComplete={onSync}
                 />
             )}
             {shippingConfirm.isOpen && shippingConfirm.so && (
-                <ShippingConfirmationModal 
-                    so={shippingConfirm.so} 
-                    onClose={() => setShippingConfirm({ isOpen: false, so: null })} 
+                <ShippingConfirmationModal
+                    so={shippingConfirm.so}
+                    onClose={() => setShippingConfirm({ isOpen: false, so: null })}
                     onConfirm={() => {
                         const so = shippingConfirm.so!;
                         setShippingConfirm({ isOpen: false, so: null });
@@ -2700,7 +2703,7 @@ let html = `
             )}
 
             {activeAppointmentPass && (
-                <AppointmentPass 
+                <AppointmentPass
                     appointmentId={activeAppointmentPass.appointmentId || 'PENDING'}
                     appointmentDate={activeAppointmentPass.appointmentDate || 'TBD'}
                     appointmentTime={formatDisplayTime(activeAppointmentPass.appointmentTime)}
@@ -2709,12 +2712,12 @@ let html = `
                     purchaseManagerName="BRAINLYTIC SOLUTIONS PVT LTD"
                     purchaseManagerPhone="N/A"
                     unloadingSlot={activeAppointmentPass.appointmentRemarks || 'Standard'}
-                    purchaseOrderId={activeAppointmentPass.poReference}                 
+                    purchaseOrderId={activeAppointmentPass.poReference}
                     onClose={() => setActiveAppointmentPass(null)}
                     addNotification={addNotification}
                 />
             )}
-            
+
             <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
                 <div className="flex flex-wrap items-center gap-2">
                     {tabs.map(tab => (
@@ -2723,7 +2726,7 @@ let html = `
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     {zeptoEligibility.show && (
-                        <button 
+                        <button
                             onClick={handleSendZeptoAppointmentRequest}
                             disabled={!zeptoEligibility.canRequest || isSendingZeptoAppointment}
                             className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 group ${!zeptoEligibility.canRequest ? 'grayscale' : ''}`}
@@ -2734,7 +2737,7 @@ let html = `
                         </button>
                     )}
                     {instamartEligibility.show && (
-                        <button 
+                        <button
                             onClick={handleSendInstamartAppointmentRequest}
                             disabled={!instamartEligibility.canRequest || isSendingInstamartAppointment}
                             className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group ${!instamartEligibility.canRequest ? 'grayscale' : ''}`}
@@ -2745,7 +2748,7 @@ let html = `
                         </button>
                     )}
                     {bbEligibility.show && (
-                        <button 
+                        <button
                             onClick={() => handleSendBBAppointmentRequest()}
                             disabled={!bbEligibility.canRequest || isSendingBBAppointment}
                             className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 group ${!bbEligibility.canRequest ? 'grayscale' : ''}`}
@@ -2755,44 +2758,44 @@ let html = `
                             <span>{bbEligibility.missingBoxDetails ? 'Box Data Missing' : 'BB Appt.'}</span>
                         </button>
                     )}
-                    <button 
-                        onClick={handleProcessBlinkitPasses} 
-                        disabled={isProcessingBlinkit || isSyncing} 
+                    <button
+                        onClick={handleProcessBlinkitPasses}
+                        disabled={isProcessingBlinkit || isSyncing}
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-orange-600 rounded-lg shadow-sm hover:bg-orange-700 transition-all active:scale-95 disabled:opacity-50 group"
                         title="Update Blinkit Appointment Passes from portal"
                     >
-                        <CalendarIcon className={`h-3.5 w-3.5 ${isProcessingBlinkit ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} /> 
+                        <CalendarIcon className={`h-3.5 w-3.5 ${isProcessingBlinkit ? 'animate-bounce' : 'group-hover:scale-110 transition-transform'}`} />
                         <span>Blinkit Pass</span>
                     </button>
-                    <button 
-                        onClick={handleEESync} 
-                        disabled={isSyncingEE || isSyncing} 
+                    <button
+                        onClick={handleEESync}
+                        disabled={isSyncingEE || isSyncing}
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all active:scale-95 disabled:opacity-50 group"
                     >
-                        <RefreshIcon className={`h-3.5 w-3.5 ${isSyncingEE ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} /> 
+                        <RefreshIcon className={`h-3.5 w-3.5 ${isSyncingEE ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
                         <span>Sync EE</span>
                     </button>
-                    <button 
-                        onClick={onSync} 
-                        disabled={isSyncing || isSyncingEE} 
+                    <button
+                        onClick={onSync}
+                        disabled={isSyncing || isSyncingEE}
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 group"
                     >
-                        <CloudDownloadIcon className={`h-3.5 w-3.5 ${isSyncing ? 'animate-bounce' : 'group-hover:-translate-y-0.5 transition-transform'}`} /> 
+                        <CloudDownloadIcon className={`h-3.5 w-3.5 ${isSyncing ? 'animate-bounce' : 'group-hover:-translate-y-0.5 transition-transform'}`} />
                         <span>Refresh</span>
                     </button>
-                    <button 
-                        onClick={handleExportInTransitCSV} 
+                    <button
+                        onClick={handleExportInTransitCSV}
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-emerald-700 rounded-lg shadow-sm hover:bg-emerald-800 transition-all active:scale-95 group"
                     >
-                        <ClipboardListIcon className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" /> 
+                        <ClipboardListIcon className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
                         <span>Export CSV</span>
                     </button>
-                    <button 
-                        onClick={handleUpdateGoogleSheet} 
+                    <button
+                        onClick={handleUpdateGoogleSheet}
                         disabled={isUpdatingSheet}
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-green-600 rounded-lg shadow-sm hover:bg-green-700 transition-all active:scale-95 group disabled:opacity-50"
                     >
-                        <GlobeIcon className={`h-3.5 w-3.5 ${isUpdatingSheet ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} /> 
+                        <GlobeIcon className={`h-3.5 w-3.5 ${isUpdatingSheet ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} />
                         <span>{isUpdatingSheet ? 'Updating...' : 'Update Sheet'}</span>
                     </button>
                 </div>
@@ -2804,13 +2807,13 @@ let html = `
                         <tr>
                             <th className="p-4 w-4 sticky left-0 bg-gray-50 z-30 border-r border-gray-100"></th>
                             <th className="px-6 py-3 text-blue-600 sticky left-12 bg-gray-50 z-30 border-r border-gray-100 min-w-[150px]">
-                                <div className="flex items-center gap-2">SO ID (EE Ref)<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'id' ? null : 'id')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.id ? 'text-partners-green' : 'text-gray-400'}`}><SearchIcon className="h-3 w-3"/></button></div>
-                                {activeFilterColumn === 'id' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><input type="text" autoFocus placeholder="Search ID..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.id || ''} onChange={(e: any) => setColumnFilters({...columnFilters, id: e.target.value})} /></div>)}
+                                <div className="flex items-center gap-2">SO ID (EE Ref)<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'id' ? null : 'id')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.id ? 'text-partners-green' : 'text-gray-400'}`}><SearchIcon className="h-3 w-3" /></button></div>
+                                {activeFilterColumn === 'id' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><input type="text" autoFocus placeholder="Search ID..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.id || ''} onChange={(e: any) => setColumnFilters({ ...columnFilters, id: e.target.value })} /></div>)}
                             </th>
                             <th className="px-6 py-3">EE Status</th>
                             <th className="px-6 py-3 min-w-[140px]">
-                                <div className="flex items-center gap-2">Channel<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'channel' ? null : 'channel')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.channel ? 'text-partners-green' : 'text-gray-400'}`}><FilterIcon className="h-3 w-3"/></button></div>
-                                {activeFilterColumn === 'channel' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e: any) => setColumnFilters({...columnFilters, channel: e.target.value})}><option value="">All Channels</option>{uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
+                                <div className="flex items-center gap-2">Channel<button onClick={() => setActiveFilterColumn(activeFilterColumn === 'channel' ? null : 'channel')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.channel ? 'text-partners-green' : 'text-gray-400'}`}><FilterIcon className="h-3 w-3" /></button></div>
+                                {activeFilterColumn === 'channel' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e: any) => setColumnFilters({ ...columnFilters, channel: e.target.value })}><option value="">All Channels</option>{uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
                             </th>
                             <th className="px-6 py-3">Store</th>
                             <th className="px-6 py-3">Qty / Total</th>
@@ -2827,7 +2830,7 @@ let html = `
                                 const totalAmountIncTax = (so.amount + (so.shippingCharge || 0)) * 1.05;
                                 const action = getPrimaryAction(so);
                                 const isRefreshing = isRefreshingSo === so.poReference;
-                                
+
                                 const isInstamart = so.channel.toLowerCase().includes('instamart');
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
@@ -2835,20 +2838,20 @@ let html = `
                                 const isBB = so.channel.toLowerCase().includes('bb');
                                 const isRBL = so.channel.toLowerCase().includes('rbl');
                                 const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
-                                
+
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
                                 const isFinalStatus = so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned';
-                                const isGreyedOut = ((isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) || 
-                                                    (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails))) &&
-                                                    !so.appointmentId && !so.appointmentDate;
+                                const isGreyedOut = ((isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) ||
+                                    (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails))) &&
+                                    !so.appointmentId && !so.appointmentDate;
                                 const zeptoTooltip = isGreyedOut ? `Waiting for other ${isZepto ? 'Zepto' : 'Instamart'} orders to be invoiced` : undefined;
-                                
+
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
-                                
+
                                 const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus;
                                 const showFlipkartPrintAction = isFlipkart && hasAppointmentId && !isFinalStatus;
-                                
+
                                 const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus;
                                 const showZeptoDownload = false;
 
@@ -2856,8 +2859,8 @@ let html = `
                                 const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && !isFinalStatus;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
-                                const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && 
-                                                        (so.storeCode.toUpperCase() === 'YEIO');
+                                const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
+                                    (so.storeCode.toUpperCase() === 'YEIO');
                                 const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
                                 const showAmazonBoxDetails = isAmazon && !isFinalStatus && (
@@ -2870,8 +2873,8 @@ let html = `
 
                                 return (
                                     <Fragment key={so.id}>
-                                        <tr 
-                                            className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'} ${isGreyedOut ? 'opacity-50 grayscale-[0.5]' : ''}`} 
+                                        <tr
+                                            className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'} ${isGreyedOut ? 'opacity-50 grayscale-[0.5]' : ''}`}
                                             onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
                                             title={zeptoTooltip}
                                         >
@@ -2879,20 +2882,19 @@ let html = `
                                             <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">{so.id}</td>
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col gap-1">
-                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit ${
-                                                        so.status === 'Returned' ? 'bg-red-100 text-red-700' : 
-                                                        so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
-                                                        so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' : 
-                                                        so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' : 
-                                                        so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' : 
-                                                        so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' : 
-                                                        so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' : 
-                                                        so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
-                                                        so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
-                                                        so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
-                                                        so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
-                                                        'bg-gray-100 text-gray-700'
-                                                    }`}>
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit ${so.status === 'Returned' ? 'bg-red-100 text-red-700' :
+                                                            so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                                                so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' :
+                                                                    so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' :
+                                                                        so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' :
+                                                                            so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
+                                                                                so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
+                                                                                    so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
+                                                                                        so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
+                                                                                            so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
+                                                                                                so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                                                                                    'bg-gray-100 text-gray-700'
+                                                        }`}>
                                                         {so.status}
                                                     </span>
                                                     {showApptMissing && (
@@ -2910,7 +2912,7 @@ let html = `
                                             <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e: any) => e.stopPropagation()}>
                                                 <div className="flex items-center justify-center gap-2">
                                                     {showFlipkartDownload && (
-                                                        <button 
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
                                                             title="Download Flipkart Minutes CSV Packing Slip"
@@ -2919,7 +2921,7 @@ let html = `
                                                         </button>
                                                     )}
                                                     {showZeptoDownload && (
-                                                        <button 
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
                                                             title="Download Zepto ASN CSV"
@@ -2928,9 +2930,9 @@ let html = `
                                                         </button>
                                                     )}
                                                     {showBlinkitAppointmentBtn && (
-                                                        <button 
-                                                            onClick={(e: any) => { 
-                                                                e.stopPropagation(); 
+                                                        <button
+                                                            onClick={(e: any) => {
+                                                                e.stopPropagation();
                                                                 if (isFlipkart) setFlipkartConsignmentModal({ isOpen: true, so });
                                                                 else if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                 else setPortalHelper({ isOpen: true, so });
@@ -2942,7 +2944,7 @@ let html = `
                                                         </button>
                                                     )}
                                                     {showFlipkartAppointmentBtn && (
-                                                        <button 
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5"
                                                         >
@@ -2950,7 +2952,7 @@ let html = `
                                                         </button>
                                                     )}
                                                     {showFlipkartPrintAction && (
-                                                        <button 
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
                                                             title="Print Flipkart Box Labels"
@@ -2958,8 +2960,8 @@ let html = `
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
-                                                     {showInstamartPrintAction && (
-                                                        <button 
+                                                    {showInstamartPrintAction && (
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
                                                             title="Print Instamart Box Labels"
@@ -2968,7 +2970,7 @@ let html = `
                                                         </button>
                                                     )}
                                                     {showAmazonBoxDetails && (
-                                                        <button 
+                                                        <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
                                                             disabled={isFetchingBoxDetails === so.id}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2978,7 +2980,7 @@ let html = `
                                                         </button>
                                                     )}
                                                     <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
-                                                    <div 
+                                                    <div
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
                                                         onClick={(e: any) => {
                                                             e.stopPropagation();
@@ -2989,7 +2991,7 @@ let html = `
                                                         {openMenuId === so.id && (
                                                             <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
                                                                 {canUpdateAppt && (
-                                                                    <button 
+                                                                    <button
                                                                         onClick={(e: any) => {
                                                                             e.stopPropagation();
                                                                             setInstamartApptModal({ isOpen: true, so });
@@ -3002,7 +3004,7 @@ let html = `
                                                                     </button>
                                                                 )}
                                                                 {so.status === 'Shipped' && (
-                                                                    <button 
+                                                                    <button
                                                                         onClick={(e: any) => {
                                                                             e.stopPropagation();
                                                                             handleMarkAsRTOInitiated(so);
@@ -3030,7 +3032,7 @@ let html = `
                                                             <div>
                                                                 <div className="flex justify-between items-center mb-4">
                                                                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><CalendarIcon className="h-4 w-4 text-blue-500" /> Fulfillment Ref</h4>
-                                                                    <button 
+                                                                    <button
                                                                         onClick={() => refreshSingleSOState(so.poReference)}
                                                                         disabled={isRefreshing}
                                                                         className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50"
@@ -3040,13 +3042,13 @@ let html = `
                                                                     </button>
                                                                 </div>
                                                                 <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof so.shippingCharge === 'number' ? `₹${so.shippingCharge}` : '₹0'}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
-                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View Order PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
-                                                                </div>                                                      
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof so.shippingCharge === 'number' ? `₹${so.shippingCharge}` : '₹0'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Order PDF</p>{so.poPdfUrl ? <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View Order PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
+                                                                </div>
                                                             </div>
                                                             <div className="lg:col-span-1">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2"><InvoiceIcon className="h-4 w-4 text-partners-purple" /> Invoice Information</h4>
@@ -3064,8 +3066,8 @@ let html = `
                                                                             {(!so.invoiceNumber && so.originalEeStatus.toLowerCase().trim() !== 'open' && (so.originalEeStatus.toLowerCase().trim() === 'confirmed' || so.status === 'Batch Created') && !((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))) ? (
                                                                                 <button onClick={() => handleCreateZohoInvoiceAction(so.id, so.poReference, so)} disabled={!!isCreatingInvoice} className="mt-4 px-4 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-sm hover:bg-purple-700 flex items-center gap-2 transition-all active:scale-95">{isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}{isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}</button>
                                                                             ) : (<p className="mt-3 text-[10px] text-gray-400 italic bg-gray-100 px-3 py-1 rounded-full border border-gray-200">
-                                                                                {((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO')) 
-                                                                                    ? 'Invoicing not required for this store' 
+                                                                                {((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))
+                                                                                    ? 'Invoicing not required for this store'
                                                                                     : (so.originalEeStatus.toLowerCase().trim() === 'open' ? 'Awaiting Confirmation (Status: Open)' : 'Pending Picking/Batching in EasyEcom')}
                                                                             </p>)}
                                                                         </div>
@@ -3119,7 +3121,7 @@ let html = `
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><GlobeIcon className="h-4 w-4 text-blue-600" /> Logistics & Shipment Status</h4>
                                                                 <div className="flex items-center gap-3">
                                                                     {showFlipkartDownload && (
-                                                                        <button 
+                                                                        <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
                                                                         >
@@ -3127,7 +3129,7 @@ let html = `
                                                                         </button>
                                                                     )}
                                                                     {showZeptoDownload && (
-                                                                        <button 
+                                                                        <button
                                                                             onClick={(e: any) => { e.stopPropagation(); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
                                                                         >
@@ -3135,9 +3137,9 @@ let html = `
                                                                         </button>
                                                                     )}
                                                                     {showBlinkitAppointmentBtn && (
-                                                                        <button 
-                                                                            onClick={(e: any) => { 
-                                                                                e.stopPropagation(); 
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
                                                                                 if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                                 else setPortalHelper({ isOpen: true, so });
                                                                             }}
@@ -3148,7 +3150,7 @@ let html = `
                                                                         </button>
                                                                     )}
                                                                     {showFlipkartAppointmentBtn && (
-                                                                        <button 
+                                                                        <button
                                                                             onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
                                                                         >
@@ -3156,7 +3158,7 @@ let html = `
                                                                         </button>
                                                                     )}
                                                                     {isFlipkart && hasAppointmentId && (
-                                                                         <button 
+                                                                        <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95"
                                                                         >
@@ -3165,7 +3167,7 @@ let html = `
                                                                     )}
                                                                     {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0) && (
                                                                         <div className="flex gap-2">
-                                                                            <button 
+                                                                            <button
                                                                                 onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                                                 className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95 animate-in fade-in zoom-in-95"
                                                                             >
@@ -3175,7 +3177,7 @@ let html = `
                                                                     )}
                                                                     {(so.invoiceNumber && !so.awb) && (
                                                                         <div className="flex flex-col items-center gap-1">
-                                                                            <button 
+                                                                            <button
                                                                                 onClick={() => {
                                                                                     if (so.boxCount === 0 && !isFlipkart) { // Flipkart handles boxes differently via consignment
                                                                                         addNotification('Please update box count first.', 'warning');
@@ -3186,8 +3188,8 @@ let html = `
                                                                                     } else {
                                                                                         handlePushToNimbusAction(so.id, so.poReference);
                                                                                     }
-                                                                                }} 
-                                                                                disabled={!!isPushingNimbus || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba'))} 
+                                                                                }}
+                                                                                disabled={!!isPushingNimbus || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba'))}
                                                                                 className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {isPushingNimbus === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <SendIcon className="h-3 w-3" />}
@@ -3202,7 +3204,7 @@ let html = `
                                                             </div>
                                                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                                                                 <div className={`p-4 rounded-xl border transition-all ${isFlipkart || so.boxCount > 0 ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${isFlipkart || so.boxCount > 0 ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${isFlipkart || so.boxCount > 0 ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty || 60) : (so.boxCount || 0)}</p></div></div></div>
-                                                                
+
                                                                 <div className="p-4 bg-partners-light-blue rounded-xl border border-blue-100 flex flex-col">
                                                                     <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{isFlipkart ? 'Consignment Details' : 'Appointment Details'}</p>
                                                                     <div className="flex-1 flex flex-col justify-between space-y-3">
@@ -3215,7 +3217,7 @@ let html = `
                                                                                 {so.appointmentDate ? 'Confirmed' : so.appointmentRequestDate ? 'Requested' : 'No Slot Taken'}
                                                                             </p>
                                                                         </div>
-                                                                        
+
                                                                         <div className="flex items-center gap-2">
                                                                             <ClockIcon className="h-4 w-4 text-blue-600" />
                                                                             <p className="text-sm font-bold text-blue-800">{formatDisplayTime(so.appointmentTime)}</p>
@@ -3229,10 +3231,10 @@ let html = `
                                                                 </div>
 
                                                                 {so.awb ? <>
-                                                                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
-                                                                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Exp Delivery Date</p><p className="text-sm font-bold text-partners-green">{so.edd || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
-                                                                <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
-                                                            </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Nimbus' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
+                                                                    <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
+                                                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Exp Delivery Date</p><p className="text-sm font-bold text-partners-green">{so.edd || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
+                                                                    <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
+                                                                </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Nimbus' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>
                                                             {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || so.channel.toLowerCase().includes('flipkart')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
                                                                 <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
@@ -3245,8 +3247,8 @@ let html = `
                                                                             <p className={`text-[10px] font-medium ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-600' : so.channel.toLowerCase().includes('flipkart') ? 'text-blue-600' : 'text-yellow-600'}`}>AWB assigned. Generate appointment pass before dispatching.</p>
                                                                         </div>
                                                                     </div>
-                                                                    <button 
-                                                                        onClick={(e: any) => { e.stopPropagation(); setPortalHelper({ isOpen: true, so }); }} 
+                                                                    <button
+                                                                        onClick={(e: any) => { e.stopPropagation(); setPortalHelper({ isOpen: true, so }); }}
                                                                         className={`px-6 py-2.5 text-white text-[11px] font-bold rounded-xl shadow-md transition-all flex items-center gap-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600 hover:bg-purple-700' : 'bg-yellow-50 hover:bg-yellow-600'}`}
                                                                     >
                                                                         <CalendarIcon className="h-4 w-4" />Get Appointment Details

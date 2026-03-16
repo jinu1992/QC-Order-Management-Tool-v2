@@ -51,21 +51,46 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             const channelLower = (po.channel || '').toLowerCase();
             const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
-            
+
             if (!isAllowedChannel) return false;
 
             const isAmazon = channelLower.includes('amazon');
+
             const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate);
-            
-            // Allow only specific statuses
-            const currentStatus = String(po.status || '');
-            const isTargetStatus = currentStatus === 'Shipped' || currentStatus === 'RTO Initiated' || currentStatus === 'Returned';
-            
+
+            // Allow only specific statuses by simulating the SalesOrderTable logic
+            const currentStatusRaw = String(po.status || '');
+            const eeStatusLower = (po.eeOrderStatus || currentStatusRaw || 'Processing').toLowerCase().trim();
+            const maniDate = po.eeManifestDate || (po as any).manifestDate;
+            const rtoStatus = po.rtoStatus;
+            const isOutOfDelivery = trackingStatusLower === 'out for delivery';
+            const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
+
+            let displayStatus = currentStatusRaw;
+            // invoiceNumber may not technically be on PurchaseOrder directly in types, but checking it or its items
+            const invoiceNumber = (po as any).invoiceNumber || po.items?.find((item: any) => item.invoiceNumber)?.invoiceNumber;
+            const hasInvoice = !!invoiceNumber && invoiceNumber !== 'GENERATING...';
+            const isAmazonFbaYeio = (po.channel?.toLowerCase().includes('amazon_fba') || po.channel?.toLowerCase().includes('amazon fba')) &&
+                (po.storeCode?.toUpperCase() === 'YEIO');
+            const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
+
+            if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+            else if (eeStatusLower === 'shipped' && rtoStatus) displayStatus = 'RTO Initiated';
+            else if (rtoStatus) displayStatus = 'Returned';
+            else if (eeStatusLower === 'closed') displayStatus = 'Closed';
+            else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
+            else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
+                displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
+            }
+            else if (po.awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
+
+            const isTargetStatus = displayStatus === 'Shipped' || displayStatus === 'RTO Initiated' || displayStatus === 'Returned';
+
             if (!isTargetStatus) {
                 // If it's Amazon, 'Delivered' is allowed ONLY if not *actually* delivered yet
-                const isAmazonDelivered = isAmazon && currentStatus === 'Delivered' && !isActuallyDelivered;
-                
+                const isAmazonDelivered = isAmazon && displayStatus === 'Delivered' && !isActuallyDelivered;
+
                 if (!isAmazonDelivered) {
                     return false;
                 }
@@ -76,13 +101,13 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             const safeChannel = po.channel || '';
             const safeAwb = po.awb || '';
 
-            const matchesSearch = searchTerm === '' || 
+            const matchesSearch = searchTerm === '' ||
                 safePoNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 safeChannel.toLowerCase().includes(searchTerm.toLowerCase());
-                
-            const matchesAwb = awbSearch === '' || 
+
+            const matchesAwb = awbSearch === '' ||
                 safeAwb.toLowerCase().includes(awbSearch.toLowerCase());
-                
+
             const matchesChannel = channelFilter === '' || po.channel === channelFilter;
 
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
@@ -138,7 +163,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         if (isMissed) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> Missed</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1 w-fit"><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
-        
+
         return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 w-fit">{so.status || 'Pending'}</span>;
     };
 
@@ -192,7 +217,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    
+
                     <div className="relative flex-1 min-w-[150px] max-w-[200px]">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <FilterIcon className="h-4 w-4 text-gray-400" />
@@ -241,7 +266,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                 const isToday = isSameDay(so.appointmentDate, todayDate);
                                 const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
                                 const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate);
-                                
+
                                 const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
                                 const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
 
@@ -257,87 +282,88 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                 }
 
                                 return (
-                                <tr key={so.id} className={rowClass}>
-                                    {/* Channel & Store */}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="font-semibold text-gray-900">{so.channel}</div>
-                                        <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
-                                    </td>
-                                    
-                                    {/* PO Details */}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="font-medium text-gray-900">{so.poNumber}</div>
-                                        <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
-                                        {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
-                                    </td>
-                                    
-                                    {/* Quantities */}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxes || so.eeReferenceBoxCount || '-'}</span></div>
-                                        <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc: number, item: any) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
-                                    </td>
+                                    <tr key={so.id} className={rowClass}>
+                                        {/* Channel & Store */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="font-semibold text-gray-900">{so.channel}</div>
+                                            <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
+                                        </td>
 
-                                    {/* Tracking Details */}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex flex-col gap-0.5">
-                                            {so.awb ? (
-                                                <>
-                                                    <div className="text-sm text-gray-900 flex items-center gap-1.5">
-                                                        <span className="font-semibold">AWB:</span>
-                                                        {so.trackingUrl ? (
-                                                            <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline">
-                                                                {so.awb}
-                                                            </a>
-                                                        ) : (
-                                                            <span>{so.awb}</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {so.carrier || '-'}</div>
-                                                    {so.currentLocation && <div className="text-xs text-gray-500 truncate mt-1" title={so.currentLocation}>📍 {so.currentLocation}</div>}
-                                                </>
-                                            ) : (
-                                                <span className="text-sm text-gray-400 italic">No AWB Extracted</span>
-                                            )}
-                                        </div>
-                                    </td>
-                                    
-                                    {/* Status & EDD */}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="mb-1.5 flex flex-col gap-1">
-                                            {getStatusBadge(so)}
-                                            {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
-                                            {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
-                                        </div>
-                                        <div className="text-xs text-gray-700 mt-1">
-                                            <span className="font-bold border-t border-gray-200 pt-1 mt-1 block w-full">EDD: <span className="font-medium text-gray-600">{so.edd || so.poEdd || '-'}</span></span>
-                                        </div>
-                                    </td>
+                                        {/* PO Details */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="font-medium text-gray-900">{so.poNumber}</div>
+                                            <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
+                                            {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
+                                        </td>
 
-                                    {/* Appointment */}
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
-                                        {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
-                                        {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Passed Deadline</div>}
-                                        
-                                        <div className="font-medium text-gray-900 mt-0.5">
-                                            {so.appointmentDate ? (
-                                                <div className="flex flex-col">
-                                                    <span>{so.appointmentDate}</span>
-                                                    <span className="text-xs text-gray-600 font-normal">{so.appointmentTime || ''}</span>
-                                                </div>
-                                            ) : (
-                                                <span className="text-gray-400 italic font-normal">Pending Appt</span>
-                                            )}
-                                        </div>
-                                        
-                                        {so.appointmentId && (
-                                            <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded mt-1.5 inline-block font-medium w-fit border border-indigo-100">
-                                                ID: {so.appointmentId}
+                                        {/* Quantities */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxes || so.eeReferenceBoxCount || '-'}</span></div>
+                                            <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc: number, item: any) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
+                                        </td>
+
+                                        {/* Tracking Details */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex flex-col gap-0.5">
+                                                {so.awb ? (
+                                                    <>
+                                                        <div className="text-sm text-gray-900 flex items-center gap-1.5">
+                                                            <span className="font-semibold">AWB:</span>
+                                                            {so.trackingUrl ? (
+                                                                <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline">
+                                                                    {so.awb}
+                                                                </a>
+                                                            ) : (
+                                                                <span>{so.awb}</span>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {so.carrier || '-'}</div>
+                                                        {so.currentLocation && <div className="text-xs text-gray-500 truncate mt-1" title={so.currentLocation}>📍 {so.currentLocation}</div>}
+                                                    </>
+                                                ) : (
+                                                    <span className="text-sm text-gray-400 italic">No AWB Extracted</span>
+                                                )}
                                             </div>
-                                        )}
-                                    </td>
-                                </tr>
-                            )}) : (
+                                        </td>
+
+                                        {/* Status & EDD */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="mb-1.5 flex flex-col gap-1">
+                                                {getStatusBadge(so)}
+                                                {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
+                                                {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
+                                            </div>
+                                            <div className="text-xs text-gray-700 mt-1">
+                                                <span className="font-bold border-t border-gray-200 pt-1 mt-1 block w-full">EDD: <span className="font-medium text-gray-600">{so.edd || so.poEdd || '-'}</span></span>
+                                            </div>
+                                        </td>
+
+                                        {/* Appointment */}
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
+                                            {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
+                                            {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Passed Deadline</div>}
+
+                                            <div className="font-medium text-gray-900 mt-0.5">
+                                                {so.appointmentDate ? (
+                                                    <div className="flex flex-col">
+                                                        <span>{so.appointmentDate}</span>
+                                                        <span className="text-xs text-gray-600 font-normal">{so.appointmentTime || ''}</span>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-gray-400 italic font-normal">Pending Appt</span>
+                                                )}
+                                            </div>
+
+                                            {so.appointmentId && (
+                                                <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded mt-1.5 inline-block font-medium w-fit border border-indigo-100">
+                                                    ID: {so.appointmentId}
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )
+                            }) : (
                                 <tr>
                                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                                         <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />

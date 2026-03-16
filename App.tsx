@@ -25,7 +25,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [lastSynced, setLastSynced] = useState<number>(0);
-  
+
   // Authenticated state
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('qc_user');
@@ -54,7 +54,7 @@ const App: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState('New POs');
   const [activeInventoryTab, setActiveInventoryTab] = useState<'mapping' | 'shortfall'>('mapping');
   const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'logs'>('users');
-  
+
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -68,22 +68,22 @@ const App: React.FC = () => {
 
   const addLog = useCallback((action: string, details: string) => {
     const newLog: ActivityLog = {
-        id: Date.now().toString(),
-        user: currentUser?.name || 'System', 
-        action,
-        details,
-        timestamp: new Date().toLocaleString()
+      id: Date.now().toString(),
+      user: currentUser?.name || 'System',
+      action,
+      details,
+      timestamp: new Date().toLocaleString()
     };
     setLogs(prev => [newLog, ...prev]);
   }, [currentUser]);
 
   const addNotification = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     const newNotification: NotificationItem = {
-        id: Date.now().toString(),
-        message,
-        timestamp: new Date().toLocaleTimeString(),
-        read: false,
-        type
+      id: Date.now().toString(),
+      message,
+      timestamp: new Date().toLocaleTimeString(),
+      read: false,
+      type
     };
     setNotifications(prev => [newNotification, ...prev]);
     setToasts(prev => [...prev, newNotification]);
@@ -104,30 +104,30 @@ const App: React.FC = () => {
     if (!currentUser) return;
 
     const checkSession = () => {
-        const now = Date.now();
-        const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
-        const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+      const now = Date.now();
+      const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours
+      const INACTIVITY_TIMEOUT = 9 * 60 * 60 * 1000; // 9 hours
 
-        // Check absolute session expiry
-        if (now - sessionStartTime > SESSION_TIMEOUT) {
-            addNotification("Session expired. Please login again.", "warning");
-            handleLogout();
-            return;
-        }
+      // Check absolute session expiry
+      if (now - sessionStartTime > SESSION_TIMEOUT) {
+        addNotification("Session expired. Please login again.", "warning");
+        handleLogout();
+        return;
+      }
 
-        // Check inactivity
-        const lastAct = parseInt(localStorage.getItem('qc_last_activity') || now.toString());
-        if (now - lastAct > INACTIVITY_TIMEOUT) {
-            addNotification("Logged out due to inactivity.", "info");
-            handleLogout();
-            return;
-        }
+      // Check inactivity
+      const lastAct = parseInt(localStorage.getItem('qc_last_activity') || now.toString());
+      if (now - lastAct > INACTIVITY_TIMEOUT) {
+        addNotification("Logged out due to inactivity.", "info");
+        handleLogout();
+        return;
+      }
     };
 
     const updateActivity = () => {
-        const now = Date.now();
-        setLastActivity(now);
-        localStorage.setItem('qc_last_activity', now.toString());
+      const now = Date.now();
+      setLastActivity(now);
+      localStorage.setItem('qc_last_activity', now.toString());
     };
 
     // Listen for user activity
@@ -139,11 +139,11 @@ const App: React.FC = () => {
     const intervalId = setInterval(checkSession, 60000); // Check every minute
 
     return () => {
-        window.removeEventListener('mousemove', updateActivity);
-        window.removeEventListener('keydown', updateActivity);
-        window.removeEventListener('click', updateActivity);
-        window.removeEventListener('scroll', updateActivity);
-        clearInterval(intervalId);
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('click', updateActivity);
+      window.removeEventListener('scroll', updateActivity);
+      clearInterval(intervalId);
     };
   }, [currentUser, sessionStartTime, handleLogout, addNotification]);
 
@@ -168,38 +168,38 @@ const App: React.FC = () => {
   }, [googleTokens]);
 
   const refreshData = useCallback(async (force = false) => {
-      if (!currentUser) return;
-      if (!force && purchaseOrders.length > 0 && Date.now() - lastSynced < 1800000) return; 
+    if (!currentUser) return;
+    if (!force && purchaseOrders.length > 0 && Date.now() - lastSynced < 1800000) return;
 
-      setIsLoading(true);
-      try {
-          const [poData, invData, channelData, userData, quotationData] = await Promise.all([
-              fetchPurchaseOrders(),
-              fetchInventoryFromSheet(),
-              fetchChannelConfigs(),
-              fetchUsers(),
-              fetchQuotations()
-          ]);
+    setIsLoading(true);
+    try {
+      const [poData, invData, channelData, userData, quotationData] = await Promise.all([
+        fetchPurchaseOrders(),
+        fetchInventoryFromSheet(),
+        fetchChannelConfigs(),
+        fetchUsers(),
+        fetchQuotations()
+      ]);
 
-          if (poData.length > 0) setPurchaseOrders(poData);
-          if (invData.length > 0) setInventoryItems(invData);
-          if (channelData.length > 0) setChannelConfigs(channelData);
-          if (userData.length > 0) setUsers(userData);
-          if (quotationData.length > 0) setQuotations(quotationData);
+      if (poData.length > 0) setPurchaseOrders(poData);
+      if (invData.length > 0) setInventoryItems(invData);
+      if (channelData.length > 0) setChannelConfigs(channelData);
+      if (userData.length > 0) setUsers(userData);
+      if (quotationData.length > 0) setQuotations(quotationData);
 
-          setLastSynced(Date.now());
-      } catch (e) {
-          addNotification('Failed to sync data.', 'error');
-      } finally {
-          setIsLoading(false);
-      }
+      setLastSynced(Date.now());
+    } catch (e) {
+      addNotification('Failed to sync data.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   }, [lastSynced, purchaseOrders.length, addNotification, currentUser]);
 
   useEffect(() => {
     if (currentUser) {
-        refreshData();
-        const intervalId = setInterval(() => refreshData(true), 5 * 60 * 1000);
-        return () => clearInterval(intervalId);
+      refreshData();
+      const intervalId = setInterval(() => refreshData(true), 5 * 60 * 1000);
+      return () => clearInterval(intervalId);
     }
   }, [refreshData, currentUser]);
 
@@ -227,22 +227,22 @@ const App: React.FC = () => {
 
   const summaryData = useMemo(() => {
     const totalActiveCount = purchaseOrders.filter(p => {
-        const status = getCalculatedStatus(p);
-        return status !== POStatus.Closed && status !== POStatus.Cancelled;
+      const status = getCalculatedStatus(p);
+      return status !== POStatus.Closed && status !== POStatus.Cancelled;
     }).length;
     const pushed = purchaseOrders.filter(p => getCalculatedStatus(p) === POStatus.Pushed).length;
     const partiallyPushed = purchaseOrders.filter(p => getCalculatedStatus(p) === POStatus.PartiallyProcessed).length;
-    
+
     // Calculate total shortfall units for the new card
     let totalShortfall = 0;
     const newPOStatuses = [POStatus.NewPO, POStatus.WaitingForConfirmation, POStatus.ConfirmedToSend];
     purchaseOrders.forEach(po => {
-        if (!newPOStatuses.includes(po.status)) return;
-        (po.items || []).forEach(item => {
-            if (!item.eeOrderRefId && (item.itemStatus || '').toLowerCase() !== 'cancelled') {
-                totalShortfall += Math.max(0, (item.qty || 0) - (item.fulfillableQty || 0));
-            }
-        });
+      if (!newPOStatuses.includes(po.status)) return;
+      (po.items || []).forEach(item => {
+        if (!item.eeOrderRefId && (item.itemStatus || '').toLowerCase() !== 'cancelled') {
+          totalShortfall += Math.max(0, (item.qty || 0) - (item.fulfillableQty || 0));
+        }
+      });
     });
 
     return [
@@ -256,86 +256,86 @@ const App: React.FC = () => {
   const tabCounts = useMemo(() => {
     const counts = { 'All POs': purchaseOrders.length, 'New POs': 0, 'Below Threshold POs': 0, 'Pushed POs': 0, 'Partially Pushed POs': 0, 'Cancelled POs': 0 };
     purchaseOrders.forEach(po => {
-        const status = getCalculatedStatus(po);
-        if (status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation) counts['New POs']++;
-        else if (status === POStatus.BelowThreshold) counts['Below Threshold POs']++;
-        else if (status === POStatus.Pushed) counts['Pushed POs']++;
-        else if (status === POStatus.PartiallyProcessed) counts['Partially Pushed POs']++;
-        else if (status === POStatus.Cancelled) counts['Cancelled POs']++;
+      const status = getCalculatedStatus(po);
+      if (status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation) counts['New POs']++;
+      else if (status === POStatus.BelowThreshold) counts['Below Threshold POs']++;
+      else if (status === POStatus.Pushed) counts['Pushed POs']++;
+      else if (status === POStatus.PartiallyProcessed) counts['Partially Pushed POs']++;
+      else if (status === POStatus.Cancelled) counts['Cancelled POs']++;
     });
     return counts;
   }, [purchaseOrders]);
-  
+
   const handleCardClick = (view: ViewType, filter?: string, tab?: 'mapping' | 'shortfall') => {
-      if (currentUser && rolePermissions[currentUser.role]?.includes(view)) {
-          setActiveView(view);
-          if (filter) setActiveFilter(filter);
-          if (tab) setActiveInventoryTab(tab);
-      } else {
-          addNotification(`Access Denied.`, 'error');
-      }
+    if (currentUser && rolePermissions[currentUser.role]?.includes(view)) {
+      setActiveView(view);
+      if (filter) setActiveFilter(filter);
+      if (tab) setActiveInventoryTab(tab);
+    } else {
+      addNotification(`Access Denied.`, 'error');
+    }
   };
 
   const renderContent = () => {
     if (!currentUser) return null;
     if (isLoading && purchaseOrders.length === 0) {
-        return (
-            <div className="flex-1 flex flex-col items-center justify-center p-8">
-                <LoadingCube size="w-24 h-24" label="Solving your Dashboard..." />
-            </div>
-        );
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <LoadingCube size="w-24 h-24" label="Solving your Dashboard..." />
+        </div>
+      );
     }
 
     switch (activeView) {
-        case 'Dashboard':
-            return (
-                <div className="p-4 sm:p-6 lg:p-8 flex-1">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {summaryData.map((card, index) => (
-                            <SummaryCard key={index} {...card as any} onClick={() => handleCardClick(card.targetView as ViewType, card.targetFilter, (card as any).targetTab)} />
-                        ))}
-                    </div>
-                </div>
-            );
-        case 'Quotations':
-            return <QuotationsManager quotations={quotations} onRefresh={() => refreshData(true)} addNotification={addNotification} />;
-        case 'Purchase Orders':
-            return (
-                <div className="p-4 sm:p-6 lg:p-8 flex-1">
-                    <PoTable activeFilter={activeFilter} setActiveFilter={setActiveFilter} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} tabCounts={tabCounts} addLog={addLog} addNotification={addNotification} onSync={() => refreshData(true)} isSyncing={isLoading} channelConfigs={channelConfigs} />
-                </div>
-            );
-        case 'File Uploader':
-            return <FileUploader currentUser={currentUser} addLog={addLog} addNotification={addNotification} />;
-        case 'Inventory': return <InventoryManager addLog={addLog} inventoryItems={inventoryItems} purchaseOrders={purchaseOrders} setInventoryItems={setInventoryItems} onSync={() => refreshData(true)} isSyncing={isLoading} activeTab={activeInventoryTab} setActiveTab={setActiveInventoryTab} addNotification={addNotification} />;
-        case 'Finance': return <FinanceManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
-        case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} />;
-        case 'Reports': return <ReportsManager purchaseOrders={purchaseOrders} inventoryItems={inventoryItems} />;
-        case 'Appointments':
-            return <AppointmentManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
-        case 'Sales Orders':
-             return (
-                <div className="p-4 sm:p-6 lg:p-8 flex-1">
-                    <SalesOrderTable 
-                        activeFilter={activeFilter} 
-                        setActiveFilter={setActiveFilter} 
-                        purchaseOrders={purchaseOrders} 
-                        setPurchaseOrders={setPurchaseOrders} 
-                        tabCounts={tabCounts} 
-                        addLog={addLog} 
-                        addNotification={addNotification} 
-                        onSync={() => refreshData(true)} 
-                        isSyncing={isLoading} 
-                        inventoryItems={inventoryItems} 
-                        googleTokens={googleTokens}
-                        setGoogleTokens={setGoogleTokens}
-                    />
-                </div>
-            );
-        case 'Admin': return (
-            <AdminPanel logs={logs} users={users} setUsers={setUsers} rolePermissions={rolePermissions} setRolePermissions={() => {}} addLog={addLog} currentUser={currentUser} channelConfigs={channelConfigs} onSync={() => refreshData(true)} activeTab={adminTab} setActiveTab={setAdminTab} addNotification={addNotification} />
+      case 'Dashboard':
+        return (
+          <div className="p-4 sm:p-6 lg:p-8 flex-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {summaryData.map((card, index) => (
+                <SummaryCard key={index} {...card as any} onClick={() => handleCardClick(card.targetView as ViewType, card.targetFilter, (card as any).targetTab)} />
+              ))}
+            </div>
+          </div>
         );
-        default: return <div className="p-8 text-center text-gray-500">Section Under Construction</div>;
+      case 'Quotations':
+        return <QuotationsManager quotations={quotations} onRefresh={() => refreshData(true)} addNotification={addNotification} />;
+      case 'Purchase Orders':
+        return (
+          <div className="p-4 sm:p-6 lg:p-8 flex-1">
+            <PoTable activeFilter={activeFilter} setActiveFilter={setActiveFilter} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} tabCounts={tabCounts} addLog={addLog} addNotification={addNotification} onSync={() => refreshData(true)} isSyncing={isLoading} channelConfigs={channelConfigs} />
+          </div>
+        );
+      case 'File Uploader':
+        return <FileUploader currentUser={currentUser} addLog={addLog} addNotification={addNotification} />;
+      case 'Inventory': return <InventoryManager addLog={addLog} inventoryItems={inventoryItems} purchaseOrders={purchaseOrders} setInventoryItems={setInventoryItems} onSync={() => refreshData(true)} isSyncing={isLoading} activeTab={activeInventoryTab} setActiveTab={setActiveInventoryTab} addNotification={addNotification} />;
+      case 'Finance': return <FinanceManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
+      case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} />;
+      case 'Reports': return <ReportsManager purchaseOrders={purchaseOrders} inventoryItems={inventoryItems} />;
+      case 'Appointments':
+        return <AppointmentManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
+      case 'Sales Orders':
+        return (
+          <div className="p-4 sm:p-6 lg:p-8 flex-1">
+            <SalesOrderTable
+              activeFilter={activeFilter}
+              setActiveFilter={setActiveFilter}
+              purchaseOrders={purchaseOrders}
+              setPurchaseOrders={setPurchaseOrders}
+              tabCounts={tabCounts}
+              addLog={addLog}
+              addNotification={addNotification}
+              onSync={() => refreshData(true)}
+              isSyncing={isLoading}
+              inventoryItems={inventoryItems}
+              googleTokens={googleTokens}
+              setGoogleTokens={setGoogleTokens}
+            />
+          </div>
+        );
+      case 'Admin': return (
+        <AdminPanel logs={logs} users={users} setUsers={setUsers} rolePermissions={rolePermissions} setRolePermissions={() => { }} addLog={addLog} currentUser={currentUser} channelConfigs={channelConfigs} onSync={() => refreshData(true)} activeTab={adminTab} setActiveTab={setAdminTab} addNotification={addNotification} />
+      );
+      default: return <div className="p-8 text-center text-gray-500">Section Under Construction</div>;
     }
   };
 
@@ -343,22 +343,21 @@ const App: React.FC = () => {
 
   // Show login screen if no user
   if (!currentUser) {
-      return <Login onLoginSuccess={(user, tokens) => { 
-          setCurrentUser(user); 
-          if (tokens) setGoogleTokens(tokens);
-          addLog('Login', `User ${user.name} authenticated.`); 
-      }} />;
+    return <Login onLoginSuccess={(user, tokens) => {
+      setCurrentUser(user);
+      if (tokens) setGoogleTokens(tokens);
+      addLog('Login', `User ${user.name} authenticated.`);
+    }} />;
   }
 
   return (
     <div className="flex h-screen bg-partners-gray-bg font-sans overflow-hidden">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      
+
       {/* Sidebar Container */}
-      <div 
-        className={`fixed lg:relative inset-y-0 left-0 z-30 transition-all duration-300 ease-in-out border-r border-partners-border bg-white ${
-          isSidebarOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full'
-        }`}
+      <div
+        className={`fixed lg:relative inset-y-0 left-0 z-30 transition-all duration-300 ease-in-out border-r border-partners-border bg-white ${isSidebarOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full'
+          }`}
       >
         <div className={`w-64 h-full ${!isSidebarOpen && 'invisible'}`}>
           <Sidebar activeView={activeView} setActiveView={setActiveView} currentUser={currentUser} permissions={rolePermissions} onLogout={handleLogout} />
@@ -367,11 +366,11 @@ const App: React.FC = () => {
 
       {/* Main Content Container */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto transition-all duration-300 ease-in-out">
-        <Header 
-          notifications={notifications} 
-          onMarkRead={() => {}} 
-          onClearAll={() => {}} 
-          onViewLogs={() => { setActiveView('Admin'); setAdminTab('logs'); }} 
+        <Header
+          notifications={notifications}
+          onMarkRead={() => { }}
+          onClearAll={() => { }}
+          onViewLogs={() => { setActiveView('Admin'); setAdminTab('logs'); }}
           activeView={activeView}
           onToggleSidebar={toggleSidebar}
           onLogout={handleLogout}
