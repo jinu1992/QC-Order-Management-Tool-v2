@@ -62,7 +62,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed'>('All');
+    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO'>('All');
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -291,19 +291,23 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     // Get unique channels from ALL shipments
     const uniqueChannels = useMemo(() => Array.from(new Set(allSalesOrders.map(so => so.channel))).sort(), [allSalesOrders]);
 
-    // 2. Filter exactly like "Export CSV" feature but without the buggy channel restriction
+    // 2. Filter exactly like "Export CSV" feature
     const trackingOrders = useMemo(() => {
         const filtered = allSalesOrders.filter((so: GroupedSalesOrder) => {
             const channelLower = so.channel.toLowerCase();
-            const isAmazon = channelLower.includes('amazon');
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
+
+            if (!isAllowedChannel) return false;
+
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+
+            if (isActuallyDelivered) return false; // User requested to completely hide Delivered orders
 
             let isTargetStatus = false;
             // Identify actual shipments (including Returned/RTO)
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') {
-                isTargetStatus = true;
-            } else if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) {
                 isTargetStatus = true;
             }
 
@@ -326,14 +330,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
 
             // Apply Tab filter
-            if (activeTab === 'Today') {
-                return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered;
+            if (activeTab === 'RTO') {
+                return so.status === 'RTO Initiated' || so.status === 'Returned';
+            } else if (activeTab === 'Today') {
+                return isSameDay(so.appointmentDate, todayDate) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered;
+                return isSameDay(so.appointmentDate, tomorrowDate) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Missed') {
-                const missedAppt = isPastDate(so.appointmentDate, todayDate) && !isActuallyDelivered;
-                const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate) && !isActuallyDelivered;
-                return missedAppt || missedEdd;
+                const missedAppt = isPastDate(so.appointmentDate, todayDate);
+                const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
+                return (missedAppt || missedEdd) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+            } else if (activeTab === 'All') {
+                // If "All" is selected but the order is "Returned" or "RTO Initiated", we probably still want it to show up, 
+                // but if they strictly want Missed logic to be isolated, we are good.
             }
 
             return true;
@@ -343,6 +352,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             if (!date) return 0;
             try {
                 let d = new Date(date);
+                if (d.getFullYear() < 2000) {
+                    // Excel epoch bug usually maps to 1899. Return 0 to put it at the end.
+                    return 0;
+                }
                 if (isNaN(d.getTime())) {
                     const parts = date.split('-');
                     if (parts.length === 3) {
@@ -443,6 +456,13 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                     >
                         Missed Deliveries
                         <span className="bg-red-100 text-red-600 py-0.5 px-2 rounded-full text-xs">Action Required</span>
+                    </button>
+                    <button
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'RTO' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        onClick={() => setActiveTab('RTO')}
+                    >
+                        RTO / Returned
+                        <span className="bg-purple-100 text-purple-600 py-0.5 px-2 rounded-full text-xs">Alert</span>
                     </button>
                 </div>
 
