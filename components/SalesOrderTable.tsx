@@ -2198,16 +2198,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const handleExportInTransitCSV = () => {
         const inTransitOrders = allSalesOrders.filter(so => {
             const channelLower = so.channel.toLowerCase();
-            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
-            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
-
-            if (!isAllowedChannel) return false;
-
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
 
-            if (so.status === 'Shipped') return true;
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
         }).sort((a, b) => {
@@ -2883,17 +2878,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col gap-1">
                                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit ${so.status === 'Returned' ? 'bg-red-100 text-red-700' :
-                                                            so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
-                                                                so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' :
-                                                                    so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' :
-                                                                        so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' :
-                                                                            so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
-                                                                                so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
-                                                                                    so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
-                                                                                        so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
-                                                                                            so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
-                                                                                                so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
-                                                                                                    'bg-gray-100 text-gray-700'
+                                                        so.status === 'RTO Initiated' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                                            so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' :
+                                                                so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' :
+                                                                    so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' :
+                                                                        so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
+                                                                            so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
+                                                                                so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
+                                                                                    so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
+                                                                                        so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
+                                                                                            so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                                                                                'bg-gray-100 text-gray-700'
                                                         }`}>
                                                         {so.status}
                                                     </span>

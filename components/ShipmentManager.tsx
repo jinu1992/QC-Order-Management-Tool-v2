@@ -291,21 +291,16 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
     // Get unique channels from ALL shipments
     const uniqueChannels = useMemo(() => Array.from(new Set(allSalesOrders.map(so => so.channel))).sort(), [allSalesOrders]);
 
-    // 2. Filter exactly like "Export CSV" feature
+    // 2. Filter exactly like "Export CSV" feature but without the buggy channel restriction
     const trackingOrders = useMemo(() => {
         const filtered = allSalesOrders.filter((so: GroupedSalesOrder) => {
             const channelLower = so.channel.toLowerCase();
-            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
-            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
-
-            if (!isAllowedChannel) return false;
-
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
 
             let isTargetStatus = false;
-            // Align with Export CSV logic and what user considers 'Shipments' (including Returned/RTO)
+            // Identify actual shipments (including Returned/RTO)
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') {
                 isTargetStatus = true;
             } else if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) {
