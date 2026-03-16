@@ -1,6 +1,58 @@
 import React, { useState, useMemo } from 'react';
-import { PurchaseOrder } from '../types';
+import { PurchaseOrder, POItem } from '../types';
 import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon } from './icons/Icons';
+
+interface GroupedSalesOrder {
+    id: string; // eeReferenceCode
+    poReference: string;
+    status: string;
+    originalEeStatus: string;
+    channel: string;
+    storeCode: string;
+    orderDate: string;
+    poEdd?: string;
+    poExpiryDate?: string;
+    poPdfUrl?: string;
+    qty: number;
+    amount: number;
+    items: POItem[];
+    batchCreatedAt?: string;
+    invoiceDate?: string;
+    manifestDate?: string;
+    invoiceId?: string;
+    invoiceStatus?: string;
+    invoiceNumber?: string;
+    invoiceTotal?: number;
+    invoiceUrl?: string;
+    invoicePdfUrl?: string;
+    carrier?: string;
+    awb?: string;
+    trackingStatus?: string;
+    edd?: string;
+    latestStatus?: string;
+    latestStatusDate?: string;
+    currentLocation?: string;
+    trackingUrl?: string;
+    deliveredDate?: string;
+    rtoStatus?: string;
+    rtoAwb?: string;
+    boxCount: number;
+    appointmentDate?: string;
+    appointmentRequestDate?: string;
+    appointmentRequestId?: string;
+    appointmentRequestTimestamp?: string;
+    appointmentId?: string;
+    appointmentTime?: string;
+    appointmentRemarks?: string;
+    qrCodeUrl?: string;
+    ewb?: string;
+    fbaShipmentId?: string;
+    shippingCharge?: number;
+    eeCustomerId?: string;
+    consignmentQty?: number;
+    consignmentProducts?: number;
+    consignmentValue?: string;
+}
 
 interface ShipmentManagerProps {
     purchaseOrders: PurchaseOrder[];
@@ -19,15 +71,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         return d;
     }, []);
 
-    // Get unique channels for filter dropdown
-    const uniqueChannels = useMemo(() => {
-        const channels = new Set<string>();
-        purchaseOrders.forEach((po: PurchaseOrder) => {
-            if (po.channel) channels.add(po.channel);
-        });
-        return Array.from(channels).sort();
-    }, [purchaseOrders]);
-
     const isSameDay = (dateStr: string | undefined, targetDate: Date) => {
         if (!dateStr) return false;
         const d = new Date(dateStr);
@@ -39,67 +82,242 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         if (!dateStr) return false;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return false;
-        // Strip time for strict day comparison
         const d1 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const compare = new Date(compareDate.getFullYear(), compareDate.getMonth(), compareDate.getDate());
         return d1 < compare;
     };
 
-    // Filter POs
+    // 1. Group the raw purchaseOrders to match SalesOrderTable logic
+    const allSalesOrders = useMemo(() => {
+        const groups: Record<string, GroupedSalesOrder> = {};
+
+        purchaseOrders.forEach(po => {
+            (po.items || []).forEach(item => {
+                const rawRef = item.eeReferenceCode;
+                if (!rawRef || String(rawRef).trim() === "") return;
+                const refCode = String(rawRef).trim();
+
+                const effectiveQty = item.shippedQuantity || 0;
+                const effectiveLineAmount = effectiveQty * (item.unitCost || 0);
+
+                const eeBoxCount = Number(item.eeBoxCount || 0);
+                const carrier = item.carrier || po.carrier;
+                const awb = item.awb || po.awb;
+                const trackingStatus = item.trackingStatus || po.trackingStatus;
+                const trackingUrl = item.trackingUrl || po.trackingUrl;
+
+                const batchDate = item.eeBatchCreatedAt || po.eeBatchCreatedAt;
+                const invNum = item.invoiceNumber;
+                const hasInvoice = !!invNum && invNum !== 'GENERATING...';
+
+                const isAmazon = po.channel.toLowerCase().includes('amazon');
+                const isAmazonFbaYeio = (po.channel.toLowerCase().includes('amazon_fba') || po.channel.toLowerCase().includes('amazon fba')) &&
+                    (po.storeCode.toUpperCase() === 'YEIO');
+                const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
+
+                const maniDate = item.eeManifestDate || po.eeManifestDate;
+                const eeStatus = (item.eeOrderStatus || po.eeOrderStatus || 'Processing').trim();
+                const eeStatusLower = eeStatus.toLowerCase();
+
+                const effectiveOrderDate = item.eeOrderDate || po.eeOrderDate || 'N/A';
+
+                let displayStatus = 'Processing';
+
+                const trackingStatusLower = (trackingStatus || '').toLowerCase();
+                const isOutOfDelivery = trackingStatusLower === 'out for delivery';
+                const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!item.deliveredDate || !!po.deliveredDate);
+                const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
+
+                const rtoStatus = item.rtoStatus || po.rtoStatus;
+                const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
+
+                if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+                else if (isRTOInitiated) displayStatus = 'RTO Initiated';
+                else if (rtoStatus) displayStatus = 'Returned';
+                else if (eeStatusLower === 'closed') displayStatus = 'Closed';
+                else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
+                else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
+                    displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
+                }
+                else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
+                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced';
+                else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
+                else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
+
+                const isZepto = po.channel.toLowerCase().includes('zepto');
+
+                const apptDate = item.appointmentDate || po.appointmentDate;
+                const apptId = item.appointmentId || po.appointmentId;
+                const apptReqId = item.appointmentRequestId || po.appointmentRequestId;
+                const apptReqDate = item.appointmentRequestDate || po.appointmentRequestDate;
+                const apptReqTimestamp = item.appointmentRequestTimestamp || po.appointmentRequestTimestamp;
+
+                if (isZepto && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId) {
+                    } else if (apptDate) {
+                        displayStatus = 'Create ASN';
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
+                const isInstamart = po.channel.toLowerCase().includes('instamart');
+                if (isInstamart && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId || apptDate) {
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
+                const isBB = po.channel.toLowerCase().includes('bb');
+                if (isBB && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId || apptDate) {
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
+                if (!groups[refCode]) {
+                    groups[refCode] = {
+                        id: refCode,
+                        poReference: String(po.id || ''),
+                        status: displayStatus,
+                        originalEeStatus: eeStatus,
+                        channel: po.channel,
+                        storeCode: po.storeCode,
+                        orderDate: effectiveOrderDate,
+                        poEdd: po.poEdd,
+                        poExpiryDate: po.poExpiryDate,
+                        poPdfUrl: po.poPdfUrl,
+                        qty: 0,
+                        amount: 0,
+                        items: [],
+                        batchCreatedAt: batchDate,
+                        invoiceDate: item.invoiceDate,
+                        manifestDate: maniDate,
+                        invoiceId: item.invoiceId,
+                        invoiceStatus: item.invoiceStatus,
+                        invoiceNumber: invNum,
+                        invoiceTotal: item.invoiceTotal,
+                        invoiceUrl: item.invoiceUrl,
+                        invoicePdfUrl: item.invoicePdfUrl,
+                        carrier: carrier,
+                        awb: awb,
+                        trackingStatus: trackingStatus,
+                        trackingUrl: trackingUrl,
+                        edd: item.edd || po.edd,
+                        latestStatus: item.latestStatus || po.latestStatus,
+                        latestStatusDate: item.latestStatusDate || po.latestStatusDate,
+                        currentLocation: item.currentLocation || po.currentLocation,
+                        deliveredDate: item.deliveredDate || po.deliveredDate,
+                        rtoStatus: item.rtoStatus || po.rtoStatus,
+                        rtoAwb: item.rtoAwb || po.rtoAwb,
+                        boxCount: eeBoxCount,
+                        appointmentDate: item.appointmentDate || po.appointmentDate,
+                        appointmentRequestDate: item.appointmentRequestDate || po.appointmentRequestDate,
+                        appointmentRequestId: item.appointmentRequestId || po.appointmentRequestId,
+                        appointmentRequestTimestamp: item.appointmentRequestTimestamp || po.appointmentRequestTimestamp,
+                        appointmentId: item.appointmentId || po.appointmentId,
+                        appointmentTime: po.appointmentTime,
+                        appointmentRemarks: po.appointmentRemarks,
+                        qrCodeUrl: po.qrCodeUrl,
+                        ewb: item.ewb || po.ewb,
+                        fbaShipmentId: item.fbaShipmentId || po.fbaShipmentId,
+                        shippingCharge: po.shippingCharge,
+                        eeCustomerId: po.eeCustomerId,
+                        consignmentQty: po.consignmentQty,
+                        consignmentProducts: po.consignmentProducts,
+                        consignmentValue: po.consignmentValue
+                    };
+                } else {
+                    const curPo = String(po.id || '');
+                    if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
+                    const statusRank = (s: string) => {
+                        if (s === 'Returned') return 13;
+                        if (s === 'RTO Initiated') return 12;
+                        if (s === 'Closed') return 11;
+                        if (s === 'Delivered') return 10;
+                        if (s === 'Shipped') return 9;
+                        if (s === 'Label Generated') return 8;
+                        if (s === 'Create ASN') return 7;
+                        if (s === 'Awaiting Appointment Confirmation') return 6;
+                        if (s === 'Invoiced') return 4;
+                        if (s === 'Batch Created') return 3;
+                        if (s === 'Confirmed') return 2;
+                        return 1;
+                    };
+                    if (statusRank(displayStatus) > statusRank(groups[refCode].status)) groups[refCode].status = displayStatus;
+                    if (groups[refCode].orderDate === 'N/A' && effectiveOrderDate !== 'N/A') groups[refCode].orderDate = effectiveOrderDate;
+                    if (!groups[refCode].batchCreatedAt) groups[refCode].batchCreatedAt = batchDate;
+                    if (!groups[refCode].invoiceDate) groups[refCode].invoiceDate = item.invoiceDate;
+                    if (!groups[refCode].manifestDate) groups[refCode].manifestDate = maniDate;
+                    if (!groups[refCode].invoiceNumber) groups[refCode].invoiceNumber = invNum;
+
+                    groups[refCode].boxCount = eeBoxCount;
+
+                    if (!groups[refCode].awb && awb) groups[refCode].awb = awb;
+                    if (!groups[refCode].trackingStatus && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
+                    if (!groups[refCode].trackingUrl && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
+                    if (!groups[refCode].ewb) groups[refCode].ewb = item.ewb || po.ewb;
+                    if (!groups[refCode].fbaShipmentId) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
+                    if (!groups[refCode].appointmentId) groups[refCode].appointmentId = po.appointmentId;
+                    if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
+                    if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
+                    if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
+                }
+                groups[refCode].items.push(item);
+                groups[refCode].qty += effectiveQty;
+                groups[refCode].amount += effectiveLineAmount;
+            });
+        });
+
+        const results = Object.values(groups);
+
+        results.forEach(so => {
+            const hasInvoice = !!so.invoiceNumber && so.invoiceNumber !== 'GENERATING...';
+            const progressRequiringInvoice = ['Label Generated', 'Shipped', 'Delivered'].includes(so.status);
+
+            const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
+                (so.storeCode.toUpperCase() === 'YEIO');
+
+            if (!hasInvoice && progressRequiringInvoice && !isAmazonFbaYeio) {
+                so.status = 'Batch Created';
+            }
+        });
+
+        return results;
+    }, [purchaseOrders]);
+
+    // Get unique channels from ALL shipments
+    const uniqueChannels = useMemo(() => Array.from(new Set(allSalesOrders.map(so => so.channel))).sort(), [allSalesOrders]);
+
+    // 2. Filter exactly like "Export CSV" feature
     const trackingOrders = useMemo(() => {
-        const filtered = purchaseOrders.filter((po: PurchaseOrder) => {
-            const channelLower = (po.channel || '').toLowerCase();
+        const filtered = allSalesOrders.filter((so: GroupedSalesOrder) => {
+            const channelLower = so.channel.toLowerCase();
             const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
 
             if (!isAllowedChannel) return false;
 
             const isAmazon = channelLower.includes('amazon');
+            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
 
-            const trackingStatusLower = (po.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!po.deliveredDate);
-
-            // Allow only specific statuses by simulating the SalesOrderTable logic
-            const currentStatusRaw = String(po.status || '');
-            const eeStatusLower = (po.eeOrderStatus || currentStatusRaw || 'Processing').toLowerCase().trim();
-            const maniDate = po.eeManifestDate || (po as any).manifestDate;
-            const rtoStatus = po.rtoStatus;
-            const isOutOfDelivery = trackingStatusLower === 'out for delivery';
-            const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
-
-            let displayStatus = currentStatusRaw;
-            // invoiceNumber may not technically be on PurchaseOrder directly in types, but checking it or its items
-            const invoiceNumber = (po as any).invoiceNumber || po.items?.find((item: any) => item.invoiceNumber)?.invoiceNumber;
-            const hasInvoice = !!invoiceNumber && invoiceNumber !== 'GENERATING...';
-            const isAmazonFbaYeio = (po.channel?.toLowerCase().includes('amazon_fba') || po.channel?.toLowerCase().includes('amazon fba')) &&
-                (po.storeCode?.toUpperCase() === 'YEIO');
-            const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
-
-            if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
-            else if (eeStatusLower === 'shipped' && rtoStatus) displayStatus = 'RTO Initiated';
-            else if (rtoStatus) displayStatus = 'Returned';
-            else if (eeStatusLower === 'closed') displayStatus = 'Closed';
-            else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
-            else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
-                displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
+            let isTargetStatus = false;
+            // Align with Export CSV logic and what user considers 'Shipments' (including Returned/RTO)
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') {
+                isTargetStatus = true;
+            } else if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) {
+                isTargetStatus = true;
             }
-            else if (po.awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
 
-            const isTargetStatus = displayStatus === 'Shipped' || displayStatus === 'RTO Initiated' || displayStatus === 'Returned';
-
-            if (!isTargetStatus) {
-                // If it's Amazon, 'Delivered' is allowed ONLY if not *actually* delivered yet
-                const isAmazonDelivered = isAmazon && displayStatus === 'Delivered' && !isActuallyDelivered;
-
-                if (!isAmazonDelivered) {
-                    return false;
-                }
-            }
+            if (!isTargetStatus) return false;
 
             // Apply search filters
-            const safePoNumber = po.poNumber || '';
-            const safeChannel = po.channel || '';
-            const safeAwb = po.awb || '';
+            const safePoNumber = so.poReference || '';
+            const safeChannel = so.channel || '';
+            const safeAwb = so.awb || '';
 
             const matchesSearch = searchTerm === '' ||
                 safePoNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -108,42 +326,73 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
             const matchesAwb = awbSearch === '' ||
                 safeAwb.toLowerCase().includes(awbSearch.toLowerCase());
 
-            const matchesChannel = channelFilter === '' || po.channel === channelFilter;
+            const matchesChannel = channelFilter === '' || so.channel === channelFilter;
 
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
-            // Determine delivered status
-            const currentTrackingStatusLower = (po.trackingStatus || '').toLowerCase();
-            const currentIsActuallyDelivered = (currentTrackingStatusLower === 'delivered' || currentTrackingStatusLower === 'successfully delivered' || !!po.deliveredDate || po.status === 'Delivered');
 
             // Apply Tab filter
             if (activeTab === 'Today') {
-                return isSameDay(po.appointmentDate, todayDate) && !currentIsActuallyDelivered;
+                return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered;
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(po.appointmentDate, tomorrowDate) && !currentIsActuallyDelivered;
+                return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered;
             } else if (activeTab === 'Missed') {
-                // Missed delivery implies appointment date has passed but not delivered
-                const missedAppt = isPastDate(po.appointmentDate, todayDate) && !currentIsActuallyDelivered;
-                const missedEdd = !po.appointmentDate && isPastDate(po.edd, todayDate) && !currentIsActuallyDelivered;
+                const missedAppt = isPastDate(so.appointmentDate, todayDate) && !isActuallyDelivered;
+                const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate) && !isActuallyDelivered;
                 return missedAppt || missedEdd;
             }
 
             return true;
         });
 
-        // ASCEND order of appointment date
-        filtered.sort((a: PurchaseOrder, b: PurchaseOrder) => {
-            const hasApptA = !!a.appointmentDate;
-            const hasApptB = !!b.appointmentDate;
-
-            if (hasApptA && hasApptB) {
-                const dateA = new Date(a.appointmentDate!).getTime();
-                const dateB = new Date(b.appointmentDate!).getTime();
-                if (!isNaN(dateA) && !isNaN(dateB)) {
-                    return dateA - dateB; // Ascending
+        const parseAppointmentDateTime = (date?: string, time?: string) => {
+            if (!date) return 0;
+            try {
+                let d = new Date(date);
+                if (isNaN(d.getTime())) {
+                    const parts = date.split('-');
+                    if (parts.length === 3) {
+                        if (parts[2].length === 4) {
+                            d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                        } else {
+                            d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                        }
+                    }
                 }
+
+                if (time && !isNaN(d.getTime())) {
+                    const timeStr = String(time).trim();
+                    const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
+                    if (ampmMatch) {
+                        let hours = parseInt(ampmMatch[1], 10);
+                        const minutes = parseInt(ampmMatch[2], 10);
+                        const ampm = ampmMatch[3].toUpperCase();
+                        if (ampm === 'PM' && hours < 12) hours += 12;
+                        if (ampm === 'AM' && hours === 12) hours = 0;
+                        d.setHours(hours, minutes, 0, 0);
+                    } else if (timeStr.includes('T')) {
+                        const t = new Date(timeStr);
+                        d.setHours(t.getHours(), t.getMinutes(), t.getSeconds());
+                    } else {
+                        const parts = timeStr.match(/(\d{1,2}):(\d{1,2})/);
+                        if (parts) {
+                            d.setHours(parseInt(parts[1]), parseInt(parts[2]), 0, 0);
+                        }
+                    }
+                }
+                return d.getTime();
+            } catch (e) {
+                return 0;
             }
-            if (hasApptA && !hasApptB) return -1;
-            if (!hasApptA && hasApptB) return 1;
+        };
+
+        // ASCEND order of appointment date
+        filtered.sort((a, b) => {
+            const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
+            const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
+
+            if (timeA > 0 && timeB > 0) return timeA - timeB; // Ascending
+            if (timeA > 0) return -1;
+            if (timeB > 0) return 1;
 
             const fallbackA = new Date(a.edd || a.orderDate || 0).getTime();
             const fallbackB = new Date(b.edd || b.orderDate || 0).getTime();
@@ -151,15 +400,15 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         });
 
         return filtered;
-    }, [purchaseOrders, searchTerm, awbSearch, channelFilter, activeTab, todayDate, tomorrowDate]);
+    }, [allSalesOrders, searchTerm, awbSearch, channelFilter, activeTab, todayDate, tomorrowDate]);
 
-    const getStatusBadge = (so: PurchaseOrder) => {
+    const getStatusBadge = (so: GroupedSalesOrder) => {
         const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
         const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
         const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered;
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-        if ((so.status as unknown as string) === 'RTO Initiated' || (so.status as unknown as string) === 'Returned' || (so.status as unknown as string) === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        if (so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
         if (isMissed) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> Missed</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1 w-fit"><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
@@ -171,8 +420,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         <div className="flex-1 flex flex-col min-h-0 bg-gray-50">
             {/* Header & Filters */}
             <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
-                {/* Header title removed to avoid duplication with App.tsx */}
-
                 {/* Priority Tabs */}
                 <div className="flex space-x-4 mb-4 border-b border-gray-200 pb-2 overflow-x-auto">
                     <button
@@ -262,7 +509,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {trackingOrders.length > 0 ? trackingOrders.map((so: PurchaseOrder) => {
+                            {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
                                 const isToday = isSameDay(so.appointmentDate, todayDate);
                                 const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
                                 const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate);
@@ -291,15 +538,15 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
 
                                         {/* PO Details */}
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="font-medium text-gray-900">{so.poNumber}</div>
+                                            <div className="font-medium text-gray-900">{so.poReference}</div>
                                             <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
                                             {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
                                         </td>
 
                                         {/* Quantities */}
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxes || so.eeReferenceBoxCount || '-'}</span></div>
-                                            <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.items?.reduce((acc: number, item: any) => acc + (item.shippedQuantity || 0), 0) || '-'}</span></div>
+                                            <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxCount || '-'}</span></div>
+                                            <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.qty || '-'}</span></div>
                                         </td>
 
                                         {/* Tracking Details */}
