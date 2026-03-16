@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { PurchaseOrder, POItem } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon } from './icons/Icons';
+import React, { useState, useMemo, useCallback } from 'react';
+import { PurchaseOrder, POItem, User } from '../types';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon } from './icons/Icons';
 
 interface GroupedSalesOrder {
     id: string; // eeReferenceCode
@@ -56,9 +56,33 @@ interface GroupedSalesOrder {
 
 interface ShipmentManagerProps {
     purchaseOrders: PurchaseOrder[];
+    currentUser?: User | null;
 }
 
-const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => {
+// Helper to safely format dates and suppress the 1899 Excel epoch bug
+const formatSafeDate = (dateStr?: string): string => {
+    if (!dateStr) return '';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+        return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch { return ''; }
+};
+
+const formatSafeTime = (timeStr?: string): string => {
+    if (!timeStr) return '';
+    // If it looks like an ISO string with 1899, suppress it
+    if (timeStr.includes('1899')) return '';
+    // If it's already a short time like "10:30 AM", return as-is
+    if (/^\d{1,2}:\d{2}/.test(timeStr) && !timeStr.includes('T')) return timeStr;
+    try {
+        const d = new Date(timeStr);
+        if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+        return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch { return ''; }
+};
+
+const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
@@ -424,6 +448,70 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
         return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 w-fit">{so.status || 'Pending'}</span>;
     };
 
+    // WhatsApp share handler
+    const handleWhatsAppShare = useCallback(() => {
+        const today = new Date();
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        const todayStr = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+        // We need to categorize from the full unfiltered list (before tab filter)
+        const baseOrders = allSalesOrders.filter((so: GroupedSalesOrder) => {
+            const channelLower = so.channel.toLowerCase();
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
+            if (!isAllowedChannel) return false;
+            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+            if (isActuallyDelivered) return false;
+            if (so.status === 'RTO Initiated' || so.status === 'Returned') return false;
+            return so.status === 'Shipped';
+        });
+
+        const missedOrders = baseOrders.filter(so => isPastDate(so.appointmentDate || so.edd, today));
+        const todayOrders = baseOrders.filter(so => isSameDay(so.appointmentDate, today));
+        const tomorrowOrders = baseOrders.filter(so => isSameDay(so.appointmentDate, tomorrow));
+
+        const formatLine = (so: GroupedSalesOrder) => {
+            const awb = so.awb || 'N/A';
+            const apptDate = formatSafeDate(so.appointmentDate) || formatSafeDate(so.edd) || 'N/A';
+            const apptTime = formatSafeTime(so.appointmentTime) || '';
+            return `${awb} | ${apptDate}${apptTime ? ' ' + apptTime : ''}`;
+        };
+
+        let message = `📋 *Appointment Schedule Summary*\n📅 Date: ${todayStr}\n\n`;
+
+        message += `🔴 *Missed Appointments (${missedOrders.length})*\n`;
+        if (missedOrders.length > 0) {
+            missedOrders.forEach(so => { message += formatLine(so) + '\n'; });
+        } else {
+            message += '_None_\n';
+        }
+
+        message += `\n🟠 *Today's Appointments (${todayOrders.length})*\n`;
+        if (todayOrders.length > 0) {
+            todayOrders.forEach(so => { message += formatLine(so) + '\n'; });
+        } else {
+            message += '_None_\n';
+        }
+
+        message += `\n🔵 *Tomorrow's Appointments (${tomorrowOrders.length})*\n`;
+        if (tomorrowOrders.length > 0) {
+            tomorrowOrders.forEach(so => { message += formatLine(so) + '\n'; });
+        } else {
+            message += '_None_\n';
+        }
+
+        // Build WhatsApp Web URL — pre-fill the logged-in user's contact number if available
+        const phone = currentUser?.contactNumber ? currentUser.contactNumber.replace(/[^0-9]/g, '') : '';
+        const encodedMessage = encodeURIComponent(message);
+        const waUrl = phone
+            ? `https://web.whatsapp.com/send?phone=${phone}&text=${encodedMessage}`
+            : `https://web.whatsapp.com/send?text=${encodedMessage}`;
+        window.open(waUrl, '_blank');
+    }, [allSalesOrders, currentUser]);
+
     return (
         <div className="flex-1 flex flex-col min-h-0 bg-gray-50">
             {/* Header & Filters */}
@@ -506,6 +594,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                             onChange={(e) => setAwbSearch(e.target.value)}
                         />
                     </div>
+                    <button
+                        onClick={handleWhatsAppShare}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm whitespace-nowrap"
+                        title="Share appointment summary on WhatsApp"
+                    >
+                        <ChatIcon className="h-4 w-4" />
+                        Share on WhatsApp
+                    </button>
                 </div>
             </div>
 
@@ -609,8 +705,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders }) => 
                                             <div className="font-medium text-gray-900 mt-0.5">
                                                 {so.appointmentDate ? (
                                                     <div className="flex flex-col">
-                                                        <span>{so.appointmentDate}</span>
-                                                        <span className="text-xs text-gray-600 font-normal">{so.appointmentTime || ''}</span>
+                                                        <span>{formatSafeDate(so.appointmentDate) || so.appointmentDate}</span>
+                                                        <span className="text-xs text-gray-600 font-normal">{formatSafeTime(so.appointmentTime)}</span>
                                                     </div>
                                                 ) : (
                                                     <span className="text-gray-400 italic font-normal">Pending Appt</span>
