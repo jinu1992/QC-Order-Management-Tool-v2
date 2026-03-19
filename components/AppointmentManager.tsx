@@ -59,7 +59,7 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                     qty: p.qty,
                     boxes: p.boxes,
                     dispatchDate: p.dispatchDate || p.eeManifestDate || 'N/A',
-                    trackingUrl: p.trackingUrl || `https://nimbuspost.com/track?awb=${p.awb}`, // Default to Nimbus for legacy support
+                    trackingUrl: p.trackingUrl || `https://nimbuspost.com/track?awb=${p.awb}`, // Default tracking URL for legacy support
                     trackingStatus: p.latestTrackingStatus || p.trackingStatus || 'In-Transit',
                     requestedDate: p.requestedDate
                 })),
@@ -541,8 +541,8 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                                                         <button
                                                             onClick={() => handleSchedule(po)}
                                                             className={`px-6 py-1.5 border font-bold text-[11px] rounded transition-all active:scale-95 ${isBlinkit ? 'bg-yellow-50 border-yellow-400 text-yellow-700 hover:bg-yellow-400 hover:text-white' :
-                                                                    isZepto ? 'bg-purple-50 border-purple-400 text-purple-700 hover:bg-purple-600 hover:text-white' :
-                                                                        'border-partners-green text-partners-green hover:bg-partners-green hover:text-white'
+                                                                isZepto ? 'bg-purple-50 border-purple-400 text-purple-700 hover:bg-purple-600 hover:text-white' :
+                                                                    'border-partners-green text-partners-green hover:bg-partners-green hover:text-white'
                                                                 }`}
                                                         >
                                                             {isPortalHelperChannel ? 'Open Helper' : 'Schedule'}
