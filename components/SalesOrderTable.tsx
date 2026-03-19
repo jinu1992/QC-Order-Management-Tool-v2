@@ -31,7 +31,7 @@ import {
     DownloadIcon,
     UploadIcon
 } from './icons/Icons';
-import { createZohoInvoice, pushToNimbusPost, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -658,7 +658,7 @@ const ShippingConfirmationModal: FC<{ so: GroupedSalesOrder, onConfirm: () => vo
                         <div className="bg-amber-100 p-2.5 rounded-xl h-fit shadow-sm"><PrinterIcon className="h-6 w-6 text-amber-600" /></div>
                         <div>
                             <p className="text-sm font-bold text-amber-900">Are the labels pasted on boxes?</p>
-                            <p className="text-xs text-amber-700 mt-1.5 leading-relaxed">For Instamart fulfillment, labels must be physically pasted on all <span className="font-bold text-amber-900 underline">{so.boxCount} boxes</span> before triggering Nimbus shipment.</p>
+                            <p className="text-xs text-amber-700 mt-1.5 leading-relaxed">For Instamart fulfillment, labels must be physically pasted on all <span className="font-bold text-amber-900 underline">{so.boxCount} boxes</span> before triggering shipping.</p>
                         </div>
                     </div>
                     <div className="flex flex-col gap-3">
@@ -965,7 +965,7 @@ const InstamartAppointmentModal: FC<{
                     <div className={`${brandBg} border ${brandBorder} p-4 rounded-2xl flex gap-3`}>
                         <div className={`${isZepto ? 'bg-purple-200' : isBB ? 'bg-green-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}><QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : isBB ? 'text-green-700' : 'text-orange-700'}`} /></div>
                         <p className={`text-[11px] ${isZepto ? 'text-purple-800' : isBB ? 'text-green-800' : 'text-orange-800'} font-medium leading-relaxed`}>
-                            Once updated, the order will be ready for <span className="font-bold">Nimbus Post</span> shipping or final processing.
+                            Once updated, the order will be ready for <span className="font-bold text-blue-800">Shipping Partner</span> handover or final processing.
                         </p>
                     </div>
                 </div>
@@ -2408,13 +2408,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }));
 
         try {
-            const res = await pushToNimbusPost(eeRef);
+            const res = await pushToShippingPartner(eeRef);
             if (res.status === 'success') {
-                addNotification(res.message || 'Pushed to Nimbus successfully.', 'success');
-                addLog('Nimbus Shipping', `EE Ref: ${eeRef}`);
+                addNotification(res.message || 'Push to shipping partner successful.', 'success');
+                addLog('Logistics Push', `EE Ref: ${eeRef}`);
                 await refreshSingleSOState(poRef);
             } else {
-                addNotification('Shipping Error: ' + (res.message || 'Failed to push to Nimbus.'), 'error');
+                addNotification('Shipping Error: ' + (res.message || 'Failed to push to shipping partner.'), 'error');
                 setPurchaseOrders(prev => prev.map(po => {
                     if (parentPoNumbers.includes(po.poNumber)) {
                         return {
@@ -2568,7 +2568,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 return {
                     label: 'FBA Handled',
                     color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
-                    onClick: () => addNotification('Amazon FBA orders are fulfilled by Amazon, not Nimbus.', 'info'),
+                    onClick: () => addNotification('Amazon FBA orders are fulfilled by Amazon, not our shipping partners.', 'info'),
                     disabled: true
                 };
             }
@@ -2603,7 +2603,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             }
 
             return {
-                label: isPushingNimbus === so.id ? 'Shipping...' : 'Ship Nimbus',
+                label: isPushingNimbus === so.id ? 'Shipping...' : 'Ship Order',
                 color: 'bg-blue-600 text-white hover:bg-blue-700',
                 onClick: () => {
                     if (isInstamart) {
@@ -3188,7 +3188,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                 className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {isPushingNimbus === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {(so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) ? 'FBA Fulfillment' : (isPushingNimbus === so.id ? 'Shipping...' : ((so.boxCount === 0 && !isFlipkart) ? 'Box Data Pending' : 'Ship with Nimbus Post'))}
+                                                                                {(so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) ? 'FBA Fulfillment' : (isPushingNimbus === so.id ? 'Shipping...' : ((so.boxCount === 0 && !isFlipkart) ? 'Box Data Pending' : 'Ship with Partner'))}
                                                                             </button>
                                                                             {((so.invoiceTotal || 0) >= 50000 && !so.ewb) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
@@ -3229,7 +3229,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
                                                                     <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Exp Delivery Date</p><p className="text-sm font-bold text-partners-green">{so.edd || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
                                                                     <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
-                                                                </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Nimbus' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
+                                                                </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div\>}
                                                             </div>
                                                             {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || so.channel.toLowerCase().includes('flipkart')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
                                                                 <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>

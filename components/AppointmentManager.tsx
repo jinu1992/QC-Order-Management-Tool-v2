@@ -1,17 +1,17 @@
 import React, { useState, useMemo, useEffect, FC } from 'react';
 import { PurchaseOrder, POStatus, StorePocMapping, ChannelConfig } from '../types';
-import { 
-    CalendarIcon, 
-    MailIcon, 
-    CheckCircleIcon, 
-    XCircleIcon, 
-    ExternalLinkIcon, 
-    RefreshIcon, 
-    InfoIcon, 
-    TruckIcon, 
-    ClipboardListIcon, 
-    InvoiceIcon, 
-    GlobeIcon, 
+import {
+    CalendarIcon,
+    MailIcon,
+    CheckCircleIcon,
+    XCircleIcon,
+    ExternalLinkIcon,
+    RefreshIcon,
+    InfoIcon,
+    TruckIcon,
+    ClipboardListIcon,
+    InvoiceIcon,
+    GlobeIcon,
     CurrencyIcon,
     SearchIcon,
     FilterIcon,
@@ -59,7 +59,7 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                     qty: p.qty,
                     boxes: p.boxes,
                     dispatchDate: p.dispatchDate || p.eeManifestDate || 'N/A',
-                    trackingUrl: p.trackingUrl || `https://nimbuspost.com/track?awb=${p.awb}`,
+                    trackingUrl: p.trackingUrl || `https://nimbuspost.com/track?awb=${p.awb}`, // Default to Nimbus for legacy support
                     trackingStatus: p.latestTrackingStatus || p.trackingStatus || 'In-Transit',
                     requestedDate: p.requestedDate
                 })),
@@ -91,9 +91,9 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                         <h3 className="text-xl font-bold text-gray-800">Bulk Appointment Request: {channel}</h3>
                         <p className="text-xs text-gray-500 mt-1">To: <span className="font-bold text-partners-green">{channelConfig?.appointmentTo || 'MISSING RECIPIENT'}</span></p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
                 </div>
-                
+
                 <div className="p-6 overflow-y-auto bg-gray-50 flex-1">
                     <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
                         <table className="w-full text-xs text-left">
@@ -114,8 +114,8 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                                         <td className="px-4 py-3">{po.storeCode}</td>
                                         <td className="px-4 py-3 text-right font-bold">{po.qty}</td>
                                         <td className="px-4 py-3">
-                                            <input 
-                                                type="number" 
+                                            <input
+                                                type="number"
                                                 className="w-full p-1.5 border rounded text-right"
                                                 value={po.boxes}
                                                 onChange={e => {
@@ -127,8 +127,8 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                                         </td>
                                         <td className="px-4 py-3 text-gray-500">{po.dispatchDate || po.eeManifestDate || 'N/A'}</td>
                                         <td className="px-4 py-3">
-                                            <input 
-                                                type="date" 
+                                            <input
+                                                type="date"
                                                 className="w-full p-1.5 border rounded"
                                                 value={po.requestedDate}
                                                 onChange={e => {
@@ -143,7 +143,7 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                             </tbody>
                         </table>
                     </div>
-                    
+
                     <div className="mt-6 p-4 bg-blue-50 border border-blue-100 rounded-xl">
                         <p className="text-xs font-bold text-blue-700 uppercase mb-2">Email Preview Subject</p>
                         <p className="text-sm text-gray-700 bg-white p-2 rounded border font-medium">
@@ -155,7 +155,7 @@ const BulkEmailModal: FC<BulkAppointmentModalProps> = ({ channel, pos, channelCo
                 <div className="px-6 py-4 bg-white border-t border-gray-100 flex justify-end gap-3 sticky bottom-0 z-10">
                     <button onClick={onClose} className="px-6 py-2.5 text-sm font-bold text-gray-500 bg-white border border-gray-300 rounded-xl hover:bg-gray-100 transition-colors">Cancel</button>
                     <button onClick={handleSend} disabled={isLoading} className="px-8 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-all flex items-center gap-2 shadow-lg shadow-blue-100 disabled:opacity-50">
-                        {isLoading ? <RefreshIcon className="h-4 w-4 animate-spin"/> : <MailIcon className="h-4 w-4"/>}
+                        {isLoading ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <MailIcon className="h-4 w-4" />}
                         {isLoading ? 'Sending Request...' : `Send Request for ${pos.length} POs`}
                     </button>
                 </div>
@@ -195,8 +195,8 @@ const PortalHelperModal: FC<{ po: PurchaseOrder, onClose: () => void }> = ({ po,
                     </div>
                     <div className="flex items-center gap-2">
                         {isBlinkit && (
-                            <button 
-                                onClick={() => setShowHelp(!showHelp)} 
+                            <button
+                                onClick={() => setShowHelp(!showHelp)}
                                 className={`p-2 rounded-full transition-all flex items-center gap-1.5 text-xs font-bold ${showHelp ? 'bg-partners-green text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                                 title="Blinkit Portal Instructions"
                             >
@@ -204,7 +204,7 @@ const PortalHelperModal: FC<{ po: PurchaseOrder, onClose: () => void }> = ({ po,
                                 <span className="hidden sm:inline">{showHelp ? 'Hide Guide' : 'How to Schedule?'}</span>
                             </button>
                         )}
-                        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400"/></button>
+                        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
                     </div>
                 </div>
 
@@ -234,7 +234,7 @@ const PortalHelperModal: FC<{ po: PurchaseOrder, onClose: () => void }> = ({ po,
                     )}
 
                     {!showHelp && (
-                         <div className="bg-partners-light-green border-2 border-dashed border-partners-green/30 p-4 rounded-2xl flex gap-4 items-center shadow-sm">
+                        <div className="bg-partners-light-green border-2 border-dashed border-partners-green/30 p-4 rounded-2xl flex gap-4 items-center shadow-sm">
                             <div className="bg-partners-green p-2 rounded-lg text-white shadow-sm shadow-green-100"><CalendarIcon className="h-5 w-5" /></div>
                             <div className="flex-1">
                                 <p className="text-sm font-bold text-partners-green">Ready for Scheduling</p>
@@ -247,19 +247,19 @@ const PortalHelperModal: FC<{ po: PurchaseOrder, onClose: () => void }> = ({ po,
                     )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <CopyField label="PO Number" value={po.poNumber} icon={<ClipboardListIcon className="h-3 w-3"/>} />
-                        <CopyField label="Fulfilled Quantity" value={String(po.qty)} icon={<CubeIcon className="h-3 w-3"/>} />
-                        <CopyField label="Courier Name" value={po.carrier || 'Standard'} icon={<TruckIcon className="h-3 w-3"/>} />
-                        <CopyField label="AWB Number" value={po.awb || 'N/A'} icon={<GlobeIcon className="h-3 w-3"/>} />
-                        <CopyField label="Invoice Number" value={invoiceNumber} icon={<InvoiceIcon className="h-3 w-3"/>} />
-                        <CopyField label="Total Amount (Inc. Tax)" value={`₹${amountWithTax}`} icon={<CurrencyIcon className="h-3 w-3"/>} />
+                        <CopyField label="PO Number" value={po.poNumber} icon={<ClipboardListIcon className="h-3 w-3" />} />
+                        <CopyField label="Fulfilled Quantity" value={String(po.qty)} icon={<CubeIcon className="h-3 w-3" />} />
+                        <CopyField label="Courier Name" value={po.carrier || 'Standard'} icon={<TruckIcon className="h-3 w-3" />} />
+                        <CopyField label="AWB Number" value={po.awb || 'N/A'} icon={<GlobeIcon className="h-3 w-3" />} />
+                        <CopyField label="Invoice Number" value={invoiceNumber} icon={<InvoiceIcon className="h-3 w-3" />} />
+                        <CopyField label="Total Amount (Inc. Tax)" value={`₹${amountWithTax}`} icon={<CurrencyIcon className="h-3 w-3" />} />
                         <div className="md:col-span-2">
-                            <CopyField label="Invoice PDF URL" value={invoicePdfUrl} icon={<ExternalLinkIcon className="h-3 w-3"/>} />
+                            <CopyField label="Invoice PDF URL" value={invoicePdfUrl} icon={<ExternalLinkIcon className="h-3 w-3" />} />
                         </div>
                     </div>
                     <div className="flex flex-col items-center pt-2">
-                        <button 
-                            onClick={() => window.open(portalUrl, '_blank')} 
+                        <button
+                            onClick={() => window.open(portalUrl, '_blank')}
                             className={`w-full py-4 ${brandColor} text-white font-bold rounded-2xl shadow-xl ${shadowColor} hover:brightness-90 transition-all flex items-center justify-center gap-3 active:scale-95`}
                         >
                             <ExternalLinkIcon className="h-5 w-5" /> Open {portalName} Portal
@@ -324,12 +324,12 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
 
     const relevantOrders = useMemo(() => {
         // Rule: Only show orders for which an Appointment has NOT been booked yet.
-        return filteredPOs.filter(po => 
-            !getIsAppointmentTaken(po) && 
+        return filteredPOs.filter(po =>
+            !getIsAppointmentTaken(po) &&
             (
-                po.status === POStatus.AppointmentPending || 
-                po.status === POStatus.Pushed || 
-                po.status === POStatus.PartiallyProcessed || 
+                po.status === POStatus.AppointmentPending ||
+                po.status === POStatus.Pushed ||
+                po.status === POStatus.PartiallyProcessed ||
                 po.status === POStatus.InTransit ||
                 po.status === POStatus.NewPO
             )
@@ -347,7 +347,7 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
 
     const tableOrders = useMemo(() => {
         if (activeTab === 'toBeScheduled') return relevantOrders;
-        
+
         let filtered = filteredPOs;
         switch (activeTab) {
             case 'open':
@@ -369,7 +369,7 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
     const handleSchedule = (po: PurchaseOrder) => {
         const isBlinkit = po.channel.toLowerCase().includes('blinkit');
         const isZepto = po.channel.toLowerCase().includes('zepto');
-        
+
         if (isBlinkit || isZepto) {
             setPortalHelper({ isOpen: true, po });
         } else {
@@ -381,10 +381,10 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
     const handleBulkSchedule = () => {
         const selectedPos = relevantOrders.filter(po => selectedPoIds.includes(po.id));
         if (selectedPos.length === 0) return;
-        
+
         const firstChannel = selectedPos[0].channel;
         const differentChannel = selectedPos.some(p => p.channel !== firstChannel);
-        
+
         if (differentChannel) {
             alert("Bulk scheduling can only be done for one channel at a time. Please select POs from the same channel.");
             return;
@@ -411,13 +411,13 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
     return (
         <>
             {bulkModal.isOpen && (
-                <BulkEmailModal 
+                <BulkEmailModal
                     channel={bulkModal.channel}
                     pos={bulkModal.pos}
                     channelConfig={bulkModal.channelConfig}
                     onClose={() => setBulkModal({ isOpen: false, channel: '', pos: [] })}
                     onSuccess={(sentIds) => {
-                        setPurchaseOrders((prev: PurchaseOrder[]) => prev.map(p => 
+                        setPurchaseOrders((prev: PurchaseOrder[]) => prev.map(p =>
                             sentIds.includes(p.id) ? { ...p, appointmentRequestDate: new Date().toLocaleDateString('en-GB') } : p
                         ));
                         setSelectedPoIds([]);
@@ -428,7 +428,7 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
             )}
 
             {portalHelper.isOpen && portalHelper.po && (
-                <PortalHelperModal 
+                <PortalHelperModal
                     po={portalHelper.po}
                     onClose={() => setPortalHelper({ isOpen: false })}
                 />
@@ -438,11 +438,11 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                 <div className="flex justify-between items-end">
                     <h1 className="text-2xl font-bold text-gray-800">PO Appointments</h1>
                     {selectedPoIds.length > 0 && activeTab === 'toBeScheduled' && (
-                        <button 
+                        <button
                             onClick={handleBulkSchedule}
                             className="bg-blue-600 text-white px-6 py-2 rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2"
                         >
-                            <MailIcon className="h-4 w-4"/> Schedule Selected ({selectedPoIds.length})
+                            <MailIcon className="h-4 w-4" /> Schedule Selected ({selectedPoIds.length})
                         </button>
                     )}
                 </div>
@@ -474,8 +474,8 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                                 <tr>
                                     {activeTab === 'toBeScheduled' && (
                                         <th className="px-4 py-4 w-10 text-center">
-                                            <input 
-                                                type="checkbox" 
+                                            <input
+                                                type="checkbox"
                                                 className="rounded border-gray-300 text-partners-green focus:ring-partners-green"
                                                 checked={relevantOrders.length > 0 && selectedPoIds.length === relevantOrders.length}
                                                 onChange={handleToggleAll}
@@ -503,13 +503,13 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                                         const isPortalHelperChannel = po.channel.toLowerCase().includes('blinkit') || po.channel.toLowerCase().includes('zepto');
                                         const isBlinkit = po.channel.toLowerCase().includes('blinkit');
                                         const isZepto = po.channel.toLowerCase().includes('zepto');
-                                        
+
                                         return (
                                             <tr key={po.id} className={`hover:bg-gray-50/50 transition-colors ${isSelected ? 'bg-partners-light-green/20' : ''}`}>
                                                 {activeTab === 'toBeScheduled' && (
                                                     <td className="px-4 py-4 text-center">
-                                                        <input 
-                                                            type="checkbox" 
+                                                        <input
+                                                            type="checkbox"
                                                             className={`rounded border-gray-300 text-partners-green focus:ring-partners-green ${isPortalHelperChannel ? 'opacity-30' : ''}`}
                                                             checked={isSelected}
                                                             onChange={() => !isPortalHelperChannel && handleToggleSelect(po.id)}
@@ -521,16 +521,14 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                                                 <td className="px-6 py-4 font-bold text-partners-green hover:underline cursor-pointer">{po.poNumber}</td>
                                                 <td className="px-6 py-4 font-medium text-gray-700">{po.channel} - {po.storeCode}</td>
                                                 <td className="px-6 py-4">
-                                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
-                                                        isTaken ? 'bg-green-100 text-green-700' : 'bg-[#EBF5FB] text-[#2E86C1]'
-                                                    }`}>
+                                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${isTaken ? 'bg-green-100 text-green-700' : 'bg-[#EBF5FB] text-[#2E86C1]'
+                                                        }`}>
                                                         {isTaken ? 'Scheduled' : 'Unscheduled'}
                                                     </span>
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg font-bold text-[10px] border ${
-                                                        isTaken ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-[#F1F9F6] text-partners-green border-[#D5EFE3]'
-                                                    }`}>
+                                                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg font-bold text-[10px] border ${isTaken ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-[#F1F9F6] text-partners-green border-[#D5EFE3]'
+                                                        }`}>
                                                         <TruckIcon className="h-3 w-3" /> {isTaken ? (po.carrier || 'Logistics Assigned') : 'Courier Vendor'}
                                                     </div>
                                                 </td>
@@ -540,13 +538,12 @@ const AppointmentManager: React.FC<{ purchaseOrders: PurchaseOrder[], setPurchas
                                                 <td className="px-6 py-4 text-gray-500 font-medium">{po.poExpiryDate || po.orderDate}</td>
                                                 <td className="px-6 py-4 text-center">
                                                     {!isTaken ? (
-                                                        <button 
+                                                        <button
                                                             onClick={() => handleSchedule(po)}
-                                                            className={`px-6 py-1.5 border font-bold text-[11px] rounded transition-all active:scale-95 ${
-                                                                isBlinkit ? 'bg-yellow-50 border-yellow-400 text-yellow-700 hover:bg-yellow-400 hover:text-white' : 
-                                                                isZepto ? 'bg-purple-50 border-purple-400 text-purple-700 hover:bg-purple-600 hover:text-white' :
-                                                                'border-partners-green text-partners-green hover:bg-partners-green hover:text-white'
-                                                            }`}
+                                                            className={`px-6 py-1.5 border font-bold text-[11px] rounded transition-all active:scale-95 ${isBlinkit ? 'bg-yellow-50 border-yellow-400 text-yellow-700 hover:bg-yellow-400 hover:text-white' :
+                                                                    isZepto ? 'bg-purple-50 border-purple-400 text-purple-700 hover:bg-purple-600 hover:text-white' :
+                                                                        'border-partners-green text-partners-green hover:bg-partners-green hover:text-white'
+                                                                }`}
                                                         >
                                                             {isPortalHelperChannel ? 'Open Helper' : 'Schedule'}
                                                         </button>

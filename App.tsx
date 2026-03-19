@@ -29,6 +29,17 @@ const App: React.FC = () => {
   // Authenticated state
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('qc_user');
+    const now = Date.now();
+
+    // Check session validity before restoring user
+    const sessionStart = localStorage.getItem('qc_session_start');
+    const lastAct = localStorage.getItem('qc_last_activity');
+    const SESSION_TIMEOUT = 24 * 60 * 60 * 1000;
+    const INACTIVITY_TIMEOUT = 9 * 60 * 60 * 1000;
+
+    if (sessionStart && now - parseInt(sessionStart) > SESSION_TIMEOUT) return null;
+    if (lastAct && now - parseInt(lastAct) > INACTIVITY_TIMEOUT) return null;
+
     return saved ? JSON.parse(saved) : null;
   });
   const [googleTokens, setGoogleTokens] = useState<any>(() => {
@@ -37,10 +48,19 @@ const App: React.FC = () => {
   });
 
   // Session Management State
-  const [sessionStartTime] = useState<number>(() => {
+  const [sessionStartTime, setSessionStartTime] = useState<number>(() => {
     const saved = localStorage.getItem('qc_session_start');
-    if (saved) return parseInt(saved);
     const now = Date.now();
+
+    // Validate saved session start time against 24h limit
+    if (saved) {
+      const startTime = parseInt(saved);
+      const SESSION_TIMEOUT = 24 * 60 * 60 * 1000;
+      if (now - startTime < SESSION_TIMEOUT) {
+        return startTime;
+      }
+    }
+
     localStorage.setItem('qc_session_start', now.toString());
     return now;
   });
@@ -344,6 +364,10 @@ const App: React.FC = () => {
   // Show login screen if no user
   if (!currentUser) {
     return <Login onLoginSuccess={(user, tokens) => {
+      const now = Date.now();
+      setSessionStartTime(now);
+      localStorage.setItem('qc_session_start', now.toString());
+      localStorage.setItem('qc_last_activity', now.toString());
       setCurrentUser(user);
       if (tokens) setGoogleTokens(tokens);
       addLog('Login', `User ${user.name} authenticated.`);

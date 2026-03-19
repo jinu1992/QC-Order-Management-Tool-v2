@@ -6,8 +6,8 @@
  */
 
 // IDs & Sheet Names
-const SPREADSHEET_ID = '1YM0dKPWySifYFDyNqCenJ4L85xIBSTrBGNPDcoo6Kfg'; 
-const DRIVE_FOLDER_ID = '1y8ANlFfmrymTub4H_GTajRRbiL0Z_Ie4'; 
+const SPREADSHEET_ID = '1YM0dKPWySifYFDyNqCenJ4L85xIBSTrBGNPDcoo6Kfg';
+const DRIVE_FOLDER_ID = '1y8ANlFfmrymTub4H_GTajRRbiL0Z_Ie4';
 
 // Sheet Names
 const SHEET_PO_DB = "PO_Database";
@@ -20,8 +20,8 @@ const SHEET_EE_SHIPMENTS = "EE_Shipments";
 const SHEET_EE_CUSTOMERS = "EE_Customers";
 const LOG_DEBUG_SHEET = "System_Logs";
 const SHEET_USERS = "Users";
-const SHEET_UPLOAD_LOGS ="Upload_Logs";
-const SHEET_MASTER_DATA ="Master_Packing_Data";
+const SHEET_UPLOAD_LOGS = "Upload_Logs";
+const SHEET_MASTER_DATA = "Master_Packing_Data";
 const SHEET_QUOTATIONS = "Quotations";
 
 // API Endpoints
@@ -39,7 +39,7 @@ function responseJSON(data) {
 function doGet(e) {
   const action = e.parameter.action;
   try {
-    if (action === 'ping') return responseJSON({status: 'success', message: 'pong'});
+    if (action === 'ping') return responseJSON({ status: 'success', message: 'pong' });
     if (action === 'getPurchaseOrders') return getPurchaseOrders(e.parameter.poNumber);
     if (action === 'getInventory') return getInventory();
     if (action === 'getChannelConfigs') return getChannelConfigs();
@@ -47,21 +47,21 @@ function doGet(e) {
     if (action === 'getUploadMetadata') return getUploadMetadata();
     if (action === 'getPackingData') return getPackingData(e.parameter.referenceCode);
     if (action === 'getQuotations') return getQuotations();
-    return responseJSON({status: 'error', message: 'Invalid action'});
+    return responseJSON({ status: 'error', message: 'Invalid action' });
   } catch (err) {
-    return responseJSON({status: 'error', message: err.toString()});
+    return responseJSON({ status: 'error', message: err.toString() });
   }
 }
 
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
-      return responseJSON({status: 'error', message: 'No post data received'});
+      return responseJSON({ status: 'error', message: 'No post data received' });
     }
 
     const data = JSON.parse(e.postData.contents);
     const action = data.action;
-    
+
     debugLog(action || "UNKNOWN_ACTION", data);
 
     let result;
@@ -76,7 +76,7 @@ function doPost(e) {
     else if (action === 'FETCH_LAST_14_DAYS_QUOTATIONS') result = fetchLast14DaysQuotations();
     else if (action === 'syncSinglePO') result = { status: 'success', message: 'PO ' + data.poNumber + ' sync triggered.' };
     else if (action === 'createZohoInvoice') result = { status: 'success', message: 'Zoho Invoice creation triggered for ' + data.eeReferenceCode };
-    else if (action === 'pushToNimbus') result = { status: 'success', message: 'Pushed to Nimbus Post', awb: 'NIM' + Math.floor(Math.random()*1000000) };
+    else if (action === 'pushToShippingPartner') result = handlePushToShippingAggregator(data.eeReferenceCode);
     else if (action === 'updateFBAShipmentId') result = { status: 'success', message: 'FBA Shipment ID updated' };
     else if (action === 'syncEasyEcomShipments') result = { status: 'success', message: 'EasyEcom shipments sync triggered' };
     else if (action === 'syncInventory') result = { status: 'success', message: 'Inventory sync triggered' };
@@ -109,14 +109,14 @@ function doPost(e) {
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
     else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
     else {
-      return responseJSON({status: 'error', message: 'Invalid action: ' + action});
+      return responseJSON({ status: 'error', message: 'Invalid action: ' + action });
     }
 
-    if (result && result.getContentText) return result; 
-    return responseJSON(result || {status: 'success', message: 'Action processed'});
+    if (result && result.getContentText) return result;
+    return responseJSON(result || { status: 'success', message: 'Action processed' });
 
   } catch (error) {
-    return responseJSON({status: 'error', message: "doPost Error: " + error.toString()});
+    return responseJSON({ status: 'error', message: "doPost Error: " + error.toString() });
   }
 }
 
@@ -125,7 +125,7 @@ function doPost(e) {
  */
 function handleActualFileUpload(data) {
   const { functionId, userName, fileData, fileName } = data;
-  
+
   if (!fileData || !fileName) {
     return { status: 'error', message: 'Missing file data or name' };
   }
@@ -135,10 +135,10 @@ function handleActualFileUpload(data) {
     const decodedData = Utilities.base64Decode(fileData);
     const blob = Utilities.newBlob(decodedData, 'application/octet-stream', fileName);
     const file = folder.createFile(blob);
-    
+
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const logSheet = ss.getSheetByName(SHEET_UPLOAD_LOGS);
-    
+
     logSheet.appendRow([
       functionId,
       userName,
@@ -148,8 +148,8 @@ function handleActualFileUpload(data) {
       fileName
     ]);
 
-    return { 
-      status: 'success', 
+    return {
+      status: 'success',
       message: `File ${fileName} uploaded and logged successfully.`,
       fileUrl: file.getUrl()
     };
@@ -163,7 +163,7 @@ function handleActualFileUpload(data) {
  */
 function processFlipkartConsignment(data) {
   const { poNumber, fileText, userEmail } = data;
-  
+
   if (!poNumber || !fileText) {
     return { status: 'error', message: 'PO Number or PDF text content missing' };
   }
@@ -181,13 +181,13 @@ function processFlipkartConsignment(data) {
 
     // 2. Strict Validation
     if (!extractedPo) {
-        return { status: 'error', message: 'Could not find PO Number in PDF content.' };
+      return { status: 'error', message: 'Could not find PO Number in PDF content.' };
     }
     if (extractedPo !== poNumber) {
-        return { status: 'error', message: `PO Mismatch! PDF belongs to ${extractedPo}, but you are uploading for ${poNumber}.` };
+      return { status: 'error', message: `PO Mismatch! PDF belongs to ${extractedPo}, but you are uploading for ${poNumber}.` };
     }
     if (!consignmentId) {
-        return { status: 'error', message: 'Consignment Number not found in PDF.' };
+      return { status: 'error', message: 'Consignment Number not found in PDF.' };
     }
 
     // 3. Update PO_Database
@@ -195,7 +195,7 @@ function processFlipkartConsignment(data) {
     const dbSheet = ss.getSheetByName(SHEET_PO_DB);
     const dbData = dbSheet.getDataRange().getValues();
     const headers = dbData[0];
-    
+
     const poColIndex = headers.indexOf('PO Number');
     const statusColIndex = headers.indexOf('Status');
     const apptDateColIndex = headers.indexOf('Appointment Date');
@@ -209,22 +209,22 @@ function processFlipkartConsignment(data) {
         dbSheet.getRange(i + 1, apptIdColIndex + 1).setValue(consignmentId);
         if (deliveryDate) dbSheet.getRange(i + 1, apptDateColIndex + 1).setValue(deliveryDate);
         if (deliveryTime) dbSheet.getRange(i + 1, apptTimeColIndex + 1).setValue(deliveryTime);
-        
+
         // Also update status to 'Appointment Pending' if it was earlier stage
         const currentStatus = String(dbData[i][statusColIndex]);
         if (currentStatus === 'New' || currentStatus === 'Confirmed') {
-            dbSheet.getRange(i + 1, statusColIndex + 1).setValue('Appointment to be taken');
+          dbSheet.getRange(i + 1, statusColIndex + 1).setValue('Appointment to be taken');
         }
         updated = true;
       }
     }
 
     if (!updated) {
-        return { status: 'error', message: `PO ${poNumber} not found in database.` };
+      return { status: 'error', message: `PO ${poNumber} not found in database.` };
     }
 
-    return { 
-      status: 'success', 
+    return {
+      status: 'success',
       message: `Consignment ${consignmentId} successfully linked to PO ${poNumber}.`,
       details: { consignmentId, deliveryDate, deliveryTime }
     };
@@ -251,10 +251,10 @@ function getQuotations() {
 function sendAndAcceptEstimate(quotationData) {
   const estimateId = quotationData.estimateId;
   if (!estimateId) return { status: 'error', message: 'Estimate ID is required' };
-  
+
   // Log the complete data for debugging
   debugLog('ACCEPT_ESTIMATE_FULL_DATA', quotationData);
-  
+
   // Stub for Zoho API call
   // In reality, this would use UrlFetchApp to call Zoho Books API with the full data
   return { status: 'success', message: `Estimate ${quotationData.quotationNumber || estimateId} accepted and sent successfully in Zoho with complete data.` };
@@ -271,14 +271,14 @@ function getPurchaseOrders(targetPoNumber) {
   const sheet = ss.getSheetByName(SHEET_PO_DB);
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
-  
+
   const formattedData = data.slice(1).map(row => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = row[i]);
     return obj;
   });
 
-  const finalData = targetPoNumber 
+  const finalData = targetPoNumber
     ? formattedData.filter(d => String(d['PO Number']) === targetPoNumber)
     : formattedData;
 
@@ -304,7 +304,7 @@ function manual_sync_inventory_allocation() {
   const dbSheet = ss.getSheetByName(SHEET_PO_DB);
 
   const mapData = mapSheet.getDataRange().getValues();
-  const inventoryMap = new Map(); 
+  const inventoryMap = new Map();
   mapData.slice(1).forEach(row => {
     const sku = String(row[2]).trim();
     const qty = Number(row[4]) || 0;
@@ -333,7 +333,7 @@ function manual_sync_inventory_allocation() {
     let available = inventoryMap.get(sku) || 0;
     const fulfillable = Math.min(reqQty, available);
     inventoryMap.set(sku, available - fulfillable);
-    dbData[index][15] = fulfillable; 
+    dbData[index][15] = fulfillable;
   });
 
   const allocationOutput = dbData.map(row => [row[15]]);
@@ -347,7 +347,7 @@ function debugLog(action, data) {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const logSheet = ss.getSheetByName(LOG_DEBUG_SHEET) || ss.insertSheet(LOG_DEBUG_SHEET);
     logSheet.appendRow([new Date(), action, JSON.stringify(data).substring(0, 5000)]);
-  } catch (e) {}
+  } catch (e) { }
 }
 
 /** 
@@ -355,38 +355,38 @@ function debugLog(action, data) {
  * In a production setup, they connect to EasyEcom/Zoho APIs.
  */
 function updatePOStatus(poNumber, status) {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(SHEET_PO_DB);
-    const data = sheet.getDataRange().getValues();
-    const headers = data[0];
-    const poCol = headers.indexOf('PO Number');
-    const statusCol = headers.indexOf('Status');
-    
-    for(let i=1; i<data.length; i++) {
-        if(String(data[i][poCol]) === poNumber) {
-            sheet.getRange(i+1, statusCol+1).setValue(status);
-            return {status: 'success'};
-        }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const poCol = headers.indexOf('PO Number');
+  const statusCol = headers.indexOf('Status');
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][poCol]) === poNumber) {
+      sheet.getRange(i + 1, statusCol + 1).setValue(status);
+      return { status: 'success' };
     }
-    return {status: 'error', message: 'PO not found'};
+  }
+  return { status: 'error', message: 'PO not found' };
 }
 
 function handleCancelLineItem(poNumber, articleCode) {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(SHEET_PO_DB);
-    const data = sheet.getDataRange().getValues();
-    const headers = data[0];
-    const poCol = headers.indexOf('PO Number');
-    const artCol = headers.indexOf('Item Code');
-    const itemStatusCol = headers.indexOf('EE_item_item_status');
-    
-    for(let i=1; i<data.length; i++) {
-        if(String(data[i][poCol]) === poNumber && String(data[i][artCol]).trim() === articleCode.trim()) {
-            sheet.getRange(i+1, itemStatusCol+1).setValue('Cancelled');
-            return {status: 'success'};
-        }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const poCol = headers.indexOf('PO Number');
+  const artCol = headers.indexOf('Item Code');
+  const itemStatusCol = headers.indexOf('EE_item_item_status');
+
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][poCol]) === poNumber && String(data[i][artCol]).trim() === articleCode.trim()) {
+      sheet.getRange(i + 1, itemStatusCol + 1).setValue('Cancelled');
+      return { status: 'success' };
     }
-    return {status: 'error', message: 'Line item not found'};
+  }
+  return { status: 'error', message: 'Line item not found' };
 }
 
 function processBlinkitAppointmentPasses() {
@@ -394,12 +394,12 @@ function processBlinkitAppointmentPasses() {
     // This is a stub for the actual logic that would process Blinkit appointment passes
     // In a real scenario, it would fetch data from Blinkit portal or a designated sheet
     // and update the PO_Database with appointment details.
-    
+
     debugLog('PROCESS_BLINKIT_PASSES', { timestamp: new Date() });
-    
-    return { 
-      status: 'success', 
-      message: 'Blinkit appointment passes processed successfully. PO Database updated.' 
+
+    return {
+      status: 'success',
+      message: 'Blinkit appointment passes processed successfully. PO Database updated.'
     };
   } catch (e) {
     return { status: 'error', message: 'Error processing Blinkit passes: ' + e.toString() };
@@ -419,7 +419,7 @@ function processChannelAppointments(channelName, saleOrderList) {
     const requestTimestampCol = headers.indexOf('Appointment Request Timestamp');
 
     if (requestIdCol === -1 || requestTimestampCol === -1 || refCol === -1) {
-        return { status: 'error', message: 'Required columns not found in sheet.' };
+      return { status: 'error', message: 'Required columns not found in sheet.' };
     }
 
     const prefix = channelName === 'Instamart' ? 'INSTA-REQ-' : 'REQ-';
@@ -437,10 +437,10 @@ function processChannelAppointments(channelName, saleOrderList) {
       }
     });
 
-    return { 
-      status: 'success', 
-      message: `${channelName} Appointment request sent for ${updatedCount} orders.`, 
-      requestId 
+    return {
+      status: 'success',
+      message: `${channelName} Appointment request sent for ${updatedCount} orders.`,
+      requestId
     };
   } catch (e) {
     return { status: 'error', message: 'Error updating appointment request: ' + e.toString() };
@@ -579,7 +579,7 @@ function sendBBAppointmentRequestEmail(data) {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const poSheet = ss.getSheetByName(SHEET_PO_DB);
     const zohoSheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
-    
+
     if (!poSheet || !zohoSheet) return { status: 'error', message: 'Required sheets not found' };
 
     const poData = poSheet.getDataRange().getValues();
@@ -634,10 +634,10 @@ function sendBBAppointmentRequestEmail(data) {
       // Send Email
       const subject = "Appointment Request for Order: " + eeReferenceCode;
       const body = "Dear " + (pocName || "Team") + ",\n\n" +
-                   "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
-                   "Please provide the appointment slot at the earliest.\n\n" +
-                   "Best regards,\n" +
-                   "QC Team";
+        "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
+        "Please provide the appointment slot at the earliest.\n\n" +
+        "Best regards,\n" +
+        "QC Team";
 
       MailApp.sendEmail(pocEmail, subject, body);
 
@@ -646,8 +646,8 @@ function sendBBAppointmentRequestEmail(data) {
       successCount++;
     });
 
-    return { 
-      status: successCount > 0 ? 'success' : 'error', 
+    return {
+      status: successCount > 0 ? 'success' : 'error',
       message: `Successfully processed ${successCount} orders. ${errors.length > 0 ? ' Errors: ' + errors.join(', ') : ''}`,
       successCount,
       errors

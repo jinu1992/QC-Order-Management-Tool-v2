@@ -5,7 +5,7 @@ import { InventoryItem, PurchaseOrder, POStatus, POItem, ChannelConfig, StorePoc
  * !!! IMPORTANT !!!
  * Ensure this URL matches your LATEST 'Anyone' deployment in GAS
  */
-const API_URL = import.meta.env.VITE_GAS_API_URL; 
+const API_URL = import.meta.env.VITE_GAS_API_URL;
 
 /**
  * Shared helper for POST requests to Google Apps Script.
@@ -14,7 +14,7 @@ const postToScript = async (payload: any) => {
     if (!API_URL || API_URL.includes('template-id')) {
         throw new Error("Backend API URL is not configured.");
     }
-    
+
     try {
         const response = await fetch(API_URL, {
             method: 'POST',
@@ -22,7 +22,7 @@ const postToScript = async (payload: any) => {
             redirect: 'follow',
             body: JSON.stringify(payload)
         });
-        
+
         if (!response.ok) {
             throw new Error(`Network Error: Server returned ${response.status}`);
         }
@@ -62,7 +62,7 @@ const postToScript = async (payload: any) => {
     }
 };
 
-export const loginWithGoogle = async (credentialToken: string): Promise<{status: string, message?: string, user?: User}> => {
+export const loginWithGoogle = async (credentialToken: string): Promise<{ status: string, message?: string, user?: User }> => {
     try {
         const response = await fetch('/api/login-google', {
             method: 'POST',
@@ -71,21 +71,21 @@ export const loginWithGoogle = async (credentialToken: string): Promise<{status:
             },
             body: JSON.stringify({ idToken: credentialToken })
         });
-        
+
         if (!response.ok) {
             const errorData = await response.json();
-            return { 
-                status: 'error', 
-                message: errorData.message || `Server Error: ${response.status}` 
+            return {
+                status: 'error',
+                message: errorData.message || `Server Error: ${response.status}`
             };
         }
-        
+
         return await response.json();
     } catch (error: any) {
         console.error("Login API Error:", error);
-        return { 
-            status: 'error', 
-            message: 'Failed to connect to authentication server.' 
+        return {
+            status: 'error',
+            message: 'Failed to connect to authentication server.'
         };
     }
 };
@@ -98,23 +98,23 @@ export const fetchPackingData = async (referenceCode: string): Promise<any[]> =>
     } catch (error) { return []; }
 };
 
-export const logFileUpload = async (functionId: string, userName: string, fileData?: string, fileName?: string): Promise<{status: string, message?: string}> => {
+export const logFileUpload = async (functionId: string, userName: string, fileData?: string, fileName?: string): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'logFileUpload', functionId, userName, fileData, fileName });
 };
 
-export const processFlipkartConsignment = async (poNumber: string, fileText: string, userEmail: string): Promise<{status: string, message?: string, details?: any}> => {
+export const processFlipkartConsignment = async (poNumber: string, fileText: string, userEmail: string): Promise<{ status: string, message?: string, details?: any }> => {
     return await postToScript({ action: 'processFlipkartConsignment', poNumber, fileText, userEmail });
 };
 
-export const createZohoInvoice = async (eeReferenceCode: string, shippingCharge?: number): Promise<{status: string, message?: string}> => {
+export const createZohoInvoice = async (eeReferenceCode: string, shippingCharge?: number): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'createZohoInvoice', eeReferenceCode, shippingCharge });
 };
 
-export const pushToNimbusPost = async (eeReferenceCode: string): Promise<{status: string, message?: string, awb?: string}> => {
-    return await postToScript({ action: 'pushToNimbus', eeReferenceCode });
+export const pushToShippingPartner = async (eeReferenceCode: string): Promise<{ status: string, message?: string, awb?: string }> => {
+    return await postToScript({ action: 'pushToShippingPartner', eeReferenceCode });
 };
 
-export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: string): Promise<{status: string, message?: string}> => {
+export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: string): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updateFBAShipmentId', poNumber, fbaShipmentId });
 };
 
@@ -132,7 +132,7 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
         const json = await response.json();
         if (json.status === 'success' && Array.isArray(json.data)) {
             const groups: Record<string, Quotation> = {};
-            
+
             json.data.forEach((row: any) => {
                 const estimateId = String(row['Estimate ID'] || '').trim();
                 if (!estimateId) return;
@@ -224,17 +224,17 @@ export const fetchInventoryFromSheet = async (): Promise<InventoryItem[]> => {
     } catch (error) { return []; }
 };
 
-export const syncInventoryFromEasyEcom = async (): Promise<{status: string, message?: string}> => {
+export const syncInventoryFromEasyEcom = async (): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'syncInventory' });
 };
 
-export const manualInventoryAllocation = async (): Promise<{status: string, message?: string}> => {
+export const manualInventoryAllocation = async (): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'manual_sync_inventory_allocation' });
 };
 
 export const fetchPurchaseOrders = async (poNumber?: string): Promise<PurchaseOrder[]> => {
     try {
-        const url = poNumber 
+        const url = poNumber
             ? `${API_URL}?action=getPurchaseOrders&poNumber=${encodeURIComponent(poNumber)}`
             : `${API_URL}?action=getPurchaseOrders`;
         const response = await fetch(url, { redirect: 'follow' });
@@ -285,9 +285,9 @@ const transformSheetDataToInventory = (rows: any[]): InventoryItem[] => {
         articleCode: String(row['Channel Item Code'] || ''),
         sku: String(row['Master SKU'] || ''),
         ean: String(row['EAN'] || ''),
-        itemName: row['Itemname'] || '', 
+        itemName: row['Itemname'] || '',
         mrp: Number(row['MRP'] || 0),
-        basicPrice: 0, 
+        basicPrice: 0,
         spIncTax: Number(row['Selling Price'] || 0),
         stock: Number(row['Inventory'] || 0),
         size: String(row['Size'] || '')
@@ -338,14 +338,14 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             articleCode,
             masterSku: String(row['Master SKU'] || ''),
             itemName: row['Item Name'] || '',
-            qty, 
-            fulfillableQty: Number(row['Fulfillable qty'] || 0), 
+            qty,
+            fulfillableQty: Number(row['Fulfillable qty'] || 0),
             unitCost,
             mrp: Number(row['MRP'] || 0),
             priceCheckStatus: String(row['Price Check'] || '').trim(),
             itemStatus: String(row['EE_item_item_status'] || rawStatus),
             eeOrderRefId: row['EE Order Ref ID'] ? String(row['EE Order Ref ID']) : undefined,
-            eeReferenceCode: row['EE_reference_code'] ? String(row['EE_reference_code']) : undefined, 
+            eeReferenceCode: row['EE_reference_code'] ? String(row['EE_reference_code']) : undefined,
             eeOrderDate: formatSheetDate(row['EE_order_date']),
             eeOrderStatus: row['EE_order_status'] ? String(row['EE_order_status']) : undefined,
             eeBatchCreatedAt: formatSheetDate(row['EE_batch_created_at']),
@@ -446,7 +446,7 @@ export const updateRTOStatus = async (eeReferenceCode: string, rtoStatus: string
 };
 
 export const createInventoryItem = async (item: Partial<InventoryItem>) => {
-     return await postToScript({ action: 'createItem', ...item });
+    return await postToScript({ action: 'createItem', ...item });
 };
 
 export const updateInventoryPrice = async (channel: string, articleCode: string, newPrice: number) => {
@@ -517,7 +517,7 @@ export const processBlinkitAppointmentPasses = async () => {
     return await postToScript({ action: 'processBlinkitAppointmentPasses' });
 };
 
-export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{status: string, message?: string, data?: any}> => {
+export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{ status: string, message?: string, data?: any }> => {
     return await postToScript({ action: 'FETCH_BOX_DETAILS', eeReferenceCode });
 };
 
@@ -525,11 +525,11 @@ export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: st
     const itemsToSend = (po.items || [])
         .filter(item => selectedArticleCodes.includes(item.articleCode))
         .map(item => ({ ...item, unitCost: Number(((item.unitCost || 0) * 1.05).toFixed(2)) }));
-    return await postToScript({ 
-        action: 'pushToEasyEcom', 
-        ...po, 
-        items: itemsToSend, 
+    return await postToScript({
+        action: 'pushToEasyEcom',
+        ...po,
+        items: itemsToSend,
         isPartial: po.items?.length !== itemsToSend.length,
-        shippingCharge: po.shippingCharge 
+        shippingCharge: po.shippingCharge
     });
 };
