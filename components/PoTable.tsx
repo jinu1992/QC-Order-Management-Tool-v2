@@ -1,27 +1,27 @@
 import React, { useState, useEffect, Fragment, useMemo, useRef } from 'react';
 import { POStatus, type PurchaseOrder, POItem, InventoryItem, ChannelConfig } from '../types';
 import StatusBadge from './StatusBadge';
-import { 
-    DotsVerticalIcon, 
-    ChevronDownIcon, 
-    ChevronRightIcon, 
-    CloudDownloadIcon, 
-    CubeIcon, 
-    CheckCircleIcon, 
+import {
+    DotsVerticalIcon,
+    ChevronDownIcon,
+    ChevronRightIcon,
+    CloudDownloadIcon,
+    CubeIcon,
+    CheckCircleIcon,
     XCircleIcon,
-    UploadIcon, 
-    InfoIcon, 
-    CalendarIcon, 
-    PaperclipIcon, 
-    BuildingIcon, 
-    RefreshIcon, 
-    SearchIcon, 
+    UploadIcon,
+    InfoIcon,
+    CalendarIcon,
+    PaperclipIcon,
+    BuildingIcon,
+    RefreshIcon,
+    SearchIcon,
     FilterIcon,
     TrashIcon,
     SortIcon,
     ClockIcon
 } from './icons/Icons';
-import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation } from '../services/api';
+import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation, sendBBOrderConfirmationEmail } from '../services/api';
 
 // --- Utilities ---
 
@@ -44,13 +44,13 @@ const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     const items = po.items || [];
     const activeItems = items.filter(i => (i.itemStatus || '').toLowerCase() !== 'cancelled');
     const pushedItems = activeItems.filter(i => !!i.eeOrderRefId);
-    
+
     const rawStatus = String(po.status || '').trim().toLowerCase();
 
     // 1. Check if all items are explicitly cancelled or whole PO cancelled
     const allItemsCancelled = items.length > 0 && activeItems.length === 0;
     if (allItemsCancelled || (items.length === 0 && rawStatus === 'cancelled')) return POStatus.Cancelled;
-    
+
     // 2. Below threshold
     if (rawStatus === 'below threshold') return POStatus.BelowThreshold;
 
@@ -61,8 +61,8 @@ const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     // 4. Other workflow statuses
     if (rawStatus === 'confirmed' || rawStatus === 'confirmed to send') return POStatus.ConfirmedToSend;
     if (rawStatus === 'waiting for confirmation') return POStatus.WaitingForConfirmation;
-    
-    return POStatus.NewPO; 
+
+    return POStatus.NewPO;
 };
 
 // --- Sub-Components ---
@@ -93,25 +93,27 @@ interface OrderRowProps {
     isRefreshing: boolean;
     onCancelLineItem: (articleCode: string) => void;
     cancellingLineItemId: string | null;
+    onSendBBConfirmation: (po: PurchaseOrder | PurchaseOrder[]) => void;
+    isSendingBBConfirmation: boolean;
 }
 
-const OrderRow: React.FC<OrderRowProps> = ({ 
-    po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll, 
+const OrderRow: React.FC<OrderRowProps> = ({
+    po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll,
     isPushing, onPush, isSyncingZoho, onSyncZoho, isSyncingEE, onSyncEE, onTrackNotify, onCancel, isCancelling,
     onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
-    onCancelLineItem, cancellingLineItemId
-}) => {
+    onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation
+}: OrderRowProps) => {
     const poStatus = getCalculatedStatus(po);
     const items = po.items || [];
-    
+
     // Filter active items (not cancelled)
     const activeItems = useMemo(() => items.filter(i => (i.itemStatus || '').toLowerCase() !== 'cancelled'), [items]);
-    
+
     // Sum active quantity and active amount
     const activeTotalQty = useMemo(() => activeItems.reduce((sum, i) => sum + (i.qty || 0), 0), [activeItems]);
     const activeAmount = useMemo(() => activeItems.reduce((sum, i) => sum + ((i.qty || 0) * (i.unitCost || 0)), 0), [activeItems]);
     const amountIncTax = (activeAmount + (po.shippingCharge || 0)) * 1.05;
-    
+
     // Calculate Fulfillable Quantity
     const totalFulfillable = activeItems.reduce((sum, item) => sum + (item.fulfillableQty || 0), 0);
     const isShortage = totalFulfillable < activeTotalQty;
@@ -144,10 +146,10 @@ const OrderRow: React.FC<OrderRowProps> = ({
     const handleTrashClick = (e: React.MouseEvent, articleCode: string) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         const cleanCode = articleCode.trim();
         const isConfirmed = window.confirm(`Cancel SKU ${cleanCode} in PO ${po.poNumber}? This item will be removed from fulfillment eligibility.`);
-        
+
         if (isConfirmed) {
             onCancelLineItem(articleCode);
         }
@@ -159,10 +161,12 @@ const OrderRow: React.FC<OrderRowProps> = ({
     let onActionClick = onToggle;
     let isDisabled = false;
 
+    const isBB = po.channel.trim().toLowerCase() === 'bb';
+
     if (poStatus === POStatus.Cancelled) {
         actionLabel = 'Cancelled';
         actionColor = 'bg-gray-100 text-gray-400 border-gray-200';
-        onActionClick = () => {};
+        onActionClick = () => { };
         isDisabled = true;
     } else if (poStatus === POStatus.BelowThreshold) {
         actionLabel = 'Below Threshold';
@@ -183,10 +187,22 @@ const OrderRow: React.FC<OrderRowProps> = ({
         onActionClick = onSyncEE;
         isDisabled = isSyncingEE;
     } else if (poStatus === POStatus.NewPO || poStatus === POStatus.PartiallyProcessed || poStatus === POStatus.ConfirmedToSend || poStatus === POStatus.WaitingForConfirmation) {
-        actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
-        actionColor = 'bg-partners-green text-white hover:bg-green-700';
-        onActionClick = onToggle;
-        isDisabled = isPushing;
+        if (isBB && poStatus === POStatus.NewPO) {
+            actionLabel = isSendingBBConfirmation ? 'Sending Email...' : 'Send Conf. Email';
+            actionColor = 'bg-orange-600 text-white hover:bg-orange-700';
+            onActionClick = () => onSendBBConfirmation(po);
+            isDisabled = isSendingBBConfirmation;
+        } else if (isBB && poStatus === POStatus.WaitingForConfirmation) {
+            actionLabel = isUpdatingStatus ? 'Updating...' : 'Mark Confirmed';
+            actionColor = 'bg-emerald-600 text-white hover:bg-emerald-700';
+            onActionClick = () => onUpdateStatus('Confirmed');
+            isDisabled = isUpdatingStatus;
+        } else {
+            actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
+            actionColor = 'bg-partners-green text-white hover:bg-green-700';
+            onActionClick = onToggle;
+            isDisabled = isPushing;
+        }
     }
 
     const config = channelConfigs.find(c => c.channelName === po.channel);
@@ -226,17 +242,17 @@ const OrderRow: React.FC<OrderRowProps> = ({
                 <td className={`px-6 py-4 text-center sticky right-0 bg-white border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)] ${isMenuOpen ? 'z-50' : 'z-30'}`} onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-3 min-w-[200px]">
                         {canMarkThreshold && (
-                            <button 
+                            <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); onMarkThreshold(); }}
                                 disabled={isMarkingThreshold}
                                 className="px-2 py-2 bg-orange-50 text-orange-600 hover:bg-orange-100 rounded-lg transition-all border border-orange-100"
                                 title={`Move to Below Threshold (Limit: ₹${config?.minOrderThreshold})`}
                             >
-                                {isMarkingThreshold ? <RefreshIcon className="h-4 w-4 animate-spin"/> : <SortIcon className="h-4 w-4 rotate-90"/>}
+                                {isMarkingThreshold ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <SortIcon className="h-4 w-4 rotate-90" />}
                             </button>
                         )}
-                        <button 
+                        <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onActionClick(); }}
                             disabled={isDisabled || isCancelling || isUpdatingStatus}
@@ -245,28 +261,28 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             {actionLabel}
                         </button>
                         <div className="relative flex-shrink-0" ref={menuRef}>
-                            <button 
+                            <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); setIsMenuOpen(!isMenuOpen); }}
                                 className={`text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-full transition-colors ${isMenuOpen ? 'bg-gray-100 text-gray-600' : ''}`}
                             >
                                 <DotsVerticalIcon className="h-5 w-5" />
                             </button>
-                            
+
                             {isMenuOpen && (
                                 <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-2xl border border-gray-100 z-[100] overflow-hidden ring-1 ring-black/5">
                                     <div className="py-1">
-                                        <button 
+                                        <button
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onToggle(); }}
                                             className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-gray-600 hover:bg-gray-50 flex items-center gap-2"
                                         >
                                             <InfoIcon className="h-4 w-4" /> View Details
                                         </button>
-                                        
+
                                         {canConfirm && (
                                             <>
-                                                <button 
+                                                <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onUpdateStatus('Confirmed'); }}
                                                     disabled={isUpdatingStatus}
@@ -274,7 +290,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                                 >
                                                     <CheckCircleIcon className="h-4 w-4" /> Confirm Order
                                                 </button>
-                                                <button 
+                                                <button
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onUpdateStatus('Waiting for Confirmation'); }}
                                                     disabled={isUpdatingStatus}
@@ -286,7 +302,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         )}
 
                                         {canMarkThreshold && (
-                                            <button 
+                                            <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onMarkThreshold(); }}
                                                 className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-orange-600 hover:bg-orange-50 flex items-center gap-2"
@@ -295,7 +311,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                             </button>
                                         )}
 
-                                        <button 
+                                        <button
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onRefresh(); }}
                                             disabled={isRefreshing}
@@ -305,7 +321,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         </button>
 
                                         {canCancel && (
-                                            <button 
+                                            <button
                                                 type="button"
                                                 onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onCancel(); }}
                                                 disabled={isCancelling}
@@ -328,7 +344,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             <div className="pb-6 border-b border-gray-100">
                                 <div className="flex justify-between items-start mb-4">
                                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><CalendarIcon className="h-4 w-4 text-blue-500" /> Fulfillment Ref</h4>
-                                    <button 
+                                    <button
                                         type="button"
                                         onClick={onRefresh}
                                         disabled={isRefreshing}
@@ -350,7 +366,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             <div className="flex justify-between items-center border-b border-gray-100 pb-4">
                                 <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2"><CubeIcon className="h-4 w-4 text-partners-green" /> Item List & Stock Status</h4>
                                 <div className="flex items-center gap-3">
-                                     <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md border border-green-100">{selectableItems.length} Ready to Push</span>
+                                    <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded-md border border-green-100">{selectableItems.length} Ready to Push</span>
                                 </div>
                             </div>
                             <div className="overflow-x-auto border border-gray-100 rounded-lg">
@@ -358,11 +374,11 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                     <thead className="bg-gray-50 text-gray-500 uppercase tracking-tight">
                                         <tr>
                                             <th className="py-3 w-8 text-center">
-                                                <input 
-                                                    type="checkbox" 
-                                                    className="h-3.5 w-3.5 rounded border-gray-300 text-partners-green focus:ring-partners-green cursor-pointer disabled:opacity-30" 
-                                                    checked={selectableItems.length > 0 && selectedCount === selectableItems.length} 
-                                                    onChange={onSelectAll} 
+                                                <input
+                                                    type="checkbox"
+                                                    className="h-3.5 w-3.5 rounded border-gray-300 text-partners-green focus:ring-partners-green cursor-pointer disabled:opacity-30"
+                                                    checked={selectableItems.length > 0 && selectedCount === selectableItems.length}
+                                                    onChange={onSelectAll}
                                                     disabled={selectableItems.length === 0 || poStatus === POStatus.Cancelled || isPushing}
                                                 />
                                             </th>
@@ -384,7 +400,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                             const cleanCode = item.articleCode.trim();
                                             const lineId = `${po.poNumber}-${cleanCode}`;
                                             const isProcessingLine = cancellingLineItemId === lineId;
-                                            
+
                                             return (
                                                 <tr key={`${po.id}-item-${idx}`} className={`${isPushed ? 'bg-gray-50/50' : 'hover:bg-gray-50/30'} ${!isPushed && !isFullyFulfillable && !isCancelled ? 'bg-orange-50/20' : ''} ${isCancelled ? 'bg-red-50/30 grayscale' : ''}`}>
                                                     <td className="py-4 text-center">
@@ -393,11 +409,11 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                                         ) : isCancelled ? (
                                                             <XCircleIcon className="h-5 w-5 text-red-300 mx-auto" />
                                                         ) : (
-                                                            <input 
-                                                                type="checkbox" 
-                                                                className="h-3.5 w-3.5 rounded border-gray-300 text-partners-green focus:ring-partners-green cursor-pointer" 
-                                                                checked={checked} 
-                                                                onChange={() => onItemToggle(item.articleCode)} 
+                                                            <input
+                                                                type="checkbox"
+                                                                className="h-3.5 w-3.5 rounded border-gray-300 text-partners-green focus:ring-partners-green cursor-pointer"
+                                                                checked={checked}
+                                                                onChange={() => onItemToggle(item.articleCode)}
                                                                 disabled={!isFullyFulfillable || poStatus === POStatus.Cancelled || isPushing}
                                                             />
                                                         )}
@@ -431,7 +447,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                                             ) : (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-gray-400 text-[10px] font-bold uppercase tracking-tight">Pending</span>
-                                                                    <button 
+                                                                    <button
                                                                         type="button"
                                                                         onClick={(e) => handleTrashClick(e, cleanCode)}
                                                                         disabled={isPushing || isProcessingLine}
@@ -452,19 +468,19 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             </div>
                             <div className="flex justify-end pt-4 border-t border-gray-100">
                                 {po.eeCustomerId ? (
-                                    <button 
+                                    <button
                                         type="button"
-                                        onClick={onPush} 
-                                        disabled={selectedCount === 0 || isPushing || poStatus === POStatus.BelowThreshold || poStatus === POStatus.Cancelled} 
+                                        onClick={onPush}
+                                        disabled={selectedCount === 0 || isPushing || poStatus === POStatus.BelowThreshold || poStatus === POStatus.Cancelled}
                                         className={`flex items-center gap-2 px-6 py-3 text-sm font-bold text-white rounded-xl shadow-sm transition-all active:scale-95 ${selectedCount > 0 && !isPushing ? 'bg-partners-green hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed grayscale'}`}
                                     >
                                         <UploadIcon className="h-4 w-4" />
                                         {isPushing ? 'Processing...' : `Push ${selectedCount > 0 ? selectedCount : ''} Items`}
                                     </button>
                                 ) : po.zohoContactId ? (
-                                    <button 
+                                    <button
                                         type="button"
-                                        onClick={onSyncEE} 
+                                        onClick={onSyncEE}
                                         disabled={isSyncingEE}
                                         className={`flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-sm active:scale-95 transition-all ${isSyncingEE ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     >
@@ -472,9 +488,9 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         {isSyncingEE ? 'Syncing EE...' : 'Map to EasyEcom'}
                                     </button>
                                 ) : (
-                                    <button 
+                                    <button
                                         type="button"
-                                        onClick={onSyncZoho} 
+                                        onClick={onSyncZoho}
                                         disabled={isSyncingZoho}
                                         className={`flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-sm active:scale-95 transition-all ${isSyncingZoho ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     >
@@ -507,7 +523,7 @@ interface PoTableProps {
     channelConfigs: ChannelConfig[];
 }
 
-const PoTable: React.FC<PoTableProps> = ({ 
+const PoTable: React.FC<PoTableProps> = ({
     activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, tabCounts, onSync, isSyncing, addLog, addNotification, channelConfigs
 }) => {
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
@@ -521,6 +537,7 @@ const PoTable: React.FC<PoTableProps> = ({
     const [refreshingPoId, setRefreshingPoId] = useState<string | null>(null);
     const [cancellingLineItemId, setCancellingLineItemId] = useState<string | null>(null);
     const [isAllocating, setIsAllocating] = useState(false);
+    const [isSendingBBConfirmation, setIsSendingBBConfirmation] = useState(false);
 
     const [skuSearch, setSkuSearch] = useState('');
     const [debouncedSkuSearch, setDebouncedSkuSearch] = useState('');
@@ -563,15 +580,15 @@ const PoTable: React.FC<PoTableProps> = ({
 
         if (activeFilter === 'New POs' && debouncedSkuSearch.trim()) {
             const search = debouncedSkuSearch.toLowerCase().trim();
-            orders = orders.filter(po => 
-                (po.items || []).some(item => 
-                    (item.masterSku || '').toLowerCase().includes(search) || 
+            orders = orders.filter(po =>
+                (po.items || []).some(item =>
+                    (item.masterSku || '').toLowerCase().includes(search) ||
                     (item.articleCode || '').toLowerCase().includes(search) ||
                     (item.itemName || '').toLowerCase().includes(search)
                 )
             );
         }
-        
+
         orders.sort((a, b) => {
             const dateA = parseDate(a.orderDate);
             const dateB = parseDate(b.orderDate);
@@ -613,9 +630,9 @@ const PoTable: React.FC<PoTableProps> = ({
         setSelectedPoItems(prev => {
             const current = prev[poId] || [];
             const isSelected = current.includes(articleCode);
-            return { 
-                ...prev, 
-                [poId]: isSelected ? current.filter(c => c !== articleCode) : [...current, articleCode] 
+            return {
+                ...prev,
+                [poId]: isSelected ? current.filter(c => c !== articleCode) : [...current, articleCode]
             };
         });
     };
@@ -640,8 +657,8 @@ const PoTable: React.FC<PoTableProps> = ({
                     if (p.poNumber === po.poNumber) {
                         return {
                             ...p,
-                            items: p.items?.map(item => 
-                                selected.includes(item.articleCode) 
+                            items: p.items?.map(item =>
+                                selected.includes(item.articleCode)
                                     ? { ...item, eeOrderRefId: 'PATCHED' }
                                     : item
                             )
@@ -661,16 +678,16 @@ const PoTable: React.FC<PoTableProps> = ({
 
     const handleCancelLineItemAction = async (po: PurchaseOrder, articleCode: string) => {
         if (!articleCode) return;
-        
+
         const cleanCode = articleCode.trim();
         const lineId = `${po.poNumber}-${cleanCode}`;
         setCancellingLineItemId(lineId);
-        
+
         console.log(`[HANDLING-CANCEL] Processing SKU ${cleanCode} for PO ${po.poNumber}`);
-        
+
         try {
             const res = await cancelPOLineItem(po.poNumber, cleanCode);
-            
+
             if (res.status === 'success') {
                 setPurchaseOrders(prev => {
                     const freshArray = prev.map(p => {
@@ -687,10 +704,10 @@ const PoTable: React.FC<PoTableProps> = ({
                     });
                     return [...freshArray];
                 });
-                
+
                 addNotification(res.message || `Item ${cleanCode} cancelled.`, 'success');
                 addLog('Line Item Cancelled', `SKU ${cleanCode} in PO ${po.poNumber} marked as Cancelled`);
-                
+
                 setTimeout(() => refreshSinglePOState(po.poNumber), 500);
             } else {
                 addNotification('Cancellation Failed: ' + res.message, 'error');
@@ -733,7 +750,7 @@ const PoTable: React.FC<PoTableProps> = ({
         try {
             const res = await updatePOStatus(po.poNumber, 'Below Threshold');
             if (res.status === 'success') {
-                setPurchaseOrders(prev => prev.map(p => 
+                setPurchaseOrders(prev => prev.map(p =>
                     p.poNumber === po.poNumber ? { ...p, status: 'Below Threshold' as any } : p
                 ));
                 addNotification(res.message || `PO ${po.poNumber} marked as Below Threshold.`, 'success');
@@ -750,7 +767,7 @@ const PoTable: React.FC<PoTableProps> = ({
         try {
             const res = await updatePOStatus(po.poNumber, 'Cancelled');
             if (res.status === 'success') {
-                setPurchaseOrders(prev => prev.map(p => 
+                setPurchaseOrders(prev => prev.map(p =>
                     p.poNumber === po.poNumber ? { ...p, status: 'Cancelled' as any } : p
                 ));
                 addNotification(res.message || `PO ${po.poNumber} cancelled successfully.`, 'success');
@@ -766,7 +783,7 @@ const PoTable: React.FC<PoTableProps> = ({
         try {
             const res = await updatePOStatus(po.poNumber, newStatus);
             if (res.status === 'success') {
-                setPurchaseOrders(prev => prev.map(p => 
+                setPurchaseOrders(prev => prev.map(p =>
                     p.poNumber === po.poNumber ? { ...p, status: newStatus as any } : p
                 ));
                 addNotification(res.message || `PO ${po.poNumber} updated to ${newStatus}.`, 'success');
@@ -775,6 +792,29 @@ const PoTable: React.FC<PoTableProps> = ({
             } else { addNotification('Update Failed: ' + res.message, 'error'); }
         } catch (e) { addNotification('Network error.', 'error'); }
         finally { setUpdatingStatusId(null); }
+    };
+
+    const handleSendBBOrderConfirmationEmailAction = async (poOrPos: PurchaseOrder | PurchaseOrder[]) => {
+        setIsSendingBBConfirmation(true);
+        const poNumbers = Array.isArray(poOrPos) ? poOrPos.map(p => p.poNumber) : [poOrPos.poNumber];
+
+        try {
+            const res = await sendBBOrderConfirmationEmail({ poNumbers });
+            if (res.status === 'success') {
+                addNotification(res.message || `Confirmation email sent for ${poNumbers.length} orders.`, 'success');
+                addLog('BB Confirmation', `Emailed POC for PO(s): ${poNumbers.join(', ')}`);
+                // Batch update status to Waiting for Confirmation locally
+                setPurchaseOrders(prev => prev.map(p =>
+                    poNumbers.includes(p.poNumber) ? { ...p, status: 'Waiting for Confirmation' as any } : p
+                ));
+            } else {
+                addNotification(`Error: ${res.message}`, 'error');
+            }
+        } catch (e: any) {
+            addNotification(`Failed to send email: ${e.message}`, 'error');
+        } finally {
+            setIsSendingBBConfirmation(false);
+        }
     };
 
     const handleManualAllocation = async () => {
@@ -802,9 +842,8 @@ const PoTable: React.FC<PoTableProps> = ({
                 <div className="flex flex-wrap items-center gap-2">
                     {tabs.map(tab => (
                         <button key={tab.name} onClick={() => setActiveFilter(tab.name)}
-                            className={`px-3 py-1.5 text-sm font-semibold rounded-full border transition-colors ${
-                                activeFilter === tab.name ? 'bg-partners-green text-white border-partners-green shadow-sm' : 'bg-white text-gray-600 border-partners-border hover:bg-gray-50'
-                            }`}
+                            className={`px-3 py-1.5 text-sm font-semibold rounded-full border transition-colors ${activeFilter === tab.name ? 'bg-partners-green text-white border-partners-green shadow-sm' : 'bg-white text-gray-600 border-partners-border hover:bg-gray-50'
+                                }`}
                         >
                             {tab.name} {tabCounts[tab.name] > 0 && <span className="ml-1 text-[10px] opacity-70">({tabCounts[tab.name]})</span>}
                         </button>
@@ -814,7 +853,7 @@ const PoTable: React.FC<PoTableProps> = ({
                     {activeFilter === 'New POs' && (
                         <div className="relative">
                             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                            <input 
+                            <input
                                 type="text"
                                 placeholder="Filter by SKU..."
                                 className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-partners-green focus:border-transparent outline-none w-48 md:w-64 transition-all"
@@ -824,14 +863,28 @@ const PoTable: React.FC<PoTableProps> = ({
                         </div>
                     )}
                     {activeFilter === 'New POs' && (
-                        <button 
-                            type="button" 
-                            onClick={handleManualAllocation} 
-                            disabled={isAllocating || isSyncing} 
+                        <button
+                            type="button"
+                            onClick={handleManualAllocation}
+                            disabled={isAllocating || isSyncing}
                             className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg shadow-sm hover:bg-emerald-100 active:scale-95 transition-all"
                         >
-                            <CubeIcon className={`h-4 w-4 ${isAllocating ? 'animate-pulse' : ''}`} /> 
+                            <CubeIcon className={`h-4 w-4 ${isAllocating ? 'animate-pulse' : ''}`} />
                             {isAllocating ? 'Allocating...' : 'Allocate Inventory'}
+                        </button>
+                    )}
+                    {activeFilter === 'New POs' && processedOrders.some((p: PurchaseOrder) => p.channel.toLowerCase() === 'bb' && getCalculatedStatus(p) === POStatus.NewPO) && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const bbOrders = processedOrders.filter((p: PurchaseOrder) => p.channel.toLowerCase() === 'bb' && getCalculatedStatus(p) === POStatus.NewPO);
+                                handleSendBBOrderConfirmationEmailAction(bbOrders);
+                            }}
+                            disabled={isSendingBBConfirmation || isSyncing}
+                            className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg shadow-sm hover:bg-orange-100 active:scale-95 transition-all"
+                        >
+                            <RefreshIcon className={`h-4 w-4 ${isSendingBBConfirmation ? 'animate-spin' : ''}`} />
+                            {isSendingBBConfirmation ? 'Sending Emails...' : 'Send All BB Confirmations'}
                         </button>
                     )}
                     <button type="button" onClick={onSync} disabled={isSyncing} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 active:scale-95 transition-all">
@@ -848,20 +901,20 @@ const PoTable: React.FC<PoTableProps> = ({
                             <th className="px-6 py-4 sticky left-12 bg-gray-50 z-30 border-r border-gray-100 min-w-[150px]">
                                 <div className="flex items-center gap-2">
                                     PO Number
-                                    <button type="button" onClick={() => setActiveFilterColumn(activeFilterColumn === 'poNumber' ? null : 'poNumber')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.poNumber ? 'text-partners-green' : 'text-gray-400'}`}><SearchIcon className="h-3 w-3"/></button>
+                                    <button type="button" onClick={() => setActiveFilterColumn(activeFilterColumn === 'poNumber' ? null : 'poNumber')} className={`p-1 rounded hover:bg-gray-200 ${columnFilters.poNumber ? 'text-partners-green' : 'text-gray-400'}`}><SearchIcon className="h-3 w-3" /></button>
                                 </div>
                                 {activeFilterColumn === 'poNumber' && (
                                     <div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case">
-                                        <input type="text" autoFocus placeholder="Search PO..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.poNumber || ''} onChange={(e) => setColumnFilters({...columnFilters, poNumber: e.target.value})} />
+                                        <input type="text" autoFocus placeholder="Search PO..." className="w-full px-3 py-1.5 text-xs border rounded-md focus:ring-1 focus:ring-partners-green" value={columnFilters.poNumber || ''} onChange={(e) => setColumnFilters({ ...columnFilters, poNumber: e.target.value })} />
                                     </div>
                                 )}
                             </th>
                             <th className="px-6 py-4">Status</th>
                             <th className="px-6 py-4 min-w-[140px]">
-                                <div className="flex items-center gap-2">Channel <button type="button" onClick={() => setActiveFilterColumn('channel')} className="p-1"><FilterIcon className="h-3 w-3"/></button></div>
+                                <div className="flex items-center gap-2">Channel <button type="button" onClick={() => setActiveFilterColumn('channel')} className="p-1"><FilterIcon className="h-3 w-3" /></button></div>
                                 {activeFilterColumn === 'channel' && (
                                     <div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case">
-                                        <select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e) => setColumnFilters({...columnFilters, channel: e.target.value})}>
+                                        <select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e) => setColumnFilters({ ...columnFilters, channel: e.target.value })}>
                                             <option value="">All</option>
                                             {uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}
                                         </select>
@@ -879,7 +932,7 @@ const PoTable: React.FC<PoTableProps> = ({
                             <tr><td colSpan={8} className="px-6 py-12 text-center text-gray-400 italic">No purchase orders found.</td></tr>
                         ) : (
                             processedOrders.map((po) => (
-                                <OrderRow 
+                                <OrderRow
                                     key={po.id}
                                     po={po}
                                     isExpanded={expandedRowId === po.id}
@@ -903,8 +956,10 @@ const PoTable: React.FC<PoTableProps> = ({
                                     isUpdatingStatus={updatingStatusId === po.id}
                                     onRefresh={() => refreshSinglePOState(po.poNumber)}
                                     isRefreshing={refreshingPoId === po.poNumber}
-                                    onCancelLineItem={(code) => handleCancelLineItemAction(po, code)}
+                                    onCancelLineItem={(code) => handleCancelLineItemAction(po, code || '')}
                                     cancellingLineItemId={cancellingLineItemId}
+                                    onSendBBConfirmation={handleSendBBOrderConfirmationEmailAction}
+                                    isSendingBBConfirmation={isSendingBBConfirmation}
                                 />
                             ))
                         )}
