@@ -282,7 +282,7 @@ const App: React.FC = () => {
     const pendingDispatchesCount = purchaseOrders.filter(po => {
       const s = po.status || '';
       const isReady = ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(s);
-      return isReady && s !== 'Dispatched';
+      return isReady && s !== POStatus.Dispatched;
     }).length;
 
     return [

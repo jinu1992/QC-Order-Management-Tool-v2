@@ -85,13 +85,13 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
         const groups: Record<string, GroupedSalesOrder> = {};
 
         purchaseOrders.forEach(po => {
-            po.items.forEach(item => {
+            (po.items || []).forEach(item => {
                 const refCode = item.eeReferenceCode || po.id;
                 
                 if (!groups[refCode]) {
                     let eeBoxCount = 0;
                     try {
-                        eeBoxCount = item.eeReferenceBoxCount || item.boxCount || 0;
+                        eeBoxCount = item.eeBoxCount || po.eeReferenceBoxCount || 0;
                     } catch (e) {}
 
                     groups[refCode] = {

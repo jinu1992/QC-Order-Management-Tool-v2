@@ -16,6 +16,7 @@ export enum POStatus {
     Closed = 'Closed',
     Pushed = 'Pushed',
     PartiallyProcessed = 'Partially Processed',
+    Dispatched = 'Dispatched',
     Cancelled = 'Cancelled'
 }
 
@@ -53,6 +54,8 @@ export interface POItem {
     ewb?: string;
     fbaShipmentId?: string;
     inboundPlanId?: string;
+    placementId?: string;
+    shipmentId?: string;
     gst?: string;
     // Fulfillment specific tracking
     carrier?: string;
