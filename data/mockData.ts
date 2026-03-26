@@ -25,10 +25,10 @@ export const initialCustomers: Customer[] = [];
 export const initialUsers: User[] = [];
 
 export const initialRolePermissions: RolePermissions = {
-    'Admin': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Finance', 'Inventory', 'Admin', 'Shipment Tracking'],
-    'Key Account Manager': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Inventory', 'Shipment Tracking'],
+    'Admin': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Finance', 'Inventory', 'Admin', 'Shipment Tracking', 'Dispatch Manager'],
+    'Key Account Manager': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager'],
     'Finance Manager': ['Dashboard', 'Finance', 'Reports'],
-    'Supply Chain Manager': ['Dashboard', 'Purchase Orders', 'Sales Orders', 'Reports', 'Inventory', 'Shipment Tracking'],
+    'Supply Chain Manager': ['Dashboard', 'Purchase Orders', 'Sales Orders', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager'],
     'Limited Access': ['Dashboard', 'Purchase Orders'],
 };
 

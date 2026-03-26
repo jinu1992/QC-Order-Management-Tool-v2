@@ -52,6 +52,7 @@ interface GroupedSalesOrder {
     consignmentQty?: number;
     consignmentProducts?: number;
     consignmentValue?: string;
+    pickupDate?: string;
 }
 
 interface ShipmentManagerProps {
@@ -82,11 +83,11 @@ const formatSafeTime = (timeStr?: string): string => {
     } catch { return ''; }
 };
 
-const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser }) => {
+const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser }: ShipmentManagerProps) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO'>('All');
+    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -115,8 +116,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const allSalesOrders = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
 
-        purchaseOrders.forEach(po => {
-            (po.items || []).forEach(item => {
+        purchaseOrders.forEach((po: PurchaseOrder) => {
+            (po.items || []).forEach((item: POItem) => {
                 const rawRef = item.eeReferenceCode;
                 if (!rawRef || String(rawRef).trim() === "") return;
                 const refCode = String(rawRef).trim();
@@ -251,7 +252,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         eeCustomerId: po.eeCustomerId,
                         consignmentQty: po.consignmentQty,
                         consignmentProducts: po.consignmentProducts,
-                        consignmentValue: po.consignmentValue
+                        consignmentValue: po.consignmentValue,
+                        pickupDate: item.pickupDate || po.pickupDate
                     };
                 } else {
                     const curPo = String(po.id || '');
@@ -313,7 +315,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     }, [purchaseOrders]);
 
     // Get unique channels from ALL shipments
-    const uniqueChannels = useMemo(() => Array.from(new Set(allSalesOrders.map(so => so.channel))).sort(), [allSalesOrders]);
+    const uniqueChannels = useMemo(() => Array.from(new Set(allSalesOrders.map((so: GroupedSalesOrder) => so.channel))).sort(), [allSalesOrders]);
 
     // 2. Filter exactly like "Export CSV" feature
     const trackingOrders = useMemo(() => {
@@ -327,11 +329,11 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
 
-            if (isActuallyDelivered) return false; // User requested to completely hide Delivered orders
+            // If it's Actually Delivered, we still show it (previously hidden per user request, now restored)
 
             let isTargetStatus = false;
-            // Identify actual shipments (including Returned/RTO)
-            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') {
+            // Identify actual shipments (including Returned/RTO/Delivered)
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered') {
                 isTargetStatus = true;
             }
 
@@ -356,6 +358,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             // Apply Tab filter
             if (activeTab === 'RTO') {
                 return so.status === 'RTO Initiated' || so.status === 'Returned';
+            } else if (activeTab === 'Delivered') {
+                return isActuallyDelivered;
             } else if (activeTab === 'Today') {
                 return isSameDay(so.appointmentDate, todayDate) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Tomorrow') {
@@ -364,9 +368,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                 const missedAppt = isPastDate(so.appointmentDate, todayDate);
                 const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
                 return (missedAppt || missedEdd) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
-            } else if (activeTab === 'All') {
-                // If "All" is selected but the order is "Returned" or "RTO Initiated", we probably still want it to show up, 
-                // but if they strictly want Missed logic to be isolated, we are good.
             }
 
             return true;
@@ -418,7 +419,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         };
 
         // ASCEND order of appointment date
-        filtered.sort((a, b) => {
+        filtered.sort((a: GroupedSalesOrder, b: GroupedSalesOrder) => {
             const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
             const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
 
@@ -469,9 +470,9 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             return so.status === 'Shipped';
         });
 
-        const missedOrders = baseOrders.filter(so => isPastDate(so.appointmentDate || so.edd, today));
-        const todayOrders = baseOrders.filter(so => isSameDay(so.appointmentDate, today));
-        const tomorrowOrders = baseOrders.filter(so => isSameDay(so.appointmentDate, tomorrow));
+        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => isPastDate(so.appointmentDate || so.edd, today));
+        const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today));
+        const tomorrowOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, tomorrow));
 
         const formatLine = (so: GroupedSalesOrder) => {
             const awb = so.awb || 'N/A';
@@ -484,21 +485,21 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
         message += `🔴 *Missed Appointments (${missedOrders.length})*\n`;
         if (missedOrders.length > 0) {
-            missedOrders.forEach(so => { message += formatLine(so) + '\n'; });
+            missedOrders.forEach((so: GroupedSalesOrder) => { message += formatLine(so) + '\n'; });
         } else {
             message += '_None_\n';
         }
 
         message += `\n🟠 *Today's Appointments (${todayOrders.length})*\n`;
         if (todayOrders.length > 0) {
-            todayOrders.forEach(so => { message += formatLine(so) + '\n'; });
+            todayOrders.forEach((so: GroupedSalesOrder) => { message += formatLine(so) + '\n'; });
         } else {
             message += '_None_\n';
         }
 
         message += `\n🔵 *Tomorrow's Appointments (${tomorrowOrders.length})*\n`;
         if (tomorrowOrders.length > 0) {
-            tomorrowOrders.forEach(so => { message += formatLine(so) + '\n'; });
+            tomorrowOrders.forEach((so: GroupedSalesOrder) => { message += formatLine(so) + '\n'; });
         } else {
             message += '_None_\n';
         }
@@ -544,6 +545,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     >
                         Missed Deliveries
                         <span className="bg-red-100 text-red-600 py-0.5 px-2 rounded-full text-xs">Action Required</span>
+                    </button>
+                    <button
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'Delivered' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        onClick={() => setActiveTab('Delivered')}
+                    >
+                        Delivered
+                    </button>
+                    <button
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'Dispatch' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        onClick={() => setActiveTab('Dispatch')}
+                    >
+                        Dispatch Manager
+                        <span className="bg-indigo-100 text-indigo-600 py-0.5 px-2 rounded-full text-[10px]">NEW</span>
                     </button>
                     <button
                         className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'RTO' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
@@ -696,8 +710,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                             </div>
                                         </td>
 
-                                        {/* Appointment */}
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
                                             {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
                                             {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Passed Deadline</div>}

@@ -1,0 +1,329 @@
+import React, { useState, useMemo, useCallback } from 'react';
+import { PurchaseOrder, POItem, User } from '../types';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, RefreshIcon, ClockIcon } from './icons/Icons';
+import { updatePOStatus } from '../services/api';
+
+interface GroupedSalesOrder {
+    id: string; // eeReferenceCode
+    poReference: string;
+    status: string;
+    originalEeStatus: string;
+    channel: string;
+    storeCode: string;
+    orderDate: string;
+    qty: number;
+    amount: number;
+    items: POItem[];
+    carrier?: string;
+    awb?: string;
+    trackingStatus?: string;
+    pickupDate?: string;
+    boxCount: number;
+}
+
+interface DispatchManagerProps {
+    purchaseOrders: PurchaseOrder[];
+    currentUser?: User | null;
+    initialTab?: 'Pending' | 'Today' | 'Upcoming' | 'All';
+}
+
+// Helper to safely format dates
+const formatSafeDate = (dateStr?: string) => {
+    if (!dateStr) return '';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        if (d.getFullYear() < 2000) return '';
+        return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch { return dateStr; }
+};
+
+const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, currentUser, initialTab = 'Pending' }: DispatchManagerProps) => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [channelFilter, setChannelFilter] = useState('');
+    const [awbSearch, setAwbSearch] = useState('');
+    const [activeTab, setActiveTab] = useState<'Pending' | 'Today' | 'Upcoming' | 'All'>(initialTab);
+    const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+    const todayDate = useMemo(() => {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        return d;
+    }, []);
+
+    const isSameDay = (d1Str?: string, compare: Date = todayDate) => {
+        if (!d1Str) return false;
+        const d1 = new Date(d1Str);
+        return d1.getFullYear() === compare.getFullYear() &&
+               d1.getMonth() === compare.getMonth() &&
+               d1.getDate() === compare.getDate();
+    };
+
+    const isUpcoming = (d1Str?: string, compare: Date = todayDate) => {
+        if (!d1Str) return false;
+        const d1 = new Date(d1Str);
+        d1.setHours(0, 0, 0, 0);
+        return d1 > compare;
+    };
+
+    const handleMarkDispatched = useCallback(async (so: GroupedSalesOrder) => {
+        if (!window.confirm(`Mark ${so.id} as Dispatched?`)) return;
+        setUpdatingId(so.id);
+        try {
+            await updatePOStatus(so.id, 'Dispatched');
+            alert('Marked as Dispatched successfully!');
+            // In a real app, we'd trigger a reload or update local state
+        } catch (error) {
+            alert('Failed to update status.');
+        } finally {
+            setUpdatingId(null);
+        }
+    }, []);
+
+    // Grouping logic similar to ShipmentManager but focused on dispatch
+    const allSalesOrders = useMemo(() => {
+        const groups: Record<string, GroupedSalesOrder> = {};
+
+        purchaseOrders.forEach(po => {
+            po.items.forEach(item => {
+                const refCode = item.eeReferenceCode || po.id;
+                
+                if (!groups[refCode]) {
+                    let eeBoxCount = 0;
+                    try {
+                        eeBoxCount = item.eeReferenceBoxCount || item.boxCount || 0;
+                    } catch (e) {}
+
+                    groups[refCode] = {
+                        id: refCode,
+                        poReference: String(po.id),
+                        status: po.status,
+                        originalEeStatus: po.status,
+                        channel: po.channel,
+                        storeCode: po.storeCode || '',
+                        orderDate: po.orderDate,
+                        qty: item.qty || 0,
+                        amount: po.totalPoValue || 0,
+                        items: [item],
+                        carrier: item.carrier || po.carrier,
+                        awb: item.awb || po.awb,
+                        trackingStatus: item.trackingStatus || po.trackingStatus,
+                        pickupDate: item.pickupDate || po.pickupDate,
+                        boxCount: eeBoxCount
+                    };
+                } else {
+                    const curPo = String(po.id || '');
+                    if (!groups[refCode].poReference.includes(curPo)) {
+                        groups[refCode].poReference += `, ${curPo}`;
+                    }
+                    groups[refCode].qty += (item.qty || 0);
+                    groups[refCode].items.push(item);
+                }
+            });
+        });
+
+        return Object.values(groups);
+    }, [purchaseOrders]);
+
+    const uniqueChannels = useMemo(() => 
+        Array.from(new Set(allSalesOrders.map(so => so.channel))).sort()
+    , [allSalesOrders]);
+
+    const filteredOrders = useMemo(() => {
+        return allSalesOrders.filter(so => {
+            const matchesSearch = searchTerm === '' || 
+                so.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                so.poReference.toLowerCase().includes(searchTerm.toLowerCase());
+            
+            const matchesAwb = awbSearch === '' || 
+                (so.awb || '').toLowerCase().includes(awbSearch.toLowerCase());
+            
+            const matchesChannel = channelFilter === '' || so.channel === channelFilter;
+
+            if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
+
+            // Tab Filters
+            if (activeTab === 'Pending') {
+                return ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(so.status) && so.status !== 'Dispatched';
+            } else if (activeTab === 'Today') {
+                return isSameDay(so.pickupDate);
+            } else if (activeTab === 'Upcoming') {
+                return isUpcoming(so.pickupDate);
+            }
+
+            return true;
+        }).sort((a, b) => {
+            const dateA = new Date(a.pickupDate || 0).getTime();
+            const dateB = new Date(b.pickupDate || 0).getTime();
+            return dateA - dateB;
+        });
+    }, [allSalesOrders, searchTerm, awbSearch, channelFilter, activeTab, todayDate]);
+
+    return (
+        <div className="flex flex-col h-full bg-gray-50">
+            {/* Header */}
+            <div className="bg-white border-b border-gray-200 px-6 py-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                            <TruckIcon className="w-8 h-8 text-indigo-600" />
+                            Dispatch Manager
+                        </h1>
+                        <p className="text-sm text-gray-500 mt-1">Manage warehouse dispatches and pickup schedules</p>
+                    </div>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex border-b border-gray-200 mt-6">
+                    {(['Pending', 'Today', 'Upcoming', 'All'] as const).map((tab) => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === tab
+                                    ? 'border-indigo-600 text-indigo-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            }`}
+                        >
+                            {tab === 'Pending' && 'Pending Dispatches'}
+                            {tab === 'Today' && "Today's Pickups"}
+                            {tab === 'Upcoming' && 'Upcoming Pickups'}
+                            {tab === 'All' && 'All Shipments'}
+                            
+                            <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                                activeTab === tab ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'
+                            }`}>
+                                {allSalesOrders.filter(so => {
+                                    if (tab === 'Pending') return ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(so.status) && so.status !== 'Dispatched';
+                                    if (tab === 'Today') return isSameDay(so.pickupDate);
+                                    if (tab === 'Upcoming') return isUpcoming(so.pickupDate);
+                                    return true;
+                                }).length}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Filters */}
+            <div className="bg-white border-b border-gray-200 px-6 py-4 flex flex-wrap gap-4 items-center">
+                <div className="relative flex-1 min-w-[240px]">
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                        type="text"
+                        placeholder="Search by Order ID or PO..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                </div>
+
+                <div className="relative flex-1 min-w-[200px]">
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                        type="text"
+                        placeholder="Search by AWB..."
+                        value={awbSearch}
+                        onChange={(e) => setAwbSearch(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                </div>
+
+                <div className="relative w-48">
+                    <FilterIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <select
+                        value={channelFilter}
+                        onChange={(e) => setChannelFilter(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                        <option value="">All Channels</option>
+                        {uniqueChannels.map(channel => (
+                            <option key={channel} value={channel}>{channel}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {/* Table */}
+            <div className="flex-1 overflow-auto p-6">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                        <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Order Details</th>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Courier & AWB</th>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Box Count</th>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Pickup Date</th>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                                <th className="px-6 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            {filteredOrders.length > 0 ? filteredOrders.map(so => (
+                                <tr key={so.id} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-6 py-4">
+                                        <div className="text-sm font-bold text-gray-900">{so.id}</div>
+                                        <div className="text-xs text-gray-500 mt-0.5">PO: {so.poReference}</div>
+                                        <div className="text-xs font-semibold text-indigo-600 mt-1 uppercase tracking-wider">{so.channel}</div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="text-sm text-gray-900 font-medium">{so.carrier || 'N/A'}</div>
+                                        <div className="text-xs text-gray-500 font-mono mt-0.5">{so.awb || 'No AWB'}</div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="px-2.5 py-1 bg-gray-100 text-gray-700 rounded-md text-sm font-bold border border-gray-200">
+                                                {so.boxCount}
+                                            </span>
+                                            <span className="text-xs text-gray-400">Boxes</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-1.5 text-sm font-bold text-gray-900">
+                                            <ClockIcon className="w-4 h-4 text-indigo-500" />
+                                            {formatSafeDate(so.pickupDate) || <span className="text-gray-400 font-normal italic">Pending</span>}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-1 text-[10px] font-bold rounded-full uppercase tracking-tighter ${
+                                            so.status === 'Dispatched' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                        }`}>
+                                            {so.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        {so.status !== 'Dispatched' ? (
+                                            <button
+                                                onClick={() => handleMarkDispatched(so)}
+                                                disabled={updatingId === so.id}
+                                                className="px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 transition-all flex items-center gap-2 shadow-sm"
+                                            >
+                                                {updatingId === so.id ? <RefreshIcon className="w-3.5 h-3.5 animate-spin" /> : <TruckIcon className="w-3.5 h-3.5" />}
+                                                Mark Dispatched
+                                            </button>
+                                        ) : (
+                                            <div className="flex items-center gap-1.5 text-green-600 text-xs font-bold">
+                                                <CheckCircleIcon className="w-4 h-4" />
+                                                Dispatched
+                                            </div>
+                                        )}
+                                    </td>
+                                </tr>
+                            )) : (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                        <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
+                                        <p className="text-lg font-medium">No dispatch orders found</p>
+                                        <p className="text-sm mt-1">Adjust your filters or tab selection.</p>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default DispatchManager;

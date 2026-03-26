@@ -12,6 +12,7 @@ import InventoryManager from './components/InventoryManager';
 import ReportsManager from './components/ReportsManager';
 import QuotationsManager from './components/QuotationsManager';
 import ShipmentManager from './components/ShipmentManager';
+import DispatchManager from './components/DispatchManager';
 import FileUploader from './components/FileUploader';
 import ToastContainer from './components/ToastContainer';
 import Login from './components/Login';
@@ -73,6 +74,8 @@ const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewType>('Dashboard');
   const [activeFilter, setActiveFilter] = useState('New POs');
   const [activeInventoryTab, setActiveInventoryTab] = useState<'mapping' | 'shortfall'>('mapping');
+  const [activeShipmentTab, setActiveShipmentTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
+  const [activeDispatchTab, setActiveDispatchTab] = useState<'Pending' | 'Today' | 'Upcoming' | 'All'>('Pending');
   const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'logs'>('users');
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -265,9 +268,28 @@ const App: React.FC = () => {
       });
     });
 
+    // Today's Pickups
+    const todayStr = new Date().toDateString();
+    const todayPickupsCount = purchaseOrders.filter(po => {
+      const pDate = po.pickupDate || po.items?.find(i => i.pickupDate)?.pickupDate;
+      if (!pDate) return false;
+      try {
+        return new Date(pDate).toDateString() === todayStr;
+      } catch { return false; }
+    }).length;
+
+    // Pending Dispatches (Status is Shipped/Manifested but not Dispatched)
+    const pendingDispatchesCount = purchaseOrders.filter(po => {
+      const s = po.status || '';
+      const isReady = ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(s);
+      return isReady && s !== 'Dispatched';
+    }).length;
+
     return [
       { title: 'Total Active POs', value: totalActiveCount.toString(), changeText: 'Across all stages', color: 'blue', targetView: 'Purchase Orders', targetFilter: 'All POs' },
       { title: 'Procurement Shortfall', value: totalShortfall.toString(), changeText: 'Units needed for New POs', color: 'red', targetView: 'Inventory', targetTab: 'shortfall' },
+      { title: "Today's Pickups", value: todayPickupsCount.toString(), changeText: 'Scheduled for today', color: 'orange', targetView: 'Dispatch Manager', targetTab: 'Today' },
+      { title: 'Pending Dispatches', value: pendingDispatchesCount.toString(), changeText: 'Awaiting warehouse action', color: 'indigo', targetView: 'Dispatch Manager', targetTab: 'Pending' },
       { title: 'Fully Pushed', value: pushed.toString(), changeText: 'To EasyEcom', color: 'green', targetView: 'Purchase Orders', targetFilter: 'Pushed POs' },
       { title: 'Partially Pushed', value: partiallyPushed.toString(), changeText: 'Pending items', color: 'yellow', targetView: 'Purchase Orders', targetFilter: 'Partially Pushed POs' },
     ];
@@ -286,11 +308,15 @@ const App: React.FC = () => {
     return counts;
   }, [purchaseOrders]);
 
-  const handleCardClick = (view: ViewType, filter?: string, tab?: 'mapping' | 'shortfall') => {
+  const handleCardClick = (view: ViewType, filter?: string, tab?: any) => {
     if (currentUser && rolePermissions[currentUser.role]?.includes(view)) {
       setActiveView(view);
       if (filter) setActiveFilter(filter);
-      if (tab) setActiveInventoryTab(tab);
+      if (tab) {
+        if (view === 'Inventory') setActiveInventoryTab(tab);
+        if (view === 'Shipment Tracking') setActiveShipmentTab(tab);
+        if (view === 'Dispatch Manager') setActiveDispatchTab(tab);
+      }
     } else {
       addNotification(`Access Denied.`, 'error');
     }
@@ -330,6 +356,7 @@ const App: React.FC = () => {
       case 'Inventory': return <InventoryManager addLog={addLog} inventoryItems={inventoryItems} purchaseOrders={purchaseOrders} setInventoryItems={setInventoryItems} onSync={() => refreshData(true)} isSyncing={isLoading} activeTab={activeInventoryTab} setActiveTab={setActiveInventoryTab} addNotification={addNotification} />;
       case 'Finance': return <FinanceManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
       case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} currentUser={currentUser} />;
+      case 'Dispatch Manager': return <DispatchManager purchaseOrders={purchaseOrders} currentUser={currentUser} initialTab={activeDispatchTab} />;
       case 'Reports': return <ReportsManager purchaseOrders={purchaseOrders} inventoryItems={inventoryItems} />;
       case 'Appointments':
         return <AppointmentManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;

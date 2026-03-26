@@ -1,5 +1,5 @@
 
-export type ViewType = 'Dashboard' | 'Quotations' | 'Purchase Orders' | 'File Uploader' | 'POC Verification' | 'Appointments' | 'Sales Orders' | 'GRN / POD' | 'Reports' | 'Finance' | 'Inventory' | 'Admin' | 'Shipment Tracking';
+export type ViewType = 'Dashboard' | 'Quotations' | 'Purchase Orders' | 'File Uploader' | 'POC Verification' | 'Appointments' | 'Sales Orders' | 'GRN / POD' | 'Reports' | 'Finance' | 'Inventory' | 'Admin' | 'Shipment Tracking' | 'Dispatch Manager';
 
 export enum POStatus {
     NewPO = 'New',
@@ -31,7 +31,7 @@ export interface POItem {
     mrp?: number;
     priceCheckStatus?: string;
     eeOrderRefId?: string;
-    eeReferenceCode?: string; 
+    eeReferenceCode?: string;
     eeOrderDate?: string;
     itemStatus?: string;
     itemQuantity?: number;
@@ -74,6 +74,7 @@ export interface POItem {
     appointmentRequestTimestamp?: string;
     appointmentDate?: string;
     appointmentId?: string;
+    pickupDate?: string;
 }
 
 export interface PurchaseOrder {
@@ -149,6 +150,8 @@ export interface PurchaseOrder {
     consignmentProducts?: number;
     consignmentValue?: string;
     shippingCharge?: number;
+    // New: Dispatch & Pickup tracking
+    pickupDate?: string;
 }
 
 export interface QuotationItem {
@@ -230,17 +233,17 @@ export interface RolePermissions { [key: string]: ViewType[]; }
 export interface ActivityLog { id: string; user: string; action: string; details: string; timestamp: string; }
 export interface NotificationItem { id: string; message: string; timestamp: string; read: boolean; type: 'info' | 'success' | 'warning' | 'error'; }
 export interface InventoryItem { id: string; channel: string; articleCode: string; sku: string; ean: string; itemName: string; mrp: number; basicPrice: number; spIncTax: number; stock: number; size: string; }
-export interface ChannelConfig { 
-  id: string; 
-  channelName: string; 
-  status: 'Active' | 'Inactive'; 
-  sourceEmail: string; 
-  searchKeyword: string; 
-  minOrderThreshold: number; 
-  pocName: string; 
-  pocEmail: string; 
-  pocPhone: string;
-  appointmentTo?: string; // New: Comma separated emails
-  appointmentCc?: string; // New: Comma separated emails
+export interface ChannelConfig {
+    id: string;
+    channelName: string;
+    status: 'Active' | 'Inactive';
+    sourceEmail: string;
+    searchKeyword: string;
+    minOrderThreshold: number;
+    pocName: string;
+    pocEmail: string;
+    pocPhone: string;
+    appointmentTo?: string; // New: Comma separated emails
+    appointmentCc?: string; // New: Comma separated emails
 }
 export type ReportTimeRange = '30_days' | 'last_month' | 'this_quarter' | 'ytd' | 'all';

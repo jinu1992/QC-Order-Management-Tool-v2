@@ -41,6 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
     { name: 'Inventory', icon: <CubeIcon /> },
     { name: 'Shipment Tracking', icon: <TruckIcon /> },
     { name: 'Finance', icon: <CurrencyIcon /> },
+    { name: 'Dispatch Manager', icon: <TruckIcon /> },
     { name: 'Reports', icon: <ReportIcon /> },
     { name: 'Admin', icon: <AdminIcon /> },
   ];
