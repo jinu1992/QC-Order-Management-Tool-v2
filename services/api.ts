@@ -386,6 +386,8 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             appointmentRequestTimestamp: formatSheetDate(row['Appointment Request Timestamp']),
             appointmentDate: formatSheetDate(row['Appointment Date']),
             appointmentId: row['Appointment ID'] ? String(row['Appointment ID']) : undefined,
+            pickupDate: row['Pickup Date'] ? String(row['Pickup Date']) : undefined,
+            labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
         };
 
         if (poMap.has(poNumber)) {
@@ -407,6 +409,8 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (po.consignmentQty === undefined && row['Consignment Qty']) po.consignmentQty = Number(row['Consignment Qty']);
             if (po.consignmentProducts === undefined && row['Consignment Products']) po.consignmentProducts = Number(row['Consignment Products']);
             if (!po.consignmentValue && row['Consignment Value']) po.consignmentValue = String(row['Consignment Value']);
+            if (!po.pickupDate && row['Pickup Date']) po.pickupDate = String(row['Pickup Date']);
+            if (!po.labelUrl && row['Label URL']) po.labelUrl = String(row['Label URL']);
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
@@ -435,6 +439,8 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 consignmentProducts: row['Consignment Products'] ? Number(row['Consignment Products']) : undefined,
                 consignmentValue: row['Consignment Value'] ? String(row['Consignment Value']) : undefined,
                 shippingCharge: row['Shipping Charge'] ? Number(row['Shipping Charge']) : undefined,
+                pickupDate: row['Pickup Date'] ? String(row['Pickup Date']) : undefined,
+                labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
             });
         }
     });

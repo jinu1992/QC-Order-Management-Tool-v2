@@ -101,6 +101,8 @@ interface GroupedSalesOrder {
     consignmentQty?: number;
     consignmentProducts?: number;
     consignmentValue?: string;
+    pickupDate?: string;
+    labelUrl?: string;
 }
 
 // --- Formatters ---
@@ -1594,7 +1596,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 if (!groups[refCode]) {
                     groups[refCode] = {
                         id: refCode,
-                        poReference: String(po.id || ''),
+                        poReference: String(po.poNumber || po.id || ''),
                         status: displayStatus,
                         originalEeStatus: eeStatus,
                         channel: po.channel,
@@ -1641,10 +1643,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         eeCustomerId: po.eeCustomerId,
                         consignmentQty: po.consignmentQty,
                         consignmentProducts: po.consignmentProducts,
-                        consignmentValue: po.consignmentValue
+                        consignmentValue: po.consignmentValue,
+                        pickupDate: item.pickupDate || po.pickupDate,
+                        labelUrl: item.labelUrl || po.labelUrl,
                     };
                 } else {
-                    const curPo = String(po.id || '');
+                    const curPo = String(po.poNumber || po.id || '');
                     if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
                     const statusRank = (s: string) => {
                         if (s === 'Returned') return 13;
@@ -2326,6 +2330,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (res.status === 'success') {
                 addNotification(res.message || 'Invoice triggered successfully.', 'success');
                 addLog('Invoice Creation', `EE Ref: ${eeRef}`);
+
+                // Optimistic Update: Mark as successful in local state to move to Invoiced tab immediately
+                setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                    if (parentPoNumbers.includes(po.poNumber)) {
+                        return {
+                            ...po,
+                            items: po.items?.map((item: POItem) =>
+                                item.eeReferenceCode === eeRef ? { ...item, invoiceNumber: 'SUCCESS', invoiceStatus: 'INVOICED' } : item
+                            )
+                        };
+                    }
+                    return po;
+                }));
+
                 await refreshSingleSOState(poRef);
             } else {
                 addNotification('Error: ' + (res.message || 'Failed to trigger invoice generation.'), 'error');
@@ -2378,6 +2396,21 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (res.status === 'success') {
                 addNotification(res.message || 'FBA ID Saved & Invoice triggered.', 'success');
                 addLog('Amazon FBA Invoice', `FBA ID: ${fbaId}, Ref: ${so.id}`);
+
+                // Optimistic Update
+                setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                    if (parentPoNumbers.includes(po.poNumber)) {
+                        return {
+                            ...po,
+                            fbaShipmentId: fbaId,
+                            items: po.items?.map((item: POItem) =>
+                                item.eeReferenceCode === so.id ? { ...item, invoiceNumber: 'SUCCESS', fbaShipmentId: fbaId, invoiceStatus: 'INVOICED' } : item
+                            )
+                        };
+                    }
+                    return po;
+                }));
+
                 await refreshSingleSOState(so.poReference);
                 setFbaShipmentModal({ isOpen: false, so: null });
             } else {
@@ -2963,6 +2996,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
+                                                    {so.labelUrl && (
+                                                        <a
+                                                            href={so.labelUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e: any) => e.stopPropagation()}
+                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
+                                                            title="Print Shipping Label"
+                                                        >
+                                                            <PrinterIcon className="h-3.5 w-3.5" /> Print Label
+                                                        </a>
+                                                    )}
                                                     {showAmazonBoxDetails && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
@@ -3038,6 +3083,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
+                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Pickup Date</p><p className="text-xs font-bold text-indigo-600">{so.pickupDate || 'N/A'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof so.shippingCharge === 'number' ? `₹${so.shippingCharge}` : '₹0'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
@@ -3114,6 +3160,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <div className="flex justify-between items-center mb-4">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><GlobeIcon className="h-4 w-4 text-blue-600" /> Logistics & Shipment Status</h4>
                                                                 <div className="flex items-center gap-3">
+                                                                    {so.labelUrl && (
+                                                                        <a
+                                                                            href={so.labelUrl}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-emerald-700 transition-all active:scale-95"
+                                                                        >
+                                                                            <PrinterIcon className="h-4 w-4" /> Print Shipping Label
+                                                                        </a>
+                                                                    )}
                                                                     {showFlipkartDownload && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}

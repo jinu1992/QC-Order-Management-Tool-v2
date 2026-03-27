@@ -78,6 +78,7 @@ export interface POItem {
     appointmentDate?: string;
     appointmentId?: string;
     pickupDate?: string;
+    labelUrl?: string;
 }
 
 export interface PurchaseOrder {
@@ -155,6 +156,7 @@ export interface PurchaseOrder {
     shippingCharge?: number;
     // New: Dispatch & Pickup tracking
     pickupDate?: string;
+    labelUrl?: string;
 }
 
 export interface QuotationItem {

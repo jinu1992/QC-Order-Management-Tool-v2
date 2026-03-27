@@ -126,17 +126,17 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
     }, [purchaseOrders]);
 
     const uniqueChannels = useMemo(() => 
-        Array.from(new Set(allSalesOrders.map(so => so.channel))).sort()
+        Array.from(new Set(allSalesOrders.map((so: GroupedSalesOrder) => so.channel))).sort()
     , [allSalesOrders]);
 
     const filteredOrders = useMemo(() => {
-        return allSalesOrders.filter(so => {
+        return allSalesOrders.filter((so: GroupedSalesOrder) => {
             const matchesSearch = searchTerm === '' || 
-                so.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                so.poReference.toLowerCase().includes(searchTerm.toLowerCase());
+                (so.id && so.id.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (so.poReference && so.poReference.toLowerCase().includes(searchTerm.toLowerCase()));
             
             const matchesAwb = awbSearch === '' || 
-                (so.awb || '').toLowerCase().includes(awbSearch.toLowerCase());
+                (so.awb && so.awb.toLowerCase().includes(awbSearch.toLowerCase()));
             
             const matchesChannel = channelFilter === '' || so.channel === channelFilter;
 
@@ -152,7 +152,7 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
             }
 
             return true;
-        }).sort((a, b) => {
+        }).sort((a: GroupedSalesOrder, b: GroupedSalesOrder) => {
             const dateA = new Date(a.pickupDate || 0).getTime();
             const dateB = new Date(b.pickupDate || 0).getTime();
             return dateA - dateB;
