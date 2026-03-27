@@ -2576,7 +2576,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
             }
 
-            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId) {
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentId && !so.appointmentDate) {
                 return { label: 'Appt. Pending', color: 'bg-orange-500 text-white hover:bg-orange-600', onClick: () => setInstamartApptModal({ isOpen: true, so }), disabled: isExecuting };
             }
         }
@@ -2894,6 +2894,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                     (eeStatusLower === 'confirmed' && canInvoice)
                                 );
 
+                                const isApptPending = (isZepto || isInstamart || isBB) && so.status === 'Invoiced' && !so.awb && !so.appointmentId && !so.appointmentDate;
                                 const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
                                 const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
@@ -3244,11 +3245,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={!!isPushingPartner || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba'))}
+                                                                                disabled={!!isPushingPartner || isApptPending || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba'))}
                                                                                 className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {isPushingPartner === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {(so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) ? 'FBA Fulfillment' : (isPushingPartner === so.id ? 'Shipping...' : ((so.boxCount === 0 && !isFlipkart) ? 'Box Data Pending' : 'Ship with Partner'))}
+                                                                                {(so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) ? 'FBA Fulfillment' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : ((so.boxCount === 0 && !isFlipkart) ? 'Box Data Pending' : 'Ship with Partner')))}
                                                                             </button>
                                                                             {((so.invoiceTotal || 0) >= 50000 && !so.ewb) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
