@@ -367,7 +367,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             } else if (activeTab === 'Missed') {
                 const missedAppt = isPastDate(so.appointmentDate, todayDate);
                 const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                return (missedAppt || missedEdd) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+                return (missedAppt || missedEdd) && so.status !== 'RTO Initiated' && so.status !== 'Returned' && !isActuallyDelivered;
             }
 
             return true;

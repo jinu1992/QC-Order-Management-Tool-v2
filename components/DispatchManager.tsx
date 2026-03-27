@@ -54,16 +54,19 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
     const isSameDay = (d1Str?: string, compare: Date = todayDate) => {
         if (!d1Str) return false;
         const d1 = new Date(d1Str);
-        return d1.getFullYear() === compare.getFullYear() &&
-               d1.getMonth() === compare.getMonth() &&
-               d1.getDate() === compare.getDate();
+        if (isNaN(d1.getTime())) return false;
+        return d1.toDateString() === compare.toDateString();
     };
 
     const isUpcoming = (d1Str?: string, compare: Date = todayDate) => {
         if (!d1Str) return false;
         const d1 = new Date(d1Str);
-        d1.setHours(0, 0, 0, 0);
-        return d1 > compare;
+        if (isNaN(d1.getTime())) return false;
+        
+        // Compare only date parts
+        const d1Date = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
+        const compareDate = new Date(compare.getFullYear(), compare.getMonth(), compare.getDate());
+        return d1Date > compareDate;
     };
 
     const handleMarkDispatched = useCallback(async (so: GroupedSalesOrder) => {

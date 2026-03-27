@@ -1669,17 +1669,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (!groups[refCode].batchCreatedAt) groups[refCode].batchCreatedAt = batchDate;
                     if (!groups[refCode].invoiceDate) groups[refCode].invoiceDate = item.invoiceDate;
                     if (!groups[refCode].manifestDate) groups[refCode].manifestDate = maniDate;
-                    if (!groups[refCode].invoiceNumber) groups[refCode].invoiceNumber = invNum;
+                    const isPlaceholder = (val: any) => !val || val === 'GENERATING...' || val === 'SUCCESS' || val === 'PROCESSING';
 
-                    groups[refCode].boxCount = eeBoxCount;
-
-                    if (!groups[refCode].awb && awb) groups[refCode].awb = awb;
-                    if (!groups[refCode].trackingStatus && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
-                    if (!groups[refCode].trackingUrl && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
-                    if (!groups[refCode].ewb) groups[refCode].ewb = item.ewb || po.ewb;
-                    if (!groups[refCode].fbaShipmentId) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
-                    if (!groups[refCode].appointmentId) groups[refCode].appointmentId = po.appointmentId;
-                    if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
+                    if (isPlaceholder(groups[refCode].invoiceNumber) && !isPlaceholder(invNum)) groups[refCode].invoiceNumber = invNum;
+                    if (isPlaceholder(groups[refCode].awb) && awb) groups[refCode].awb = awb;
+                    if (isPlaceholder(groups[refCode].trackingStatus) && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
+                    if (isPlaceholder(groups[refCode].trackingUrl) && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
+                    if (isPlaceholder(groups[refCode].ewb)) groups[refCode].ewb = item.ewb || po.ewb;
+                    if (isPlaceholder(groups[refCode].fbaShipmentId)) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
+                    if (isPlaceholder(groups[refCode].appointmentId)) groups[refCode].appointmentId = po.appointmentId;
+                    if (isPlaceholder(groups[refCode].qrCodeUrl)) groups[refCode].qrCodeUrl = po.qrCodeUrl;
                     if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
                 }
@@ -3138,6 +3137,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <p className="text-[10px] uppercase font-bold text-emerald-400">Current Location</p>
                                                                             <p className="text-xs font-bold text-emerald-700">{so.currentLocation || 'N/A'}</p>
                                                                         </div>
+                                                                        {so.pickupDate && (
+                                                                            <div>
+                                                                                <p className="text-[10px] uppercase font-bold text-emerald-400">Pickup Date</p>
+                                                                                <p className="text-xs font-bold text-emerald-700">{so.pickupDate}</p>
+                                                                            </div>
+                                                                        )}
                                                                         <div>
                                                                             <p className="text-[10px] uppercase font-bold text-emerald-400">Tracking URL</p>
                                                                             {so.trackingUrl ? (
