@@ -135,11 +135,11 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
     const filteredOrders = useMemo(() => {
         return allSalesOrders.filter((so: GroupedSalesOrder) => {
             const matchesSearch = searchTerm === '' || 
-                (so.id && so.id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                (so.poReference && so.poReference.toLowerCase().includes(searchTerm.toLowerCase()));
+                (so.id && String(so.id).toLowerCase().includes(searchTerm.toLowerCase())) ||
+                (so.poReference && String(so.poReference).toLowerCase().includes(searchTerm.toLowerCase()));
             
             const matchesAwb = awbSearch === '' || 
-                (so.awb && so.awb.toLowerCase().includes(awbSearch.toLowerCase()));
+                (so.awb && String(so.awb).toLowerCase().includes(awbSearch.toLowerCase()));
             
             const matchesChannel = channelFilter === '' || so.channel === channelFilter;
 

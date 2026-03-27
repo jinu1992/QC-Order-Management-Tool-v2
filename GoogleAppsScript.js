@@ -108,6 +108,7 @@ function doPost(e) {
     else if (action === 'deleteUser') result = { status: 'success', message: 'User deleted' };
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
     else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
+    else if (action === 'addOrderNote') result = addOrderNote(data);
     else {
       return responseJSON({ status: 'error', message: 'Invalid action: ' + action });
     }
@@ -684,4 +685,53 @@ function getUsers() {
     return obj;
   });
   return { status: 'success', data: formatted };
+}
+
+/**
+ * Appends a note to the "Order Notes" column in PO_Database.
+ * Delimiter: "##"
+ */
+function addOrderNote(data) {
+  const { poNumber, note, userName } = data;
+  if (!poNumber || !note) return { status: 'error', message: 'PO Number or Note missing' };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_PO_DB);
+    const dataRange = sheet.getDataRange();
+    const values = dataRange.getValues();
+    const headers = values[0];
+
+    const poCol = headers.indexOf('PO Number');
+    const notesCol = headers.indexOf('Order Notes');
+
+    if (poCol === -1) return { status: 'error', message: 'PO Number column not found' };
+    if (notesCol === -1) return { status: 'error', message: 'Order Notes column not found' };
+
+    let rowIndex = -1;
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][poCol]).trim() === String(poNumber).trim()) {
+        rowIndex = i + 1;
+        break;
+      }
+    }
+
+    if (rowIndex === -1) return { status: 'error', message: 'PO not found: ' + poNumber };
+
+    const currentNotes = String(values[rowIndex - 1][notesCol] || "").trim();
+    const timestamp = Utilities.formatDate(new Date(), "GMT+5:30", "yyyy-MM-dd HH:mm");
+    const newNoteEntry = `[${timestamp}] ${userName || 'System'}: ${note}`;
+    
+    const updatedNotes = currentNotes ? currentNotes + " ## " + newNoteEntry : newNoteEntry;
+
+    sheet.getRange(rowIndex, notesCol + 1).setValue(updatedNotes);
+
+    return { 
+      status: 'success', 
+      message: 'Note added successfully',
+      updatedNotes: updatedNotes
+    };
+  } catch (err) {
+    return { status: 'error', message: err.toString() };
+  }
 }

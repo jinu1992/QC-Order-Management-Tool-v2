@@ -22,6 +22,8 @@ import {
     ClockIcon
 } from './icons/Icons';
 import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation, sendBBOrderConfirmationEmail } from '../services/api';
+import OrderNotesTimeline from './OrderNotesTimeline';
+import { User } from '../types';
 
 // --- Utilities ---
 
@@ -95,13 +97,14 @@ interface OrderRowProps {
     cancellingLineItemId: string | null;
     onSendBBConfirmation: (po: PurchaseOrder | PurchaseOrder[]) => void;
     isSendingBBConfirmation: boolean;
+    currentUser: User | null;
 }
 
 const OrderRow: React.FC<OrderRowProps> = ({
     po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll,
     isPushing, onPush, isSyncingZoho, onSyncZoho, isSyncingEE, onSyncEE, onTrackNotify, onCancel, isCancelling,
     onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
-    onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation
+    onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation, currentUser
 }: OrderRowProps) => {
     const poStatus = getCalculatedStatus(po);
     const items = po.items || [];
@@ -499,6 +502,15 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                     </button>
                                 )}
                             </div>
+                            
+                            <div className="pt-6 border-t border-gray-100">
+                                <OrderNotesTimeline 
+                                    poNumber={String(po.id)} 
+                                    notesString={po.orderNotes} 
+                                    currentUser={currentUser} 
+                                    onNoteAdded={onRefresh} 
+                                />
+                            </div>
                         </div>
                     </td>
                 </tr>
@@ -521,10 +533,11 @@ interface PoTableProps {
     isSyncing: boolean;
     inventoryItems?: InventoryItem[];
     channelConfigs: ChannelConfig[];
+    currentUser: User | null;
 }
 
 const PoTable: React.FC<PoTableProps> = ({
-    activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, tabCounts, onSync, isSyncing, addLog, addNotification, channelConfigs
+    activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, tabCounts, onSync, isSyncing, addLog, addNotification, channelConfigs, currentUser
 }) => {
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [selectedPoItems, setSelectedPoItems] = useState<{ [key: string]: string[] }>({});
@@ -958,8 +971,9 @@ const PoTable: React.FC<PoTableProps> = ({
                                     isRefreshing={refreshingPoId === po.poNumber}
                                     onCancelLineItem={(code) => handleCancelLineItemAction(po, code || '')}
                                     cancellingLineItemId={cancellingLineItemId}
-                                    onSendBBConfirmation={handleSendBBOrderConfirmationEmailAction}
+                                    onSendBBConfirmation={handleSendBBConfirmation}
                                     isSendingBBConfirmation={isSendingBBConfirmation}
+                                    currentUser={currentUser}
                                 />
                             ))
                         )}

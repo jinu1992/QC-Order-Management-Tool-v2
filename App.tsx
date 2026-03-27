@@ -348,7 +348,7 @@ const App: React.FC = () => {
       case 'Purchase Orders':
         return (
           <div className="p-4 sm:p-6 lg:p-8 flex-1">
-            <PoTable activeFilter={activeFilter} setActiveFilter={setActiveFilter} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} tabCounts={tabCounts} addLog={addLog} addNotification={addNotification} onSync={() => refreshData(true)} isSyncing={isLoading} channelConfigs={channelConfigs} />
+            <PoTable activeFilter={activeFilter} setActiveFilter={setActiveFilter} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} tabCounts={tabCounts} addLog={addLog} addNotification={addNotification} onSync={() => refreshData(true)} isSyncing={isLoading} channelConfigs={channelConfigs} currentUser={currentUser} />
           </div>
         );
       case 'File Uploader':
@@ -376,6 +376,7 @@ const App: React.FC = () => {
               inventoryItems={inventoryItems}
               googleTokens={googleTokens}
               setGoogleTokens={setGoogleTokens}
+              currentUser={currentUser}
             />
           </div>
         );

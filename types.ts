@@ -157,6 +157,7 @@ export interface PurchaseOrder {
     // New: Dispatch & Pickup tracking
     pickupDate?: string;
     labelUrl?: string;
+    orderNotes?: string;
 }
 
 export interface QuotationItem {

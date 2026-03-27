@@ -411,6 +411,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.consignmentValue && row['Consignment Value']) po.consignmentValue = String(row['Consignment Value']);
             if (!po.pickupDate && row['Pickup Date']) po.pickupDate = formatSheetDate(row['Pickup Date']);
             if (!po.labelUrl && row['Label URL']) po.labelUrl = String(row['Label URL']);
+            if (!po.orderNotes && row['Order Notes']) po.orderNotes = String(row['Order Notes']);
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
@@ -441,6 +442,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 shippingCharge: row['Shipping Charge'] ? Number(row['Shipping Charge']) : undefined,
                 pickupDate: formatSheetDate(row['Pickup Date']),
                 labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
+                orderNotes: row['Order Notes'] ? String(row['Order Notes']) : undefined,
             });
         }
     });
@@ -449,6 +451,10 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
 
 export const updateRTOStatus = async (eeReferenceCode: string, rtoStatus: string) => {
     return await postToScript({ action: 'updateRTOStatus', eeReferenceCode, rtoStatus });
+};
+
+export const saveOrderNote = async (poNumber: string, note: string, userName: string) => {
+    return await postToScript({ action: 'addOrderNote', poNumber, note, userName });
 };
 
 export const createInventoryItem = async (item: Partial<InventoryItem>) => {

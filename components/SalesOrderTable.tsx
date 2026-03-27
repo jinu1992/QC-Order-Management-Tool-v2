@@ -29,8 +29,10 @@ import {
     AlertIcon,
     QuestionMarkCircleIcon,
     DownloadIcon,
-    UploadIcon
+    UploadIcon,
+    MessageIcon
 } from './icons/Icons';
+import OrderNotesTimeline from './OrderNotesTimeline';
 import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
@@ -48,6 +50,7 @@ interface SalesOrderTableProps {
     inventoryItems?: InventoryItem[];
     googleTokens?: any;
     setGoogleTokens?: (tokens: any) => void;
+    currentUser?: any;
 }
 
 interface GroupedSalesOrder {
@@ -103,6 +106,7 @@ interface GroupedSalesOrder {
     consignmentValue?: string;
     pickupDate?: string;
     labelUrl?: string;
+    orderNotes?: string;
 }
 
 // --- Formatters ---
@@ -1377,7 +1381,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     isSyncing,
     inventoryItems,
     googleTokens,
-    setGoogleTokens
+    setGoogleTokens,
+    currentUser
 }) => {
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [isCreatingInvoice, setIsCreatingInvoice] = useState<string | null>(null);
@@ -1646,6 +1651,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         consignmentValue: po.consignmentValue,
                         pickupDate: item.pickupDate || po.pickupDate,
                         labelUrl: item.labelUrl || po.labelUrl,
+                        orderNotes: po.orderNotes || '',
                     };
                 } else {
                     const curPo = String(po.poNumber || po.id || '');
@@ -1681,6 +1687,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (isPlaceholder(groups[refCode].qrCodeUrl)) groups[refCode].qrCodeUrl = po.qrCodeUrl;
                     if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
+                    if (po.orderNotes && !groups[refCode].orderNotes?.includes(po.orderNotes)) {
+                        groups[refCode].orderNotes = groups[refCode].orderNotes ? `${groups[refCode].orderNotes}##${po.orderNotes}` : po.orderNotes;
+                    }
                 }
                 groups[refCode].items.push(item);
                 groups[refCode].qty += effectiveQty;
@@ -2894,7 +2903,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                     (eeStatusLower === 'confirmed' && canInvoice)
                                 );
 
-                                const isApptPending = (isZepto || isInstamart || isBB) && so.status === 'Invoiced' && !so.awb && !so.appointmentId && !so.appointmentDate;
+                                const apptRequired = isZepto || isInstamart || isBB;
+                                const hasAppt = !!so.appointmentId || !!so.appointmentDate;
+                                const isApptPending = apptRequired && !hasAppt && !so.awb;
                                 const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
                                 const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
@@ -3202,7 +3213,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             className={`px-6 py-2 text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 flex items-center gap-2 ${hasAppointmentId ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
                                                                         >
                                                                             {hasAppointmentId ? <PrinterIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
-                                                                            {hasAppointmentId ? 'Print Appointment Pass' : 'Generate Appointment Pass'}
+                                                                            {hasAppointmentId ? 'Print Appointment Pass' : 'Take Appointment'}
                                                                         </button>
                                                                     )}
                                                                     {showFlipkartAppointmentBtn && (
@@ -3245,7 +3256,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={!!isPushingPartner || isApptPending || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba'))}
+                                                                                disabled={!!isPushingPartner || isApptPending || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) || (apptRequired && !hasAppt)}
                                                                                 className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {isPushingPartner === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <SendIcon className="h-3 w-3" />}

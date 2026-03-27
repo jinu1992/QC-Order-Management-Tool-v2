@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { PurchaseOrder, POItem, User } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon } from './icons/Icons';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon } from './icons/Icons';
+import OrderNotesTimeline from './OrderNotesTimeline';
 
 interface GroupedSalesOrder {
     id: string; // eeReferenceCode
@@ -53,6 +54,7 @@ interface GroupedSalesOrder {
     consignmentProducts?: number;
     consignmentValue?: string;
     pickupDate?: string;
+    orderNotes?: string;
 }
 
 interface ShipmentManagerProps {
@@ -88,6 +90,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
     const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
+    const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -253,7 +256,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         consignmentQty: po.consignmentQty,
                         consignmentProducts: po.consignmentProducts,
                         consignmentValue: po.consignmentValue,
-                        pickupDate: item.pickupDate || po.pickupDate
+                        pickupDate: item.pickupDate || po.pickupDate,
+                        orderNotes: po.orderNotes || ''
                     };
                 } else {
                     const curPo = String(po.id || '');
@@ -290,6 +294,9 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
                     if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
+                    if (po.orderNotes && !groups[refCode].orderNotes?.includes(po.orderNotes)) {
+                        groups[refCode].orderNotes = groups[refCode].orderNotes ? `${groups[refCode].orderNotes} ## ${po.orderNotes}` : po.orderNotes;
+                    }
                 }
                 groups[refCode].items.push(item);
                 groups[refCode].qty += effectiveQty;
@@ -327,7 +334,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             if (!isAllowedChannel) return false;
 
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+            const isActuallyDelivered = (
+                trackingStatusLower === 'delivered' || 
+                trackingStatusLower === 'successfully delivered' || 
+                !!so.deliveredDate || 
+                so.status === 'Delivered' ||
+                (so.originalEeStatus || '').toLowerCase() === 'delivered' ||
+                (so.originalEeStatus || '').toLowerCase() === 'closed'
+            );
 
             // If it's Actually Delivered, we still show it (previously hidden per user request, now restored)
 
@@ -361,13 +375,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             } else if (activeTab === 'Delivered') {
                 return isActuallyDelivered;
             } else if (activeTab === 'Today') {
-                return isSameDay(so.appointmentDate, todayDate) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+                return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(so.appointmentDate, tomorrowDate) && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+                return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Missed') {
                 const missedAppt = isPastDate(so.appointmentDate, todayDate);
                 const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                return (missedAppt || missedEdd) && so.status !== 'RTO Initiated' && so.status !== 'Returned' && !isActuallyDelivered;
+                const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
+                return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
             }
 
             return true;
@@ -437,11 +452,12 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
     const getStatusBadge = (so: GroupedSalesOrder) => {
         const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-        const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
-        const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered;
+        const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered' || so.originalEeStatus.toLowerCase() === 'delivered' || so.originalEeStatus.toLowerCase() === 'closed');
+        const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
+        const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-        if (so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO') return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+        if (isRTO) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
         if (isMissed) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> Missed</span>;
         if (so.appointmentDate) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-700 flex items-center gap-1 w-fit"><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
@@ -635,23 +651,37 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                 const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
                                 const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
 
-                                let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent";
+                                const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
+                                const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
+
+                                let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
                                 if (isToday && !isActuallyDelivered) {
-                                    rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500";
+                                    rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500 cursor-pointer";
                                 } else if (isTomorrow && !isActuallyDelivered) {
-                                    rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500";
+                                    rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500 cursor-pointer";
                                 } else if (isMissed && !isActuallyDelivered) {
-                                    rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500";
+                                    rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer";
                                 } else if (isActuallyDelivered) {
-                                    rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-default";
+                                    rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-pointer";
                                 }
 
+                                const isExpanded = expandedRowId === so.id;
+
                                 return (
-                                    <tr key={so.id} className={rowClass}>
+                                    <React.Fragment key={so.id}>
+                                    <tr 
+                                        onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
+                                        className={rowClass}
+                                    >
                                         {/* Channel & Store */}
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="font-semibold text-gray-900">{so.channel}</div>
-                                            <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
+                                            <div className="flex items-center gap-2">
+                                                {isExpanded ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
+                                                <div>
+                                                    <div className="font-semibold text-gray-900">{so.channel}</div>
+                                                    <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
+                                                </div>
+                                            </div>
                                         </td>
 
                                         {/* PO Details */}
@@ -726,6 +756,21 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                             )}
                                         </td>
                                     </tr>
+                                    {isExpanded && (
+                                        <tr className="bg-gray-50/50">
+                                            <td colSpan={6} className="px-6 py-4">
+                                                <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                                    <OrderNotesTimeline 
+                                                        orderId={so.id}
+                                                        poReference={so.poReference}
+                                                        notes={so.orderNotes || ''}
+                                                        currentUser={currentUser}
+                                                    />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    </React.Fragment>
                                 )
                             }) : (
                                 <tr>
