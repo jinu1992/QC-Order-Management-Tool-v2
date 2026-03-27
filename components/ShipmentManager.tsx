@@ -646,7 +646,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                             {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
                                 const isToday = isSameDay(so.appointmentDate, todayDate);
                                 const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
-                                const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate);
+                                // const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate); // Redundant declaration removed
 
                                 const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
                                 const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
@@ -761,10 +761,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                             <td colSpan={6} className="px-6 py-4">
                                                 <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
                                                     <OrderNotesTimeline 
-                                                        orderId={so.id}
-                                                        poReference={so.poReference}
-                                                        notes={so.orderNotes || ''}
-                                                        currentUser={currentUser}
+                                                        poNumber={so.poReference}
+                                                        notesString={so.orderNotes}
+                                                        currentUser={currentUser || null}
+                                                        onNoteAdded={() => {}}
                                                     />
                                                 </div>
                                             </td>

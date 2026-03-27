@@ -399,6 +399,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                             const isCancelled = (item.itemStatus || '').toLowerCase() === 'cancelled';
                                             const isFullyFulfillable = (item.fulfillableQty ?? 0) >= item.qty;
                                             const unitPriceIncTax = ((item.unitCost || 0) * 1.05).toFixed(2);
+                                            // const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate); // Removed redundant declaration
                                             const checked = isSelected(item.articleCode);
                                             const cleanCode = item.articleCode.trim();
                                             const lineId = `${po.poNumber}-${cleanCode}`;
@@ -507,7 +508,8 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                 <OrderNotesTimeline 
                                     poNumber={String(po.id)} 
                                     notesString={po.orderNotes} 
-                                    currentUser={currentUser} 
+                                    currentUser={currentUser || null}
+ 
                                     onNoteAdded={onRefresh} 
                                 />
                             </div>
@@ -971,7 +973,7 @@ const PoTable: React.FC<PoTableProps> = ({
                                     isRefreshing={refreshingPoId === po.poNumber}
                                     onCancelLineItem={(code) => handleCancelLineItemAction(po, code || '')}
                                     cancellingLineItemId={cancellingLineItemId}
-                                    onSendBBConfirmation={handleSendBBConfirmation}
+                                    onSendBBConfirmation={handleSendBBOrderConfirmationEmailAction}
                                     isSendingBBConfirmation={isSendingBBConfirmation}
                                     currentUser={currentUser}
                                 />
