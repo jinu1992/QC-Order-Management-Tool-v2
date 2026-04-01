@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { PurchaseOrder, POItem, User } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon } from './icons/Icons';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
 
 interface GroupedSalesOrder {
@@ -60,6 +60,7 @@ interface GroupedSalesOrder {
 interface ShipmentManagerProps {
     purchaseOrders: PurchaseOrder[];
     currentUser?: User | null;
+    setPurchaseOrders?: React.Dispatch<React.SetStateAction<PurchaseOrder[]>>;
 }
 
 // Helper to safely format dates and suppress the 1899 Excel epoch bug
@@ -85,7 +86,7 @@ const formatSafeTime = (timeStr?: string): string => {
     } catch { return ''; }
 };
 
-const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser }: ShipmentManagerProps) => {
+const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser, setPurchaseOrders }: ShipmentManagerProps) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
@@ -686,7 +687,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
                                         {/* PO Details */}
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="font-medium text-gray-900">{so.poReference}</div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-gray-900">{so.poReference}</span>
+                                                {so.orderNotes && <MessageIcon className="h-4 w-4 text-orange-500 flex-shrink-0" title="Has Order Notes" />}
+                                            </div>
                                             <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
                                             {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
                                         </td>
@@ -765,6 +769,16 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         notesString={so.orderNotes}
                                                         currentUser={currentUser || null}
                                                         onNoteAdded={() => {}}
+                                                        onLocalNoteUpdate={(newNotes) => {
+                                                            if (setPurchaseOrders) {
+                                                                setPurchaseOrders(prev => prev.map(p => {
+                                                                    if (so.poReference.includes(String(p.id))) {
+                                                                        return { ...p, orderNotes: newNotes };
+                                                                    }
+                                                                    return p;
+                                                                }));
+                                                            }
+                                                        }}
                                                     />
                                                 </div>
                                             </td>

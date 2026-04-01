@@ -2917,7 +2917,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                             title={zeptoTooltip}
                                         >
                                             <td className="p-4 text-center sticky left-0 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]"><div className="text-gray-400 hover:text-partners-green">{isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}</div></td>
-                                            <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">{so.id}</td>
+                                            <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">
+                                                <div className="flex items-center gap-2">
+                                                    <span>{so.id}</span>
+                                                    {so.orderNotes && <MessageIcon className="h-4 w-4 text-orange-500 flex-shrink-0" title="Has Order Notes" />}
+                                                </div>
+                                            </td>
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col gap-1">
                                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit ${so.status === 'Returned' ? 'bg-red-100 text-red-700' :
@@ -3360,6 +3365,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     </tbody>
                                                                 </table>
                                                             </div>
+                                                        </div>
+                                                        <div className="pt-6 border-t border-gray-100">
+                                                            <div className="flex justify-between items-center mb-4">
+                                                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><MessageIcon className="h-4 w-4 text-orange-500" /> Order Notes & Remarks</h4>
+                                                            </div>
+                                                            <OrderNotesTimeline 
+                                                                poNumber={so.poReference}
+                                                                notesString={so.orderNotes}
+                                                                currentUser={currentUser || null}
+                                                                onNoteAdded={() => {}}
+                                                                onLocalNoteUpdate={(newNotes) => {
+                                                                    setPurchaseOrders(prev => prev.map(p => {
+                                                                        if (so.poReference.includes(String(p.id))) {
+                                                                            return { ...p, orderNotes: newNotes };
+                                                                        }
+                                                                        return p;
+                                                                    }));
+                                                                }}
+                                                            />
                                                         </div>
                                                     </div>
                                                 </td>

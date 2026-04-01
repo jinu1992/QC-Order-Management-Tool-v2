@@ -19,7 +19,8 @@ import {
     FilterIcon,
     TrashIcon,
     SortIcon,
-    ClockIcon
+    ClockIcon,
+    MessageIcon
 } from './icons/Icons';
 import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation, sendBBOrderConfirmationEmail } from '../services/api';
 import OrderNotesTimeline from './OrderNotesTimeline';
@@ -98,13 +99,15 @@ interface OrderRowProps {
     onSendBBConfirmation: (po: PurchaseOrder | PurchaseOrder[]) => void;
     isSendingBBConfirmation: boolean;
     currentUser: User | null;
+    onLocalNoteUpdate: (updatedNotes: string) => void;
 }
 
 const OrderRow: React.FC<OrderRowProps> = ({
     po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll,
     isPushing, onPush, isSyncingZoho, onSyncZoho, isSyncingEE, onSyncEE, onTrackNotify, onCancel, isCancelling,
     onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
-    onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation, currentUser
+    onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation, currentUser,
+    onLocalNoteUpdate
 }: OrderRowProps) => {
     const poStatus = getCalculatedStatus(po);
     const items = po.items || [];
@@ -223,7 +226,14 @@ const OrderRow: React.FC<OrderRowProps> = ({
                         {isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
                     </div>
                 </td>
-                <td className="px-6 py-4 font-bold text-partners-green whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">{po.poNumber}</td>
+                <td className="px-6 py-4 font-bold text-partners-green whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">
+                    <div className="flex items-center gap-2">
+                        <span>{po.poNumber}</span>
+                        {po.orderNotes && (
+                            <MessageIcon className="h-4 w-4 text-indigo-500 flex-shrink-0" />
+                        )}
+                    </div>
+                </td>
                 <td className="px-6 py-4"><StatusBadge status={poStatus} /></td>
                 <td className="px-6 py-4 font-medium text-gray-700">{po.channel}</td>
                 <td className="px-6 py-4 text-gray-500">{po.storeCode}</td>
@@ -510,7 +520,10 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                     notesString={po.orderNotes} 
                                     currentUser={currentUser || null}
  
-                                    onNoteAdded={onRefresh} 
+                                    onNoteAdded={(updatedNotesStr) => {
+                                        if (updatedNotesStr) onLocalNoteUpdate(updatedNotesStr);
+                                        onRefresh();
+                                    }} 
                                 />
                             </div>
                         </div>
@@ -976,6 +989,11 @@ const PoTable: React.FC<PoTableProps> = ({
                                     onSendBBConfirmation={handleSendBBOrderConfirmationEmailAction}
                                     isSendingBBConfirmation={isSendingBBConfirmation}
                                     currentUser={currentUser}
+                                    onLocalNoteUpdate={(updatedNotes) => {
+                                        setPurchaseOrders((prev) => 
+                                            prev.map((p) => p.id === po.id ? { ...p, orderNotes: updatedNotes } : p)
+                                        );
+                                    }}
                                 />
                             ))
                         )}

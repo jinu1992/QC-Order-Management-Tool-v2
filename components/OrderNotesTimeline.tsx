@@ -7,30 +7,54 @@ interface OrderNotesTimelineProps {
     poNumber: string;
     notesString?: string;
     currentUser: User | null;
-    onNoteAdded: () => void;
+    onNoteAdded: (updatedNotesString?: string) => void;
 }
 
 const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notesString, currentUser, onNoteAdded }) => {
     const [newNote, setNewNote] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [localNotesString, setLocalNotesString] = useState(notesString || '');
+
+    React.useEffect(() => {
+        setLocalNotesString(notesString || '');
+    }, [notesString]);
 
     // Parse notes: "[2024-03-27 15:00] Admin: Note 1 ## [2024-03-27 15:10] User: Note 2"
-    const notes = (notesString || '').split(' ## ').filter(n => n.trim() !== '').reverse();
+    const notes = localNotesString.split(' ## ').filter(n => n.trim() !== '').reverse();
 
     const handleAddNote = async () => {
         if (!newNote.trim() || !currentUser) return;
         
         setIsSubmitting(true);
+        const noteText = newNote.trim();
+        const userName = currentUser.name;
+        
+        // Optimistic local update
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const timestamp = `${year}-${month}-${day} ${hours}:${minutes}`;
+        
+        const newNoteEntry = `[${timestamp}] ${userName || 'System'}: ${noteText}`;
+        const updatedNotesString = localNotesString ? localNotesString + " ## " + newNoteEntry : newNoteEntry;
+        
+        setLocalNotesString(updatedNotesString);
+        setNewNote('');
+
         try {
-            const result = await saveOrderNote(poNumber, newNote.trim(), currentUser.name);
-            if (result.status === 'success') {
-                setNewNote('');
-                onNoteAdded(); // Trigger refresh
+            const result = await saveOrderNote(poNumber, noteText, userName);
+             if (result.status === 'success') {
+                onNoteAdded(updatedNotesString);
             } else {
                 alert('Failed to add note: ' + result.message);
+                setLocalNotesString(notesString || '');
             }
         } catch (error) {
             alert('Error adding note');
+            setLocalNotesString(notesString || '');
         } finally {
             setIsSubmitting(false);
         }
