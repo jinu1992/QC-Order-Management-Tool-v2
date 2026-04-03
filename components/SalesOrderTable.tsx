@@ -205,13 +205,7 @@ const formatTimeForInput = (timeInput?: any): string => {
 
 // --- Flipkart Consignment Modal ---
 
-const FlipkartConsignmentModal: FC<{
-    so: GroupedSalesOrder,
-    onClose: () => void,
-    onSuccess: () => void,
-    addNotification: any,
-    userEmail: string
-}> = ({ so, onClose, onSuccess, addNotification, userEmail }) => {
+const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, userEmail }: { so: GroupedSalesOrder, onClose: () => void, onSuccess: () => void, addNotification: any, userEmail: string }) => {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadComplete, setUploadComplete] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -369,13 +363,7 @@ const FlipkartConsignmentModal: FC<{
 
 // --- Flipkart E-Invoice Modal ---
 
-const FlipkartEInvoiceModal: FC<{
-    so: GroupedSalesOrder,
-    onClose: () => void,
-    onSuccess: () => void,
-    addNotification: any,
-    userEmail: string
-}> = ({ so, onClose, onSuccess, addNotification, userEmail }) => {
+const FlipkartEInvoiceModal = ({ so, onClose, onSuccess, addNotification, userEmail }: { so: GroupedSalesOrder, onClose: () => void, onSuccess: () => void, addNotification: any, userEmail: string }) => {
     const [isUploading, setIsUploading] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [extractedData, setExtractedData] = useState<{ invoiceNumber: string, invoiceDate: string, irn: string } | null>(null);
@@ -402,18 +390,36 @@ const FlipkartEInvoiceModal: FC<{
         const file = e.target.files?.[0];
         if (!file) return;
 
+        // 1. File Name Validation
+        const expectedName = `${so.poReference}_eInvoice.pdf`;
+        if (file.name.toLowerCase() !== expectedName.toLowerCase()) {
+            addNotification(`Incorrect file name. Please upload ${expectedName}`, 'error');
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
         setIsUploading(true);
         try {
             const text = await extractTextFromPdf(file);
             
             // Regex for Flipkart e-Invoice
             const invNoMatch = text.match(/Invoice No\.?\s*:\s*([A-Z0-9/-]+)/i) || text.match(/Tax Invoice No\.?\s*:\s*([A-Z0-9/-]+)/i);
-            const dateMatch = text.match(/Invoice Date\s*:\s*(\d{2}-\d{2}-\d{4})/i) || text.match(/Date\s*:\s*(\d{2}-\d{2}-\d{4})/i);
+            const dateMatch = text.match(/Invoice Date\s*:\s*(\d{2}[\-/]\d{2}[\-/]\d{4})/i) || text.match(/Date\s*:\s*(\d{2}[\-/]\d{2}[\-/]\d{4})/i);
             const irnMatch = text.match(/IRN\s*:\s*([a-f0-9]{64})/i);
+
+            let formattedDate = '';
+            if (dateMatch) {
+                const parts = dateMatch[1].trim().split(/[\-\/]/);
+                if (parts.length === 3) {
+                    formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                } else {
+                    formattedDate = dateMatch[1].trim();
+                }
+            }
 
             setExtractedData({
                 invoiceNumber: invNoMatch ? invNoMatch[1].trim() : '',
-                invoiceDate: dateMatch ? dateMatch[1].trim() : '',
+                invoiceDate: formattedDate,
                 irn: irnMatch ? irnMatch[1].trim() : ''
             });
             setIsUploading(false);
@@ -497,8 +503,8 @@ const FlipkartEInvoiceModal: FC<{
                                     <input
                                         type="text"
                                         value={extractedData.invoiceNumber}
-                                        onChange={(e) => setExtractedData({ ...extractedData, invoiceNumber: e.target.value })}
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold"
+                                        readOnly
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold text-gray-500 cursor-not-allowed"
                                     />
                                 </div>
                                 <div>
@@ -506,17 +512,17 @@ const FlipkartEInvoiceModal: FC<{
                                     <input
                                         type="text"
                                         value={extractedData.invoiceDate}
-                                        onChange={(e) => setExtractedData({ ...extractedData, invoiceDate: e.target.value })}
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold"
+                                        readOnly
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold text-gray-500 cursor-not-allowed"
                                     />
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">IRN</label>
                                     <textarea
                                         value={extractedData.irn}
-                                        onChange={(e) => setExtractedData({ ...extractedData, irn: e.target.value })}
+                                        readOnly
                                         rows={2}
-                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-mono text-xs font-bold"
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-mono text-xs font-bold text-gray-500 cursor-not-allowed"
                                     />
                                 </div>
                             </div>
@@ -1861,17 +1867,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (!groups[refCode].batchCreatedAt) groups[refCode].batchCreatedAt = batchDate;
                     if (!groups[refCode].invoiceDate) groups[refCode].invoiceDate = item.invoiceDate;
                     if (!groups[refCode].manifestDate) groups[refCode].manifestDate = maniDate;
-                    const isPlaceholder = (val: any) => !val || val === 'GENERATING...' || val === 'SUCCESS' || val === 'PROCESSING';
+                    const isPlaceholder = (val: any) => !val || val === 'GENERATING...' || val === 'SUCCESS' || val === 'PROCESSING' || val === 'N/A' || val === 'TBD';
 
                     if (isPlaceholder(groups[refCode].invoiceNumber) && !isPlaceholder(invNum)) groups[refCode].invoiceNumber = invNum;
                     if (isPlaceholder(groups[refCode].awb) && awb) groups[refCode].awb = awb;
+                    if (isPlaceholder(groups[refCode].carrier) && carrier) groups[refCode].carrier = carrier;
                     if (isPlaceholder(groups[refCode].trackingStatus) && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
                     if (isPlaceholder(groups[refCode].trackingUrl) && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
                     if (isPlaceholder(groups[refCode].ewb)) groups[refCode].ewb = item.ewb || po.ewb;
                     if (isPlaceholder(groups[refCode].fbaShipmentId)) groups[refCode].fbaShipmentId = item.fbaShipmentId || po.fbaShipmentId;
-                    if (isPlaceholder(groups[refCode].appointmentId)) groups[refCode].appointmentId = po.appointmentId;
+                    if (isPlaceholder(groups[refCode].appointmentId)) groups[refCode].appointmentId = apptId;
                     if (isPlaceholder(groups[refCode].qrCodeUrl)) groups[refCode].qrCodeUrl = po.qrCodeUrl;
-                    if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
+                    if (isPlaceholder(groups[refCode].appointmentDate)) groups[refCode].appointmentDate = apptDate;
+                    if (isPlaceholder(groups[refCode].appointmentTime)) groups[refCode].appointmentTime = po.appointmentTime;
+                    if (po.shippingCharge !== undefined && (groups[refCode].shippingCharge === 0 || groups[refCode].shippingCharge === undefined)) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
                     if (po.orderNotes && !groups[refCode].orderNotes?.includes(po.orderNotes)) {
                         groups[refCode].orderNotes = groups[refCode].orderNotes ? `${groups[refCode].orderNotes}##${po.orderNotes}` : po.orderNotes;
@@ -2081,57 +2090,41 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const refreshSingleSOState = async (poReference: string) => {
+    const refreshSingleSOState = async (soId: string, poReference: string) => {
         setIsRefreshingSo(poReference);
-        const poIds = poReference.split(',').map(s => s.trim());
-        let successCount = 0;
-        let failCount = 0;
-        let lastMessage = '';
-
-        for (const id of poIds) {
-            try {
-                // Trigger sync (POST) - we don't block on failure here to match PoTable behavior
-                try {
-                    const syncRes = await syncSinglePO(id);
-                    if (syncRes && syncRes.message) {
-                        lastMessage = syncRes.message;
-                    }
-                } catch (syncErr) {
-                    console.warn("Sync failed for", id, syncErr);
-                }
-
-                // Fetch updated data (GET) - this is what the user says "works" in PoTable
-                const updated = await fetchPurchaseOrder(id);
-                if (updated) {
-                    setPurchaseOrders(prev => prev.map(p => p.poNumber === id ? updated : p));
-                    successCount++;
-                    if (!lastMessage) lastMessage = `Refreshed ${id}`;
-                } else {
-                    failCount++;
-                    lastMessage = `Could not find ${id} in database`;
-                }
-            } catch (e: any) {
-                failCount++;
-                lastMessage = e.message || 'Network error';
-                console.error("Failed refresh for SO sub-po", id);
+        try {
+            // First trigger sync for each PO in the group to get latest data into GAS DB
+            const poIds = poReference.split(',').map(s => s.trim());
+            for (const id of poIds) {
+                try { await syncSinglePO(id); } catch (e) { console.warn("Sync failed for", id); }
             }
-        }
 
-        if (poIds.length === 1) {
-            if (successCount === 1) {
-                addNotification(lastMessage || `Refreshed ${poIds[0]} successfully`, 'success');
+            // Now fetch all POs for this SO from GAS DB
+            const updatedPOs = await fetchSalesOrder(soId);
+            
+            if (updatedPOs && updatedPOs.length > 0) {
+                setPurchaseOrders(prev => {
+                    const newPOs = [...prev];
+                    updatedPOs.forEach(upd => {
+                        const index = newPOs.findIndex(p => p.poNumber === upd.poNumber);
+                        if (index !== -1) {
+                            newPOs[index] = upd;
+                        } else {
+                            newPOs.push(upd);
+                        }
+                    });
+                    return newPOs;
+                });
+                addNotification(`Targeted Refresh Complete for SO ${soId}`, 'success');
             } else {
-                addNotification(lastMessage || `Failed to refresh ${poIds[0]}`, 'error');
+                addNotification(`No updated data found for SO ${soId}`, 'warning');
             }
-        } else {
-            if (successCount > 0) {
-                addNotification(`Refreshed ${successCount} orders. ${failCount > 0 ? `${failCount} failed.` : ''}`, failCount > 0 ? 'warning' : 'success');
-            } else if (failCount > 0) {
-                addNotification(`Failed to refresh orders: ${lastMessage}`, 'error');
-            }
+        } catch (e: any) {
+            console.error("Refresh failed", e);
+            addNotification(`Refresh failed: ${e.message || 'Unknown error'}`, 'error');
+        } finally {
+            setIsRefreshingSo(null);
         }
-
-        setIsRefreshingSo(null);
     };
 
     const handleFlipkartConsignmentSuccess = () => {
@@ -2538,7 +2531,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     return po;
                 }));
 
-                await refreshSingleSOState(poRef);
+                await refreshSingleSOState(eeRef, poRef);
             } else {
                 addNotification('Error: ' + (res.message || 'Failed to trigger invoice generation.'), 'error');
                 setPurchaseOrders(prev => prev.map(po => {
@@ -2605,7 +2598,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     return po;
                 }));
 
-                await refreshSingleSOState(so.poReference);
+                await refreshSingleSOState(so.id, so.poReference);
                 setFbaShipmentModal({ isOpen: false, so: null });
             } else {
                 addNotification('Zoho Error: ' + (res.message || 'Unknown invoice error'), 'error');
@@ -2661,56 +2654,63 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     };
 
     /**
-     * Special function for Flipkart Packing Slip CSV generation
+     * Special function for Flipkart Packing Slip CSV generation (Box-wise)
      */
-    const handleDownloadFlipkartPackingSlip = (so: GroupedSalesOrder) => {
+    const handleDownloadFlipkartPackingSlip = async (so: GroupedSalesOrder) => {
         if (!inventoryItems) {
             addNotification('Inventory mappings not loaded.', 'error');
             return;
         }
 
-        const headers = ["FSN", "Article Code", "EAN Code", "MRP", "Size", "Qty", "Unit Price", "Tax %", "Invoice No", "PO No"];
-        const rows = so.items.map(item => {
-            // Locate the mapping based on SKU and Flipkart channel
-            const mapping = inventoryItems.find((inv: InventoryItem) =>
-                (inv.sku === item.masterSku || inv.articleCode === item.articleCode) &&
-                inv.channel.toLowerCase().includes('flipkart')
-            );
+        try {
+            addNotification('Fetching box-wise packing data...', 'info');
+            const packingData = await fetchPackingData(so.poReference);
 
-            // Row construction based on specification
-            return [
-                mapping?.articleCode || '', // FSN is the Channel Item Code
-                mapping?.itemName || item.itemName || '', // Article Code is Itemname
-                mapping?.ean || '',
-                mapping?.mrp || 0,
-                mapping?.size || '',
-                item.shippedQuantity || item.itemQuantity || item.qty,
-                item.unitCost || 0,
-                "5", // Tax % hardcoded to 5
-                so.invoiceNumber || 'N/A',
-                so.poReference
-            ];
-        });
+            if (!packingData || packingData.length === 0) {
+                addNotification('No packing data found for this PO in Master Packing Sheet.', 'error');
+                return;
+            }
 
-        if (rows.length === 0) {
-            addNotification('No items found in this order.', 'warning');
-            return;
+            const headers = ["BOX NUMBER", "BOX NAME", "LENGTH (cm)", "BREADTH (cm)", "HEIGHT (cm)", "WEIGHT (kg)", "NOMINAL VALUE (INR)", "FSN", "QUANTITY"];
+            
+            // Map packing data to CSV rows
+            const rows = packingData.map((box: any, index: number) => {
+                const sku = box["SKU"] || box.sku || '';
+                const mapping = inventoryItems.find((inv: InventoryItem) =>
+                    (inv.sku === sku) && inv.channel.toLowerCase().includes('flipkart')
+                );
+
+                return [
+                    index + 1,
+                    box["Box ID"] || box.boxId || `Box ${index + 1}`,
+                    box["Box Length"] || box.length || 0,
+                    box["Box Width"] || box.width || 0,
+                    box["Box Height"] || box.height || 0,
+                    box["Box Weight"] || box.weight || 0,
+                    box["Value"] || box.value || 0,
+                    mapping?.articleCode || sku, // FSN is the articleCode
+                    box["Item Quantity"] || box.qty || 1
+                ];
+            });
+
+            const csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+            ].join('\n');
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `Flipkart_PackingSlip_BoxWise_${so.id}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            addLog('CSV Download', `Downloaded Flipkart Box-Wise Packing Slip for ${so.id}`);
+        } catch (err) {
+            console.error("Error generating packing slip:", err);
+            addNotification('Error generating packing slip. Check console.', 'error');
         }
-
-        const csvContent = [
-            headers.join(','),
-            ...rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
-        ].join('\n');
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.setAttribute('href', url);
-        link.setAttribute('download', `Flipkart_PackingSlip_${so.id}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        addLog('CSV Download', `Downloaded Flipkart Packing Slip for ${so.id}`);
     };
 
     /**
@@ -2802,13 +2802,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
             const isInstamart = so.channel.toLowerCase().includes('instamart');
             const isAmazonFba = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart');
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
-            if (isAmazonFba) {
+            if (isAmazonFba || isFlipkart) {
                 return {
-                    label: 'FBA Handled',
+                    label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
                     color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
-                    onClick: () => addNotification('Amazon FBA orders are fulfilled by Amazon, not our shipping partners.', 'info'),
+                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
                     disabled: true
                 };
             }
@@ -3301,7 +3302,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <div className="flex justify-between items-center mb-4">
                                                                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><CalendarIcon className="h-4 w-4 text-blue-500" /> Fulfillment Ref</h4>
                                                                     <button
-                                                                        onClick={() => refreshSingleSOState(so.poReference)}
+                                                                        onClick={() => refreshSingleSOState(so.id, so.poReference)}
                                                                         disabled={isRefreshing}
                                                                         className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50"
                                                                     >

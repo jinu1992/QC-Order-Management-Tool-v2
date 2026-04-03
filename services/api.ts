@@ -253,6 +253,22 @@ export const fetchPurchaseOrder = async (poNumber: string): Promise<PurchaseOrde
     return orders.length > 0 ? orders[0] : null;
 };
 
+export const fetchSalesOrders = async (referenceCode?: string): Promise<PurchaseOrder[]> => {
+    try {
+        const url = referenceCode
+            ? `${API_URL}?action=getSalesOrders&referenceCode=${encodeURIComponent(referenceCode)}`
+            : `${API_URL}?action=getSalesOrders`;
+        const response = await fetch(url, { redirect: 'follow' });
+        const json = await response.json();
+        if (json.status === 'success' && Array.isArray(json.data)) return transformSheetDataToPOs(json.data);
+        return [];
+    } catch (error) { return []; }
+};
+
+export const fetchSalesOrder = async (referenceCode: string): Promise<PurchaseOrder[]> => {
+    return await fetchSalesOrders(referenceCode);
+};
+
 export const fetchStorePocMappings = async (): Promise<StorePocMapping[]> => {
     try {
         const response = await fetch(`${API_URL}?action=getStorePocMappings`, { redirect: 'follow' });

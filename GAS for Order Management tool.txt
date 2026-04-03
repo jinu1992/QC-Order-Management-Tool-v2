@@ -141,6 +141,7 @@ function doPost(e) {
     else if (action === 'SEND_AND_ACCEPT_ESTIMATE') result = SEND_AND_ACCEPT_ESTIMATE(data);
     else if (action === 'FETCH_LAST_14_DAYS_QUOTATIONS') result = FETCH_LAST_14_DAYS_QUOTATIONS();
     else if (action === 'syncSinglePO') result = { status: 'success', message: 'PO ' + data.poNumber + ' sync triggered.' };
+    else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
@@ -603,6 +604,36 @@ function getPurchaseOrders(poNumberFilter) {
     
     // If filter is provided, skip non-matching rows
     if (poNumberFilter && poNumIdx !== -1 && String(row[poNumIdx]).trim() !== String(poNumberFilter).trim()) {
+        continue;
+    }
+
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) { obj[headers[j]] = row[j]; }
+    data.push(obj);
+  }
+  
+  return responseJSON({status: 'success', data: data});
+}
+
+
+function getSalesOrders(referenceCodeFilter) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  if (!sheet) return responseJSON({status: 'error', message: `Sheet "${SHEET_PO_DB}" not found.`});
+  
+  const rawData = sheet.getDataRange().getValues();
+  if (rawData.length <= 1) return responseJSON({status: 'success', data: []});
+  
+  const headers = rawData[0];
+  const refCodeIdx = headers.indexOf("EE_reference_code");
+
+  const data = [];
+  for (let i = 1; i < rawData.length; i++) {
+    const row = rawData[i];
+    if (row.every(cell => cell === "")) continue;
+    
+    // If filter is provided, skip non-matching rows
+    if (referenceCodeFilter && refCodeIdx !== -1 && String(row[refCodeIdx]).trim() !== String(referenceCodeFilter).trim()) {
         continue;
     }
 
