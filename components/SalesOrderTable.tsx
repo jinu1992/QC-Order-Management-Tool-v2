@@ -432,7 +432,7 @@ const FlipkartEInvoiceModal: FC<{
 
         setIsProcessing(true);
         try {
-            const res = await processFlipkartEInvoice(so.poReference, extractedData, userEmail);
+            const res = await processFlipkartEInvoice(so.poReference, extractedData!, so.items, userEmail);
             if (res.status === 'success') {
                 addNotification('Invoice processed successfully and Zoho creation triggered.', 'success');
                 onSuccess();
