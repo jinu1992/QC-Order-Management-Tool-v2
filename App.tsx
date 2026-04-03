@@ -12,6 +12,7 @@ import InventoryManager from './components/InventoryManager';
 import ReportsManager from './components/ReportsManager';
 import QuotationsManager from './components/QuotationsManager';
 import ShipmentManager from './components/ShipmentManager';
+import DispatchManager from './components/DispatchManager';
 import FileUploader from './components/FileUploader';
 import KnowledgeBase from './components/KnowledgeBase';
 import ToastContainer from './components/ToastContainer';
