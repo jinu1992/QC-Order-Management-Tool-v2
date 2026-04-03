@@ -33,7 +33,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -361,6 +361,191 @@ const FlipkartConsignmentModal: FC<{
                             Cancel
                         </button>
                     )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Flipkart E-Invoice Modal ---
+
+const FlipkartEInvoiceModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
+    onSuccess: () => void,
+    addNotification: any,
+    userEmail: string
+}> = ({ so, onClose, onSuccess, addNotification, userEmail }) => {
+    const [isUploading, setIsUploading] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [extractedData, setExtractedData] = useState<{ invoiceNumber: string, invoiceDate: string, irn: string } | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const extractTextFromPdf = async (file: File): Promise<string> => {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfjsLib = (window as any)['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            const pageText = content.items.map((item: any) => item.str).join(" ");
+            fullText += pageText + "\n";
+        }
+        return fullText;
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploading(true);
+        try {
+            const text = await extractTextFromPdf(file);
+            
+            // Regex for Flipkart e-Invoice
+            const invNoMatch = text.match(/Invoice No\.?\s*:\s*([A-Z0-9/-]+)/i) || text.match(/Tax Invoice No\.?\s*:\s*([A-Z0-9/-]+)/i);
+            const dateMatch = text.match(/Invoice Date\s*:\s*(\d{2}-\d{2}-\d{4})/i) || text.match(/Date\s*:\s*(\d{2}-\d{2}-\d{4})/i);
+            const irnMatch = text.match(/IRN\s*:\s*([a-f0-9]{64})/i);
+
+            setExtractedData({
+                invoiceNumber: invNoMatch ? invNoMatch[1].trim() : '',
+                invoiceDate: dateMatch ? dateMatch[1].trim() : '',
+                irn: irnMatch ? irnMatch[1].trim() : ''
+            });
+            setIsUploading(false);
+        } catch (err: any) {
+            console.error("PDF Extraction Error:", err);
+            addNotification('Error reading PDF file. Ensure it is a valid Flipkart E-Invoice.', 'error');
+            setIsUploading(false);
+        }
+    };
+
+    const handleConfirm = async () => {
+        if (!extractedData?.invoiceNumber || !extractedData?.invoiceDate || !extractedData?.irn) {
+            addNotification('Please ensure all required fields (Invoice No, Date, IRN) are filled.', 'error');
+            return;
+        }
+
+        setIsProcessing(true);
+        try {
+            const res = await processFlipkartEInvoice(so.poReference, extractedData, userEmail);
+            if (res.status === 'success') {
+                addNotification('Invoice processed successfully and Zoho creation triggered.', 'success');
+                onSuccess();
+            } else {
+                addNotification(res.message || 'Processing failed.', 'error');
+            }
+        } catch (err) {
+            console.error("Invoice processing error:", err);
+            addNotification('Error processing invoice.', 'error');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-blue-100 animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-blue-600 border-b border-blue-700 flex flex-col items-center text-center">
+                    <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4">
+                        <InvoiceIcon className="h-10 w-10 text-white" />
+                    </div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Flipkart E-Invoice Upload</h3>
+                    <p className="text-xs text-blue-100 mt-1">Order Ref: <span className="font-bold text-white">{so.id}</span></p>
+                </div>
+
+                <div className="p-8">
+                    {!extractedData ? (
+                        <div className="space-y-4">
+                            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
+                                <InfoIcon className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-blue-800 leading-relaxed">Please upload the <b>E-Invoice PDF</b> from the Flipkart portal. We will extract Invoice details and IRN automatically.</p>
+                            </div>
+
+                            <input type="file" ref={fileInputRef} className="hidden" accept=".pdf" onChange={handleFileUpload} />
+
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploading}
+                                className="w-full py-10 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-3 group disabled:opacity-50"
+                            >
+                                {isUploading ? (
+                                    <RefreshIcon className="h-12 w-12 animate-spin text-blue-500" />
+                                ) : (
+                                    <UploadIcon className="h-12 w-12 text-gray-300 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
+                                )}
+                                <div className="text-center">
+                                    <span className="text-sm block">{isUploading ? 'Analyzing PDF Content...' : 'Select Flipkart E-Invoice PDF'}</span>
+                                    {!isUploading && <span className="text-[10px] uppercase tracking-widest opacity-50">Manual Upload Required</span>}
+                                </div>
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div className="bg-green-50 p-4 rounded-2xl border border-green-100 flex gap-3">
+                                <CheckCircleIcon className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-green-800 leading-relaxed">Data extracted successfully. Please verify and confirm.</p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Invoice Number</label>
+                                    <input
+                                        type="text"
+                                        value={extractedData.invoiceNumber}
+                                        onChange={(e) => setExtractedData({ ...extractedData, invoiceNumber: e.target.value })}
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Invoice Date</label>
+                                    <input
+                                        type="text"
+                                        value={extractedData.invoiceDate}
+                                        onChange={(e) => setExtractedData({ ...extractedData, invoiceDate: e.target.value })}
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-bold"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">IRN</label>
+                                    <textarea
+                                        value={extractedData.irn}
+                                        onChange={(e) => setExtractedData({ ...extractedData, irn: e.target.value })}
+                                        rows={2}
+                                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 transition-all outline-none font-mono text-xs font-bold"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3 pt-4">
+                                <button
+                                    onClick={handleConfirm}
+                                    disabled={isProcessing}
+                                    className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl shadow-xl hover:bg-blue-700 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                                >
+                                    {isProcessing ? <RefreshIcon className="h-5 w-5 animate-spin" /> : <CheckCircleIcon className="h-5 w-5" />}
+                                    {isProcessing ? 'Processing Zoho Sync...' : 'Confirm & Create Invoice'}
+                                </button>
+                                <button
+                                    onClick={() => setExtractedData(null)}
+                                    className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                                >
+                                    Re-Upload PDF
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={onClose}
+                        className="w-full py-3 mt-4 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>
@@ -1400,6 +1585,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [instamartApptModal, setInstamartApptModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [fbaShipmentModal, setFbaShipmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [flipkartConsignmentModal, setFlipkartConsignmentModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    const [flipkartEInvoiceModal, setFlipkartEInvoiceModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
     const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
@@ -2566,7 +2752,21 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
-        if (canInvoice) return { label: isCreatingInvoice === so.id ? 'Creating...' : 'Create Invoice', color: 'bg-purple-600 text-white hover:bg-purple-700', onClick: () => handleCreateZohoInvoiceAction(so.id, so.poReference, so), disabled: isExecuting };
+        if (canInvoice) {
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+            return {
+                label: isCreatingInvoice === so.id ? 'Creating...' : (isFlipkart ? 'Upload E-Invoice' : 'Create Invoice'),
+                color: isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-purple-600 text-white hover:bg-purple-700',
+                onClick: () => {
+                    if (isFlipkart) {
+                        setFlipkartEInvoiceModal({ isOpen: true, so });
+                    } else {
+                        handleCreateZohoInvoiceAction(so.id, so.poReference, so);
+                    }
+                },
+                disabled: isExecuting
+            };
+        }
 
         if (isZepto || isInstamart || isBB) {
             // Do not show "Update Appt." for BB if appointment is already confirmed
@@ -2693,6 +2893,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     addNotification={addNotification}
                     onClose={() => setFlipkartConsignmentModal({ isOpen: false, so: null })}
                     onSuccess={handleFlipkartConsignmentSuccess}
+                />
+            )}
+
+            {flipkartEInvoiceModal.isOpen && flipkartEInvoiceModal.so && (
+                <FlipkartEInvoiceModal
+                    so={flipkartEInvoiceModal.so}
+                    onClose={() => setFlipkartEInvoiceModal({ isOpen: false, so: null })}
+                    onSuccess={() => {
+                        setFlipkartEInvoiceModal({ isOpen: false, so: null });
+                        onSync();
+                    }}
+                    addNotification={addNotification}
+                    userEmail={userEmail}
                 />
             )}
 
@@ -3120,7 +3333,31 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <InvoiceIcon className="h-8 w-8 text-purple-200 mb-2" />
                                                                             <p className="text-xs font-bold text-purple-400 uppercase">No Invoice Generated</p>
                                                                             {(!so.invoiceNumber && so.originalEeStatus.toLowerCase().trim() !== 'open' && (so.originalEeStatus.toLowerCase().trim() === 'confirmed' || so.status === 'Batch Created') && !((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))) ? (
-                                                                                <button onClick={() => handleCreateZohoInvoiceAction(so.id, so.poReference, so)} disabled={!!isCreatingInvoice} className="mt-4 px-4 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-sm hover:bg-purple-700 flex items-center gap-2 transition-all active:scale-95">{isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}{isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}</button>
+                                                                                <div className="flex flex-col gap-3 mt-4 w-full">
+                                                                                    {isFlipkart ? (
+                                                                                        <>
+                                                                                            <button
+                                                                                                onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
+                                                                                                className="w-full px-4 py-2.5 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-200 shadow-sm hover:bg-blue-100 flex items-center justify-center gap-2 transition-all active:scale-95"
+                                                                                            >
+                                                                                                <DownloadIcon className="h-4 w-4" /> Download Flipkart Packing Slip
+                                                                                            </button>
+                                                                                            <button
+                                                                                                onClick={() => setFlipkartEInvoiceModal({ isOpen: true, so })}
+                                                                                                disabled={!!isCreatingInvoice}
+                                                                                                className="w-full px-4 py-2.5 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 flex items-center justify-center gap-2 transition-all active:scale-95"
+                                                                                            >
+                                                                                                {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
+                                                                                                {isCreatingInvoice === so.id ? 'Processing...' : 'Upload E-Invoice & Generate'}
+                                                                                            </button>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <button onClick={() => handleCreateZohoInvoiceAction(so.id, so.poReference, so)} disabled={!!isCreatingInvoice} className="px-4 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-sm hover:bg-purple-700 flex items-center gap-2 transition-all active:scale-95">
+                                                                                            {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
+                                                                                            {isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
                                                                             ) : (<p className="mt-3 text-[10px] text-gray-400 italic bg-gray-100 px-3 py-1 rounded-full border border-gray-200">
                                                                                 {((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))
                                                                                     ? 'Invoicing not required for this store'
@@ -3375,7 +3612,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 notesString={so.orderNotes}
                                                                 currentUser={currentUser || null}
                                                                 onNoteAdded={() => {}}
-                                                                onLocalNoteUpdate={(newNotes) => {
+                                                                onLocalNoteUpdate={(newNotes: string) => {
                                                                     setPurchaseOrders(prev => prev.map(p => {
                                                                         if (so.poReference.includes(String(p.id))) {
                                                                             return { ...p, orderNotes: newNotes };

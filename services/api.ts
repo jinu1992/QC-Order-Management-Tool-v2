@@ -110,6 +110,10 @@ export const createZohoInvoice = async (eeReferenceCode: string, shippingCharge?
     return await postToScript({ action: 'createZohoInvoice', eeReferenceCode, shippingCharge });
 };
 
+export const processFlipkartEInvoice = async (poNumber: string, invoiceData: { invoiceNumber: string, invoiceDate: string, irn: string }, items: any[]): Promise<{ status: string, message?: string }> => {
+    return await postToScript({ action: 'processFlipkartEInvoice', poNumber, ...invoiceData, items });
+};
+
 export const pushToShippingPartner = async (eeReferenceCode: string): Promise<{ status: string, message?: string, awb?: string }> => {
     return await postToScript({ action: 'pushToShippingPartner', eeReferenceCode });
 };

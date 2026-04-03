@@ -1,7 +1,9 @@
 import React from 'react';
 
 // Generic Icon Props
-type IconProps = React.SVGProps<SVGSVGElement>;
+interface IconProps extends React.SVGProps<SVGSVGElement> {
+  title?: string;
+}
 
 export const ChevronRightIcon: React.FC<IconProps> = (props) => (
   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>

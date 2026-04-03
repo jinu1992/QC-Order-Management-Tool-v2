@@ -8,9 +8,10 @@ interface OrderNotesTimelineProps {
     notesString?: string;
     currentUser: User | null;
     onNoteAdded: (updatedNotesString?: string) => void;
+    onLocalNoteUpdate?: (newNotes: string) => void;
 }
 
-const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notesString, currentUser, onNoteAdded }) => {
+const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notesString, currentUser, onNoteAdded, onLocalNoteUpdate }) => {
     const [newNote, setNewNote] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [localNotesString, setLocalNotesString] = useState(notesString || '');

@@ -769,7 +769,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         notesString={so.orderNotes}
                                                         currentUser={currentUser || null}
                                                         onNoteAdded={() => {}}
-                                                        onLocalNoteUpdate={(newNotes) => {
+                                                        onLocalNoteUpdate={(newNotes: string) => {
                                                             if (setPurchaseOrders) {
                                                                 setPurchaseOrders(prev => prev.map(p => {
                                                                     if (so.poReference.includes(String(p.id))) {
