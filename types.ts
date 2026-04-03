@@ -1,5 +1,5 @@
 
-export type ViewType = 'Dashboard' | 'Quotations' | 'Purchase Orders' | 'File Uploader' | 'POC Verification' | 'Appointments' | 'Sales Orders' | 'GRN / POD' | 'Reports' | 'Finance' | 'Inventory' | 'Admin' | 'Shipment Tracking' | 'Dispatch Manager';
+export type ViewType = 'Dashboard' | 'Quotations' | 'Purchase Orders' | 'File Uploader' | 'POC Verification' | 'Appointments' | 'Sales Orders' | 'GRN / POD' | 'Reports' | 'Finance' | 'Inventory' | 'Admin' | 'Shipment Tracking' | 'Dispatch Manager' | 'Knowledge Base';
 
 export enum POStatus {
     NewPO = 'New',

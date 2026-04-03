@@ -12,8 +12,8 @@ import InventoryManager from './components/InventoryManager';
 import ReportsManager from './components/ReportsManager';
 import QuotationsManager from './components/QuotationsManager';
 import ShipmentManager from './components/ShipmentManager';
-import DispatchManager from './components/DispatchManager';
 import FileUploader from './components/FileUploader';
+import KnowledgeBase from './components/KnowledgeBase';
 import ToastContainer from './components/ToastContainer';
 import Login from './components/Login';
 import LoadingCube from './components/LoadingCube';
@@ -383,6 +383,7 @@ const App: React.FC = () => {
       case 'Admin': return (
         <AdminPanel logs={logs} users={users} setUsers={setUsers} rolePermissions={rolePermissions} setRolePermissions={() => { }} addLog={addLog} currentUser={currentUser} channelConfigs={channelConfigs} onSync={() => refreshData(true)} activeTab={adminTab} setActiveTab={setAdminTab} addNotification={addNotification} />
       );
+      case 'Knowledge Base': return <KnowledgeBase />;
       default: return <div className="p-8 text-center text-gray-500">Section Under Construction</div>;
     }
   };
@@ -431,7 +432,10 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
 
-      <button className="fixed bottom-6 right-6 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition-all hover:scale-110 flex items-center gap-2 z-40">
+      <button 
+        onClick={() => setActiveView('Knowledge Base')}
+        className="fixed bottom-6 right-6 bg-green-600 text-white p-3 rounded-full shadow-lg hover:bg-green-700 transition-all hover:scale-110 flex items-center gap-2 z-40"
+      >
         <QuestionMarkCircleIcon className="h-6 w-6" />
         <span className="font-bold text-sm pr-1">Help</span>
       </button>

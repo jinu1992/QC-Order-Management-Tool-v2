@@ -44,6 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
     { name: 'Dispatch Manager', icon: <TruckIcon /> },
     { name: 'Reports', icon: <ReportIcon /> },
     { name: 'Admin', icon: <AdminIcon /> },
+    { name: 'Knowledge Base', icon: <XCircleIcon /> }, // Using XCircleIcon as placeholder or QuestionMark if available
   ];
   
   const allowedViews = permissions[currentUser.role] || [];
