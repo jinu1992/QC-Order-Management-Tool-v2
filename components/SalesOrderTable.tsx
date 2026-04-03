@@ -528,6 +528,14 @@ const FlipkartEInvoiceModal = ({ so, onClose, onSuccess, addNotification, userEm
                             </div>
 
                             <div className="flex flex-col gap-3 pt-4">
+                                <a 
+                                    href="https://seller.flipkart.com/index.html#dashboard/fa/consignmentsView" 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="w-full py-3 bg-blue-50 text-blue-700 text-[11px] font-black rounded-xl border border-blue-200 flex items-center justify-center gap-2 hover:bg-blue-100 transition-all mb-1"
+                                >
+                                    <ExternalLinkIcon className="h-4 w-4" /> Go to Flipkart Consignments
+                                </a>
                                 <button
                                     onClick={handleConfirm}
                                     disabled={isProcessing}
@@ -2675,9 +2683,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             
             // Map packing data to CSV rows
             const rows = packingData.map((box: any, index: number) => {
-                const sku = box["SKU"] || box.sku || '';
+                const sku = String(box["SKU"] || box.sku || '').trim();
                 const mapping = inventoryItems.find((inv: InventoryItem) =>
-                    (inv.sku === sku) && inv.channel.toLowerCase().includes('flipkart')
+                    (String(inv.sku).trim() === sku) && inv.channel.toLowerCase().includes('flipkart')
                 );
 
                 return [
@@ -3246,6 +3254,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                         >
                                                             {isFetchingBoxDetails === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CubeIcon className="h-3.5 w-3.5" />}
                                                             {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
+                                                        </button>
+                                                    )}
+                                                    {isFlipkart && canInvoice && (
+                                                        <button 
+                                                            onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }} 
+                                                            disabled={action.disabled} 
+                                                            className="px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap hover:bg-blue-100 flex items-center gap-1.5"
+                                                        >
+                                                            <DownloadIcon className="h-3.5 w-3.5" />
+                                                            Packing Slip
                                                         </button>
                                                     )}
                                                     <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
