@@ -43,7 +43,8 @@ const postToScript = async (payload: any) => {
         }
 
         const status = result.status || 'success';
-        const message = result.message || result.error || result.msg || result.details || (status === 'success' ? 'Operation completed.' : 'Operation failed.');
+        const actionName = payload.action ? `[${payload.action}] ` : '';
+        const message = result.message || result.error || result.msg || result.details || (status === 'success' ? `${actionName}Operation completed.` : `${actionName}Operation failed.`);
 
         if (Array.isArray(result)) {
             return { status, message, data: result };

@@ -2123,9 +2123,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     });
                     return newPOs;
                 });
-                addNotification(`Targeted Refresh Complete for SO ${soId}`, 'success');
+                addNotification(`Sync Successful: ${poReference}`, 'success');
             } else {
-                addNotification(`No updated data found for SO ${soId}`, 'warning');
+                addNotification(`No updated data found for ${poReference}`, 'warning');
             }
         } catch (e: any) {
             console.error("Refresh failed", e);
@@ -3503,7 +3503,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             </button>
                                                                         </div>
                                                                     )}
-                                                                    {(so.invoiceNumber && !so.awb) && (
+                                                                    {(so.invoiceNumber && !so.awb && !isFlipkart) && (
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={() => {
@@ -3531,7 +3531,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 </div>
                                                             </div>
                                                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                                                <div className={`p-4 rounded-xl border transition-all ${isFlipkart || so.boxCount > 0 ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${isFlipkart || so.boxCount > 0 ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${isFlipkart || so.boxCount > 0 ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty || 60) : (so.boxCount || 0)}</p></div></div></div>
+                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty || 'Missing') : (so.boxCount || 0)}</p></div></div></div>
 
                                                                 <div className="p-4 bg-partners-light-blue rounded-xl border border-blue-100 flex flex-col">
                                                                     <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{isFlipkart ? 'Consignment Details' : 'Appointment Details'}</p>
