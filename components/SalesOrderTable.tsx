@@ -2694,7 +2694,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     box["Box Length"] || box.length || 0,
                     box["Box Width"] || box.width || 0,
                     box["Box Height"] || box.height || 0,
-                    box["Box Weight"] || box.weight || 0,
+                    Number(box["Box Weight"] || box.weight || 0) / 1000,
                     box["Value"] || box.value || 0,
                     mapping?.articleCode || sku, // FSN is the articleCode
                     box["Item Quantity"] || box.qty || 1
