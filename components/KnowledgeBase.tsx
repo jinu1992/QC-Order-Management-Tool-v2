@@ -107,11 +107,11 @@ const KnowledgeBase: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div className="p-4 border border-gray-200 rounded-lg">
               <h4 className="font-bold text-gray-900 mb-2">Flipkart Flow</h4>
-              <p className="text-sm">Download Packing Slip -> Generate E-Invoice -> Upload IRN to Dashboard. <em>(Flipkart handles shipping directly).</em></p>
+              <p className="text-sm">Download Packing Slip → Generate E-Invoice → Upload IRN to Dashboard. <em>(Flipkart handles shipping directly).</em></p>
             </div>
             <div className="p-4 border border-gray-200 rounded-lg">
               <h4 className="font-bold text-gray-900 mb-2">Zepto / Blinkit / BB</h4>
-              <p className="text-sm">Take Appointment -> Take Gate Pass -> Push to Shipping Partner (Nimbus). <em>(We handle shipping).</em></p>
+              <p className="text-sm">Take Appointment → Take Gate Pass → Push to Shipping Partner (Nimbus). <em>(We handle shipping).</em></p>
             </div>
           </div>
         </>
