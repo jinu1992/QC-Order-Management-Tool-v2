@@ -89,7 +89,8 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
 
         purchaseOrders.forEach(po => {
             (po.items || []).forEach(item => {
-                const refCode = item.eeReferenceCode || po.id;
+                if (!item.eeReferenceCode) return; // Only show orders pushed to EE
+                const refCode = item.eeReferenceCode;
                 
                 if (!groups[refCode]) {
                     let eeBoxCount = 0;

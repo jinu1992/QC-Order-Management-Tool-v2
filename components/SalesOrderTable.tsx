@@ -21,6 +21,7 @@ import {
     GlobeIcon,
     InfoIcon,
     XCircleIcon,
+    ShieldCheckIcon,
     CurrencyIcon,
     SearchIcon,
     FilterIcon,
@@ -151,6 +152,22 @@ const formatDisplayTime = (timeInput?: any): string => {
         return timeStr;
     } catch (e) {
         return timeStr;
+    }
+};
+
+const getDaysAgo = (dateInput?: any): string => {
+    if (!dateInput) return '';
+    try {
+        const d = new Date(dateInput);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        const diffTime = Math.abs(now.getTime() - d.getTime());
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays === 0) return 'Today';
+        if (diffDays === 1) return 'Yesterday';
+        return `${diffDays} days ago`;
+    } catch {
+        return '';
     }
 };
 
@@ -3090,6 +3107,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
                                 const isInstamart = so.channel.toLowerCase().includes('instamart');
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+                                const isAmazonFBA = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
                                 const isZepto = so.channel.toLowerCase().includes('zepto');
                                 const isBB = so.channel.toLowerCase().includes('bb');
@@ -3278,17 +3296,24 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                         {openMenuId === so.id && (
                                                             <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
                                                                 {canUpdateAppt && (
-                                                                    <button
-                                                                        onClick={(e: any) => {
-                                                                            e.stopPropagation();
-                                                                            setInstamartApptModal({ isOpen: true, so });
-                                                                            setOpenMenuId(null);
-                                                                        }}
-                                                                        className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-partners-green hover:bg-partners-light-green flex items-center gap-2 transition-colors"
-                                                                    >
-                                                                        <CalendarIcon className="h-3.5 w-3.5" />
-                                                                        Update Appointment
-                                                                    </button>
+                                                                    <>
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setInstamartApptModal({ isOpen: true, so });
+                                                                                setOpenMenuId(null);
+                                                                            }}
+                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-partners-green hover:bg-partners-light-green flex items-center gap-2 transition-colors"
+                                                                        >
+                                                                            <CalendarIcon className="h-3.5 w-3.5" />
+                                                                            Update Appointment
+                                                                        </button>
+                                                                        {so.appointmentRequestDate && (
+                                                                            <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 px-4 mb-2">
+                                                                                <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate)}
+                                                                            </p>
+                                                                        )}
+                                                                    </>
                                                                 )}
                                                                 {so.status === 'Shipped' && (
                                                                     <button
@@ -3503,11 +3528,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             </button>
                                                                         </div>
                                                                     )}
-                                                                    {(so.invoiceNumber && !so.awb && !isFlipkart) && (
+                                                                    {(so.invoiceNumber && !so.awb) && (
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={() => {
-                                                                                    if (so.boxCount === 0 && !isFlipkart) { // Flipkart handles boxes differently via consignment
+                                                                                    if (isAmazonFBA || isFlipkart) return;
+                                                                                    if (so.boxCount === 0) { 
                                                                                         addNotification('Please update box count first.', 'warning');
                                                                                         return;
                                                                                     }
@@ -3517,13 +3543,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={!!isPushingPartner || isApptPending || (so.boxCount === 0 && !isFlipkart) || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) || (apptRequired && !hasAppt)}
-                                                                                className={`flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (!!isPushingPartner || isApptPending || so.boxCount === 0 || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt))}
+                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
-                                                                                {isPushingPartner === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {(so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) ? 'FBA Fulfillment' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : ((so.boxCount === 0 && !isFlipkart) ? 'Box Data Pending' : 'Ship with Partner')))}
+                                                                                {isPushingPartner === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
+                                                                                {isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Box Data Pending' : 'Ship with Partner')))}
                                                                             </button>
-                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb) && (
+                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
@@ -3531,7 +3557,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 </div>
                                                             </div>
                                                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart ? (so.consignmentQty || 0) > 0 : so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty || 'Missing') : (so.boxCount || 0)}</p></div></div></div>
+                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty && Number(so.consignmentQty) > 0 ? so.consignmentQty : 'Missing') : (so.boxCount || 0)}</p></div></div></div>
 
                                                                 <div className="p-4 bg-partners-light-blue rounded-xl border border-blue-100 flex flex-col">
                                                                     <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{isFlipkart ? 'Consignment Details' : 'Appointment Details'}</p>
