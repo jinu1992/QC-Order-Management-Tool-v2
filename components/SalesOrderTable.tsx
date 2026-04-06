@@ -2741,14 +2741,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     data={amazonBoxModal.data}
                 />
             )}
-            {instamartApptModal.isOpen && instamartApptModal.so && (
-                <InstamartAppointmentModal
-                    so={instamartApptModal.so}
-                    onClose={() => setInstamartApptModal({ isOpen: false, so: null })}
-                    addNotification={addNotification}
-                    onComplete={onSync}
-                />
-            )}
             {shippingConfirm.isOpen && shippingConfirm.so && (
                 <ShippingConfirmationModal
                     so={shippingConfirm.so}
