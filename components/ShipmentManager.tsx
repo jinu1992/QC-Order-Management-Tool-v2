@@ -1,66 +1,17 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { PurchaseOrder, POItem, User } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon } from './icons/Icons';
+import { PurchaseOrder, POItem, User, GroupedSalesOrder } from '../types';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
+import AppointmentUpdateModal from './AppointmentUpdateModal';
 
-interface GroupedSalesOrder {
-    id: string; // eeReferenceCode
-    poReference: string;
-    status: string;
-    originalEeStatus: string;
-    channel: string;
-    storeCode: string;
-    orderDate: string;
-    poEdd?: string;
-    poExpiryDate?: string;
-    poPdfUrl?: string;
-    qty: number;
-    amount: number;
-    items: POItem[];
-    batchCreatedAt?: string;
-    invoiceDate?: string;
-    manifestDate?: string;
-    invoiceId?: string;
-    invoiceStatus?: string;
-    invoiceNumber?: string;
-    invoiceTotal?: number;
-    invoiceUrl?: string;
-    invoicePdfUrl?: string;
-    carrier?: string;
-    awb?: string;
-    trackingStatus?: string;
-    edd?: string;
-    latestStatus?: string;
-    latestStatusDate?: string;
-    currentLocation?: string;
-    trackingUrl?: string;
-    deliveredDate?: string;
-    rtoStatus?: string;
-    rtoAwb?: string;
-    boxCount: number;
-    appointmentDate?: string;
-    appointmentRequestDate?: string;
-    appointmentRequestId?: string;
-    appointmentRequestTimestamp?: string;
-    appointmentId?: string;
-    appointmentTime?: string;
-    appointmentRemarks?: string;
-    qrCodeUrl?: string;
-    ewb?: string;
-    fbaShipmentId?: string;
-    shippingCharge?: number;
-    eeCustomerId?: string;
-    consignmentQty?: number;
-    consignmentProducts?: number;
-    consignmentValue?: string;
-    pickupDate?: string;
-    orderNotes?: string;
-}
+// GroupedSalesOrder is now imported from ../types
+
 
 interface ShipmentManagerProps {
     purchaseOrders: PurchaseOrder[];
     currentUser?: User | null;
     setPurchaseOrders?: React.Dispatch<React.SetStateAction<PurchaseOrder[]>>;
+    addNotification?: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
 // Helper to safely format dates and suppress the 1899 Excel epoch bug
@@ -86,12 +37,13 @@ const formatSafeTime = (timeStr?: string): string => {
     } catch { return ''; }
 };
 
-const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser, setPurchaseOrders }: ShipmentManagerProps) => {
+const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser, setPurchaseOrders, addNotification }: ShipmentManagerProps) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
     const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+    const [apptUpdateModal, setApptUpdateModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -667,6 +619,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                 }
 
                                 const isExpanded = expandedRowId === so.id;
+                                const channelLower = (so.channel || '').toLowerCase();
 
                                 return (
                                     <React.Fragment key={so.id}>
@@ -754,9 +707,27 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                             </div>
 
                                             {so.appointmentId && (
-                                                <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded mt-1.5 inline-block font-medium w-fit border border-indigo-100">
-                                                    ID: {so.appointmentId}
+                                                <div className="flex flex-col gap-1 mt-1.5">
+                                                    <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded inline-block font-medium w-fit border border-indigo-100">
+                                                        ID: {so.appointmentId}
+                                                    </div>
+                                                    {(channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
+                                                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors flex items-center gap-1"
+                                                        >
+                                                            Update Details
+                                                        </button>
+                                                    )}
                                                 </div>
+                                            )}
+                                            {!so.appointmentId && (channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
+                                                    className="mt-2 px-2 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded border border-indigo-100 hover:bg-indigo-100 transition-all active:scale-95 flex items-center gap-1"
+                                                >
+                                                    <PlusIcon className="h-3 w-3" /> Update Appt
+                                                </button>
                                             )}
                                         </td>
                                     </tr>
@@ -799,6 +770,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     </table>
                 </div>
             </div>
+            {apptUpdateModal.isOpen && apptUpdateModal.so && (
+                <AppointmentUpdateModal
+                    so={apptUpdateModal.so}
+                    onClose={() => setApptUpdateModal({ isOpen: false, so: null })}
+                    addNotification={addNotification || (() => {})}
+                    onComplete={() => {
+                        // Re-fetch should happen if props allow, but for now we expect setPurchaseOrders to be triggered if implemented
+                        if (setPurchaseOrders) {
+                            // Minimal implementation: if specific refresh logic is needed, it would be here
+                        }
+                    }}
+                />
+            )}
         </div>
     );
 };

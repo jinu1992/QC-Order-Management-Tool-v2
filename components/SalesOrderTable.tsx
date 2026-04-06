@@ -1,6 +1,7 @@
 
 import React, { useState, Fragment, useMemo, FC, useRef, useEffect } from 'react';
-import { type PurchaseOrder, type InventoryItem, POItem } from '../types';
+import { type PurchaseOrder, type InventoryItem, POItem, GroupedSalesOrder } from '../types';
+import AppointmentUpdateModal from './AppointmentUpdateModal';
 import {
     DotsVerticalIcon,
     CloudDownloadIcon,
@@ -54,61 +55,8 @@ interface SalesOrderTableProps {
     currentUser?: any;
 }
 
-interface GroupedSalesOrder {
-    id: string;
-    poReference: string;
-    status: string;
-    originalEeStatus: string;
-    channel: string;
-    storeCode: string;
-    orderDate: string;
-    poEdd?: string;
-    poExpiryDate?: string;
-    poPdfUrl?: string;
-    qty: number;
-    amount: number;
-    items: POItem[];
-    batchCreatedAt?: string;
-    invoiceDate?: string;
-    manifestDate?: string;
-    invoiceId?: string;
-    invoiceStatus?: string;
-    invoiceNumber?: string;
-    invoiceTotal?: number;
-    invoiceUrl?: string;
-    invoicePdfUrl?: string;
-    carrier?: string;
-    awb?: string;
-    trackingStatus?: string;
-    edd?: string;
-    latestStatus?: string;
-    latestStatusDate?: string;
-    currentLocation?: string;
-    trackingUrl?: string;
-    deliveredDate?: string;
-    rtoStatus?: string;
-    rtoAwb?: string;
-    boxCount: number;
-    appointmentDate?: string;
-    appointmentRequestDate?: string;
-    appointmentRequestId?: string;
-    appointmentRequestTimestamp?: string;
-    appointmentId?: string;
-    appointmentTime?: string;
-    appointmentRemarks?: string;
-    qrCodeUrl?: string;
-    ewb?: string;
-    fbaShipmentId?: string;
-    shippingCharge?: number;
-    eeCustomerId?: string;
-    // Specific for Flipkart
-    consignmentQty?: number;
-    consignmentProducts?: number;
-    consignmentValue?: string;
-    pickupDate?: string;
-    labelUrl?: string;
-    orderNotes?: string;
-}
+// GroupedSalesOrder interface is now in types.ts
+
 
 // --- Formatters ---
 
@@ -1036,177 +984,8 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     );
 };
 
-const InstamartAppointmentModal: FC<{
-    so: GroupedSalesOrder,
-    onClose: () => void,
-    addNotification: any,
-    onComplete: () => void
-}> = ({ so, onClose, addNotification, onComplete }) => {
-    const [appointmentId, setAppointmentId] = useState(so.appointmentId || '');
-    const [appointmentDate, setAppointmentDate] = useState(formatDateForInput(so.appointmentDate));
-    const [appointmentTime, setAppointmentTime] = useState(formatTimeForInput(so.appointmentTime));
-    const [isSubmitting, setIsSubmitting] = useState(false);
+// InstamartAppointmentModal has been replaced by AppointmentUpdateModal
 
-    const isZepto = so.channel.toLowerCase().includes('zepto');
-    const isInstamart = so.channel.toLowerCase().includes('instamart');
-    const isBB = so.channel.toLowerCase().includes('bb');
-    const isRBL = so.channel.toLowerCase().includes('rbl');
-    const hideIdField = isZepto || isInstamart || isBB || isRBL;
-
-    const getBrandDetails = () => {
-        if (isZepto) return {
-            color: 'bg-purple-600',
-            text: 'text-purple-600',
-            bg: 'bg-purple-50',
-            border: 'border-purple-100',
-            hover: 'hover:bg-purple-100',
-            shadow: 'shadow-purple-100',
-            ring: 'focus:ring-purple-500',
-            label: 'Zepto'
-        };
-        if (isBB) return {
-            color: 'bg-partners-green',
-            text: 'text-partners-green',
-            bg: 'bg-partners-light-green',
-            border: 'border-green-100',
-            hover: 'hover:bg-green-100',
-            shadow: 'shadow-green-100',
-            ring: 'focus:ring-partners-green',
-            label: 'Big Basket'
-        };
-        return {
-            color: 'bg-orange-600',
-            text: 'text-orange-600',
-            bg: 'bg-orange-50',
-            border: 'border-orange-100',
-            hover: 'hover:bg-orange-100',
-            shadow: 'shadow-orange-100',
-            ring: 'focus:ring-orange-500',
-            label: 'Instamart'
-        };
-    };
-
-    const brand = getBrandDetails();
-    const brandColor = brand.color;
-    const brandText = brand.text;
-    const brandBg = brand.bg;
-    const brandBorder = brand.border;
-    const brandHover = brand.hover;
-    const brandShadow = brand.shadow;
-    const brandRing = brand.ring;
-    const brandLabel = brand.label;
-
-    const handleComplete = async () => {
-        const hasId = !hideIdField && appointmentId.trim();
-        const hasDate = appointmentDate.trim();
-        const hasTime = appointmentTime.trim();
-
-        if (!hasId && !hasDate && !hasTime) {
-            const msg = hideIdField
-                ? "Please enter at least an Appointment Date or Time"
-                : "Please enter at least an Appointment ID, Date or Time";
-            addNotification(msg, "error");
-            return;
-        }
-
-        setIsSubmitting(true);
-        try {
-            const response = await updateInstamartAppointmentDetails({
-                eeReferenceCode: so.id,
-                appointmentId: appointmentId.trim(),
-                appointmentDate: appointmentDate.trim(),
-                appointmentTime: appointmentTime.trim()
-            });
-
-            if (response.status === 'success') {
-                addNotification("Appointment Details Updated!", "success");
-                onComplete();
-                onClose();
-            } else {
-                addNotification(response.message || "Failed to update appointment details", "error");
-            }
-        } catch (error) {
-            addNotification("Error updating appointment details", "error");
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
-            <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border ${brandBorder} flex flex-col animate-in fade-in zoom-in-95 duration-200`}>
-                <div className={`p-6 ${brandBg} border-b ${brandBorder} flex justify-between items-center`}>
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 ${brandColor} rounded-xl flex items-center justify-center text-white shadow-lg ${brandShadow}`}>
-                            <CalendarIcon className="h-6 w-6" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-800">{brandLabel} Appointment</h3>
-                            <p className={`text-xs ${brandText} font-medium`}>Update confirmation details</p>
-                        </div>
-                    </div>
-                    <button onClick={onClose} className={`p-2 ${brandHover} rounded-full transition-colors`}><XCircleIcon className="h-6 w-6 text-gray-400" /></button>
-                </div>
-
-                <div className="p-8 space-y-6">
-                    <div className="space-y-4">
-                        {!hideIdField && (
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment / Consignment ID</label>
-                                <input
-                                    type="text"
-                                    value={appointmentId}
-                                    onChange={(e) => setAppointmentId(e.target.value)}
-                                    placeholder="Enter ID from confirmation"
-                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
-                                />
-                            </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Date</label>
-                                <input
-                                    type="date"
-                                    value={appointmentDate}
-                                    onChange={(e) => setAppointmentDate(e.target.value)}
-                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Appointment Time</label>
-                                <input
-                                    type="time"
-                                    value={appointmentTime}
-                                    onChange={(e) => setAppointmentTime(e.target.value)}
-                                    className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 ${brandRing} focus:border-transparent transition-all`}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className={`${brandBg} border ${brandBorder} p-4 rounded-2xl flex gap-3`}>
-                        <div className={`${isZepto ? 'bg-purple-200' : isBB ? 'bg-green-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}><QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : isBB ? 'text-green-700' : 'text-orange-700'}`} /></div>
-                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : isBB ? 'text-green-800' : 'text-orange-800'} font-medium leading-relaxed`}>
-                            Once updated, the order will be ready for <span className="font-bold text-blue-800">Shipping Partner</span> handover or final processing.
-                        </p>
-                    </div>
-                </div>
-
-                <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3">
-                    <button onClick={onClose} className="flex-1 px-4 py-3 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
-                    <button
-                        onClick={handleComplete}
-                        disabled={isSubmitting}
-                        className={`flex-[2] px-4 py-3 ${brandColor} text-white text-sm font-bold rounded-xl shadow-lg ${brandShadow} hover:brightness-110 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2`}
-                    >
-                        {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
-                        {isSubmitting ? 'Updating...' : 'Update Appointment details'}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
 
 const ZeptoASNHelperModal: FC<{
     so: GroupedSalesOrder,
@@ -2833,7 +2612,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (isAmazonFba || isFlipkart) {
                 return {
                     label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
-                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
+                    color: isAmazonFba 
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300 cursor-not-allowed font-black' 
+                        : 'bg-indigo-100 text-indigo-900 border border-indigo-300 cursor-not-allowed font-black',
                     onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
                     disabled: true
                 };
@@ -2909,6 +2690,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     so={instamartPrintPackModal.so}
                     onClose={() => setInstamartPrintPackModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
+                />
+            )}
+
+            {instamartApptModal.isOpen && instamartApptModal.so && (
+                <AppointmentUpdateModal
+                    so={instamartApptModal.so}
+                    onClose={() => setInstamartApptModal({ isOpen: false, so: null })}
+                    addNotification={addNotification}
+                    onComplete={() => onSync()}
                 />
             )}
 
@@ -3130,8 +2920,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkart) && hasLabel && !isFinalStatus;
-                                const showFlipkartAppointmentBtn = isFlipkart && hasLabel && !hasAppointmentId && !isFinalStatus;
+                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus;
+                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
@@ -3216,14 +3006,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                         <button
                                                             onClick={(e: any) => {
                                                                 e.stopPropagation();
-                                                                if (isFlipkart) setFlipkartConsignmentModal({ isOpen: true, so });
+                                                                if (isFlipkartMinutes) setFlipkartConsignmentModal({ isOpen: true, so });
                                                                 else if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                 else setPortalHelper({ isOpen: true, so });
                                                             }}
-                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkartMinutes ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
                                                         >
-                                                            {isFlipkart ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
-                                                            {isFlipkart ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
+                                                            {isFlipkartMinutes ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
+                                                            {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
                                                         </button>
                                                     )}
                                                     {showFlipkartAppointmentBtn && (
@@ -3284,7 +3074,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             Packing Slip
                                                         </button>
                                                     )}
-                                                    <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
+                                                    <div className="flex flex-col items-center">
+                                                        <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
+                                                        {action.label === 'Update Appt.' && (so.appointmentRequestDate || so.appointmentRequestTimestamp) && (
+                                                            <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 whitespace-nowrap">
+                                                                <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
+                                                            </p>
+                                                        )}
+                                                    </div>
                                                     <div
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
                                                         onClick={(e: any) => {
@@ -3308,9 +3105,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <CalendarIcon className="h-3.5 w-3.5" />
                                                                             Update Appointment
                                                                         </button>
-                                                                        {so.appointmentRequestDate && (
+                                                                        {(so.appointmentRequestDate || so.appointmentRequestTimestamp) && (
                                                                             <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 px-4 mb-2">
-                                                                                <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate)}
+                                                                                <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
                                                                             </p>
                                                                         )}
                                                                     </>
@@ -3577,9 +3374,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <p className="text-sm font-bold text-blue-800">{formatDisplayTime(so.appointmentTime)}</p>
                                                                         </div>
 
-                                                                        <div className="pt-2 border-t border-blue-100">
-                                                                            <p className="text-[8px] font-bold text-blue-400 uppercase mb-0.5">{isFlipkart ? 'Consignment ID' : 'Appointment ID'}:</p>
-                                                                            <p className="text-xs font-black text-blue-700 font-mono tracking-tight">{so.appointmentId || 'N/A'}</p>
+                                                                        <div className="pt-2 border-t border-blue-100 flex justify-between items-end">
+                                                                            <div>
+                                                                                <p className="text-[8px] font-bold text-blue-400 uppercase mb-0.5">{isFlipkart ? 'Consignment ID' : 'Appointment ID'}:</p>
+                                                                                <p className="text-xs font-black text-blue-700 font-mono tracking-tight">{so.appointmentId || 'N/A'}</p>
+                                                                            </div>
+                                                                            {(isZepto || isInstamart || isBB || isBlinkit) && (
+                                                                                <button 
+                                                                                    onClick={() => setInstamartApptModal({ isOpen: true, so })}
+                                                                                    className="px-2 py-1 text-[8px] font-black uppercase bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors shadow-sm"
+                                                                                >
+                                                                                    Update
+                                                                                </button>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                 </div>

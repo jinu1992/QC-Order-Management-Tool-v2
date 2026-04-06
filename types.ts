@@ -253,3 +253,59 @@ export interface ChannelConfig {
     appointmentCc?: string; // New: Comma separated emails
 }
 export type ReportTimeRange = '30_days' | 'last_month' | 'this_quarter' | 'ytd' | 'all';
+ 
+export interface GroupedSalesOrder {
+    id: string; // eeReferenceCode
+    poReference: string;
+    status: string;
+    originalEeStatus: string;
+    channel: string;
+    storeCode: string;
+    orderDate: string;
+    poEdd?: string;
+    poExpiryDate?: string;
+    poPdfUrl?: string;
+    qty: number;
+    amount: number;
+    items: POItem[];
+    batchCreatedAt?: string;
+    invoiceDate?: string;
+    manifestDate?: string;
+    invoiceId?: string;
+    invoiceStatus?: string;
+    invoiceNumber?: string;
+    invoiceTotal?: number;
+    invoiceUrl?: string;
+    invoicePdfUrl?: string;
+    carrier?: string;
+    awb?: string;
+    trackingStatus?: string;
+    edd?: string;
+    latestStatus?: string;
+    latestStatusDate?: string;
+    currentLocation?: string;
+    trackingUrl?: string;
+    deliveredDate?: string;
+    rtoStatus?: string;
+    rtoAwb?: string;
+    boxCount: number;
+    appointmentDate?: string;
+    appointmentRequestDate?: string;
+    appointmentRequestId?: string;
+    appointmentRequestTimestamp?: string;
+    appointmentId?: string;
+    appointmentTime?: string;
+    appointmentRemarks?: string;
+    qrCodeUrl?: string;
+    ewb?: string;
+    fbaShipmentId?: string;
+    shippingCharge?: number;
+    eeCustomerId?: string;
+    consignmentQty?: number;
+    consignmentProducts?: number;
+    consignmentValue?: string;
+    pickupDate?: string;
+    labelUrl?: string;
+    orderNotes?: string;
+}
+

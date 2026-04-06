@@ -356,7 +356,7 @@ const App: React.FC = () => {
         return <FileUploader currentUser={currentUser} addLog={addLog} addNotification={addNotification} />;
       case 'Inventory': return <InventoryManager addLog={addLog} inventoryItems={inventoryItems} purchaseOrders={purchaseOrders} setInventoryItems={setInventoryItems} onSync={() => refreshData(true)} isSyncing={isLoading} activeTab={activeInventoryTab} setActiveTab={setActiveInventoryTab} addNotification={addNotification} />;
       case 'Finance': return <FinanceManager purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} addLog={addLog} addNotification={addNotification} />;
-      case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} currentUser={currentUser} />;
+      case 'Shipment Tracking': return <ShipmentManager purchaseOrders={purchaseOrders} currentUser={currentUser} setPurchaseOrders={setPurchaseOrders} addNotification={addNotification} />;
       case 'Dispatch Manager': return <DispatchManager purchaseOrders={purchaseOrders} currentUser={currentUser} initialTab={activeDispatchTab} />;
       case 'Reports': return <ReportsManager purchaseOrders={purchaseOrders} inventoryItems={inventoryItems} />;
       case 'Appointments':
