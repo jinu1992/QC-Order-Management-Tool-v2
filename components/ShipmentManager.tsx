@@ -714,7 +714,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                     {(channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
-                                                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors flex items-center gap-1"
+                                                            className="mt-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[10px] font-bold hover:bg-indigo-100 transition-colors flex items-center gap-1 w-fit"
                                                         >
                                                             Update Details
                                                         </button>
@@ -781,6 +781,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                             // Minimal implementation: if specific refresh logic is needed, it would be here
                         }
                     }}
+                    currentUser={currentUser}
                 />
             )}
         </div>

@@ -2699,6 +2699,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onClose={() => setInstamartApptModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     onComplete={() => onSync()}
+                    currentUser={currentUser}
                 />
             )}
 

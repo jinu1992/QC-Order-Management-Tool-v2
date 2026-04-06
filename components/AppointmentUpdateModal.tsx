@@ -1,5 +1,4 @@
 import React, { useState, FC } from 'react';
-import { GroupedSalesOrder } from '../types';
 import { 
     CalendarIcon, 
     XCircleIcon, 
@@ -7,13 +6,15 @@ import {
     CheckCircleIcon, 
     QuestionMarkCircleIcon 
 } from './icons/Icons';
-import { updateInstamartAppointmentDetails } from '../services/api';
+import { updateInstamartAppointmentDetails, saveOrderNote } from '../services/api';
+import { User, GroupedSalesOrder } from '../types';
 
 interface AppointmentUpdateModalProps {
     so: GroupedSalesOrder;
     onClose: () => void;
     addNotification: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
     onComplete: () => void;
+    currentUser?: User | null;
 }
 
 // --- Formatters ---
@@ -66,7 +67,7 @@ const formatTimeForInput = (timeInput?: any): string => {
     return timeStr;
 };
 
-const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, addNotification, onComplete }) => {
+const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, addNotification, onComplete, currentUser }) => {
     const [appointmentId, setAppointmentId] = useState(so.appointmentId || '');
     const [appointmentDate, setAppointmentDate] = useState(formatDateForInput(so.appointmentDate));
     const [appointmentTime, setAppointmentTime] = useState(formatTimeForInput(so.appointmentTime));
@@ -150,6 +151,27 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
             });
 
             if (response.status === 'success') {
+                // Record change in timeline
+                try {
+                    const changes: string[] = [];
+                    if (!hideIdField && appointmentId.trim() !== (so.appointmentId || '')) {
+                        changes.push(`Appointment ID: ${so.appointmentId || 'None'} -> ${appointmentId.trim()}`);
+                    }
+                    if (appointmentDate.trim() !== formatDateForInput(so.appointmentDate)) {
+                        changes.push(`Appointment Date: ${formatDateForInput(so.appointmentDate) || 'None'} -> ${appointmentDate.trim()}`);
+                    }
+                    if (appointmentTime.trim() !== formatTimeForInput(so.appointmentTime)) {
+                        changes.push(`Appointment Time: ${formatTimeForInput(so.appointmentTime) || 'None'} -> ${appointmentTime.trim()}`);
+                    }
+
+                    if (changes.length > 0) {
+                        const note = `[System] Appointment Details Updated: ${changes.join(', ')}`;
+                        await saveOrderNote(so.poReference, note, currentUser?.name || 'System');
+                    }
+                } catch (noteErr) {
+                    console.error("Failed to save timeline note:", noteErr);
+                }
+
                 addNotification("Appointment Details Updated!", "success");
                 onComplete();
                 onClose();
