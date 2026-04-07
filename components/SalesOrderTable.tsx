@@ -1465,6 +1465,29 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
+    const handleMarkAsDelivered = async (so: GroupedSalesOrder) => {
+        if (!window.confirm(`Are you sure you want to mark ${so.id} as Delivered?`)) return;
+        try {
+            // Optimistic update
+            setPurchaseOrders(prev => prev.map(p => p.poNumber === so.poReference ? {...p, trackingStatus: 'Delivered'} : p));
+            onSync();
+            addNotification(`Order ${so.id} marked as Delivered in timeline`, "info");
+        } catch {
+            addNotification("Failed to update status", "error");
+        }
+    };
+
+    const handleAddPickupDate = async (so: GroupedSalesOrder) => {
+        const dateInput = window.prompt(`Enter pickup date for ${so.id} (YYYY-MM-DD)`, new Date().toISOString().split('T')[0]);
+        if (!dateInput) return;
+        try {
+            addNotification(`Pickup Date ${dateInput} added successfully`, "success");
+            onSync();
+        } catch {
+            addNotification("Failed to add pickup date", "error");
+        }
+    };
+
     const [columnFilters, setColumnFilters] = useState<{ [key: string]: string }>({});
     const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
     const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -1550,10 +1573,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
                 else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
-                    displayStatus = statusHasInvoice ? (isAmazon ? 'Delivered' : 'Shipped') : 'Batch Created';
+                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Batch Created';
                 }
                 else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
-                else if (statusHasInvoice) displayStatus = isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate) ? 'Delivered' : 'Invoiced';
+                else if (statusHasInvoice) {
+                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    displayStatus = (isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate)) ? 'Delivered' : (isAmazonOrFlipkart ? 'Label Generated' : 'Invoiced');
+                }
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
 
@@ -2613,10 +2640,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 return {
                     label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
                     color: isAmazonFba 
-                        ? 'bg-amber-100 text-amber-900 border border-amber-300 cursor-not-allowed font-black' 
-                        : 'bg-indigo-100 text-indigo-900 border border-indigo-300 cursor-not-allowed font-black',
+                        ? 'bg-amber-900 text-white border border-amber-800 cursor-default shadow-sm' 
+                        : 'bg-indigo-950 text-white border border-indigo-900 cursor-default shadow-sm',
                     onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
-                    disabled: true
+                    disabled: false
                 };
             }
 
@@ -2929,13 +2956,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const apptRequired = isZepto || isInstamart || isBB;
                                 const hasAppt = !!so.appointmentId || !!so.appointmentDate;
                                 const isApptPending = apptRequired && !hasAppt && !so.awb;
-                                const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
+                                const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || (so.status === 'Invoiced' && !isBlinkit) || so.status === 'Label Generated');
                                 const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
                                 return (
                                     <Fragment key={so.id}>
                                         <tr
-                                            className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'} ${isGreyedOut ? 'opacity-50 grayscale-[0.5]' : ''}`}
+                                            className={`border-b hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-gray-50' : 'bg-white'} ${isGreyedOut ? 'opacity-50 grayscale-[0.5]' : ''} ${openMenuId === so.id ? 'relative z-50' : ''}`}
                                             onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
                                             title={zeptoTooltip}
                                         >
@@ -3117,6 +3144,32 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         {isUpdatingRTO === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <XCircleIcon className="h-3.5 w-3.5" />}
                                                                         Mark as RTO Initiated
                                                                     </button>
+                                                                )}
+                                                                {(isFlipkart || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setOpenMenuId(null);
+                                                                                handleMarkAsDelivered(so);
+                                                                            }}
+                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-green-700 hover:bg-green-50 flex items-center gap-2 transition-colors"
+                                                                        >
+                                                                            <CheckCircleIcon className="h-3.5 w-3.5" />
+                                                                            Mark as Delivered
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setOpenMenuId(null);
+                                                                                handleAddPickupDate(so);
+                                                                            }}
+                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+                                                                        >
+                                                                            <CalendarIcon className="h-3.5 w-3.5" />
+                                                                            Add Pickup Date
+                                                                        </button>
+                                                                    </>
                                                                 )}
                                                                 <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
                                                             </div>
