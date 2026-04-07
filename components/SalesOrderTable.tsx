@@ -3632,16 +3632,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     </tbody>
                 </table>
             </div>
+            {pickupDateModal.isOpen && pickupDateModal.so && (
+                <PickupDateModal
+                    so={pickupDateModal.so}
+                    onSave={handleConfirmPickupDate}
+                    onClose={() => setPickupDateModal({ isOpen: false, so: null, isSaving: false })}
+                    isSaving={pickupDateModal.isSaving}
+                />
+            )}
         </div>
-
-        {pickupDateModal.isOpen && pickupDateModal.so && (
-            <PickupDateModal
-                so={pickupDateModal.so}
-                onSave={handleConfirmPickupDate}
-                onClose={() => setPickupDateModal({ isOpen: false, so: null, isSaving: false })}
-                isSaving={pickupDateModal.isSaving}
-            />
-        )}
     );
 };
 
