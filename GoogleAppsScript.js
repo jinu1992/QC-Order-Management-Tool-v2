@@ -109,6 +109,7 @@ function doPost(e) {
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
     else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
     else if (action === 'addOrderNote') result = addOrderNote(data);
+    else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
     else {
       return responseJSON({ status: 'error', message: 'Invalid action: ' + action });
     }
@@ -733,5 +734,49 @@ function addOrderNote(data) {
     };
   } catch (err) {
     return { status: 'error', message: err.toString() };
+  }
+}
+
+function updatePOPickupDate(data) {
+  const { eeReferenceCode, pickupDate } = data;
+  if (!eeReferenceCode || !pickupDate) {
+    return { status: 'error', message: "Missing eeReferenceCode or pickupDate" };
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const rows = dbSheet.getDataRange().getValues();
+    const headers = rows[0];
+
+    // Using exact headers specified in the sheet
+    const eeRefIdx = headers.indexOf("EE_reference_code"); 
+    let pickupIdx = headers.indexOf("Pickup Date");
+
+    if (eeRefIdx === -1) {
+      return { status: 'error', message: "'EE_reference_code' column not found" };
+    }
+    
+    if (pickupIdx === -1) {
+        // If column missing, optionally we return an error. Let's create it or just return error.
+        pickupIdx = headers.length;
+        dbSheet.getRange(1, pickupIdx + 1).setValue("Pickup Date");
+    }
+
+    let updatedCount = 0;
+    for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
+            dbSheet.getRange(i + 1, pickupIdx + 1).setValue(pickupDate);
+            updatedCount++;
+        }
+    }
+
+    if (updatedCount === 0) {
+      return { status: 'error', message: `No rows found for EE Ref: ${eeReferenceCode}` };
+    }
+
+    return { status: 'success', message: 'Pickup Date updated successfully' };
+  } catch (e) {
+    return { status: 'error', message: 'Error updating pickup date: ' + e.toString() };
   }
 }
