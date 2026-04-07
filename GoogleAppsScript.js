@@ -738,9 +738,9 @@ function addOrderNote(data) {
 }
 
 function updatePOPickupDate(data) {
-  const { eeReferenceCode, pickupDate } = data;
-  if (!eeReferenceCode || !pickupDate) {
-    return { status: 'error', message: "Missing eeReferenceCode or pickupDate" };
+  const { poNumber, pickupDate } = data;
+  if (!poNumber || !pickupDate) {
+    return { status: 'error', message: "Missing poNumber or pickupDate" };
   }
 
   try {
@@ -765,14 +765,14 @@ function updatePOPickupDate(data) {
 
     let updatedCount = 0;
     for (let i = 1; i < rows.length; i++) {
-        if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
+        if (String(rows[i][eeRefIdx]).trim() === String(poNumber).trim()) {
             dbSheet.getRange(i + 1, pickupIdx + 1).setValue(pickupDate);
             updatedCount++;
         }
     }
 
     if (updatedCount === 0) {
-      return { status: 'error', message: `No rows found for EE Ref: ${eeReferenceCode}` };
+      return { status: 'error', message: `No rows found for EE Ref: ${poNumber}` };
     }
 
     return { status: 'success', message: 'Pickup Date updated successfully' };

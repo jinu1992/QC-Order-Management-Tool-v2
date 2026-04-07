@@ -2784,7 +2784,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 disabled: isExecuting
             };
         }
-        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.awb) return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.awb) {
+            if (so.status === 'Label Generated' && so.pickupDate) {
+                return { label: `Pickup: ${so.pickupDate}`, color: 'bg-indigo-600 text-white hover:bg-indigo-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            }
+            return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+        }
         return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
     };
 
@@ -3196,12 +3201,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
                                                             </p>
                                                         )}
-                                                        {(so.status === 'Label Generated' || so.status === 'Shipped') && so.pickupDate && (
-                                                            <p className="text-[10px] font-bold text-indigo-600 mt-1.5 flex items-center gap-1 whitespace-nowrap bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shadow-sm">
-                                                                <CalendarIcon className="h-3 w-3" />
-                                                                Pickup: {so.pickupDate}
-                                                            </p>
-                                                        )}
                                                     </div>
                                                     <div
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
@@ -3297,7 +3296,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         {isRefreshing ? 'Refreshing...' : 'Refresh Targeted'}
                                                                     </button>
                                                                 </div>
-                                                                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                                                                <div className="grid grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-x-4 gap-y-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Pickup Date</p><p className="text-xs font-bold text-indigo-600">{so.pickupDate || 'N/A'}</p></div>
@@ -3501,7 +3500,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 </div>
                                                             </div>
                                                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart ? (Number(so.consignmentQty) > 0) : so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty && Number(so.consignmentQty) > 0 ? so.consignmentQty : 'Missing') : (so.boxCount || 0)}</p></div></div></div>
+                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart || so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart || so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart || so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty && Number(so.consignmentQty) > 0 ? so.consignmentQty : (so.boxCount > 0 ? so.boxCount : 'N/A')) : (so.boxCount || 0)}</p></div></div></div>
 
                                                                 <div className="p-4 bg-partners-light-blue rounded-xl border border-blue-100 flex flex-col">
                                                                     <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{isFlipkart ? 'Consignment Details' : 'Appointment Details'}</p>
