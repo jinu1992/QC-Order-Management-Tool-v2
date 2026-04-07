@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 
@@ -580,6 +580,80 @@ const FbaShipmentModal: FC<{ so: GroupedSalesOrder, onSave: (id: string) => void
                             onClick={onClose}
                             className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
                         >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Pickup Date Modal ---
+
+const PickupDateModal: FC<{ so: GroupedSalesOrder, onSave: (date: string) => void, onClose: () => void, isSaving: boolean }> = ({ so, onSave, onClose, isSaving }) => {
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, '0');
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const yyyy = today.getFullYear();
+    const [dateVal, setDateVal] = useState(so.pickupDate || `${dd}-${mm}-${yyyy}`);
+    const [timeVal, setTimeVal] = useState('10:00 AM');
+    const combined = `${dateVal} ${timeVal}`;
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-indigo-100 animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-indigo-600 border-b border-indigo-700 flex flex-col items-center text-center">
+                    <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4">
+                        <CalendarIcon className="h-10 w-10 text-white" />
+                    </div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Add Pickup Date & Time</h3>
+                    <p className="text-xs text-indigo-200 mt-1">Order Ref: <span className="font-bold text-white">{so.id}</span></p>
+                </div>
+                <div className="p-8">
+                    <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 mb-6 flex gap-3">
+                        <CalendarIcon className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-indigo-800 leading-relaxed">Set the scheduled pickup date and time for this order. This will be saved to the PO database.</p>
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Pickup Date (DD-MM-YYYY)</label>
+                            <input
+                                type="text"
+                                autoFocus
+                                value={dateVal}
+                                onChange={(e) => setDateVal(e.target.value)}
+                                placeholder="e.g. 07-04-2026"
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none font-mono font-bold"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Pickup Time</label>
+                            <select
+                                value={timeVal}
+                                onChange={(e) => setTimeVal(e.target.value)}
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none font-bold text-gray-700"
+                            >
+                                {['06:00 AM','07:00 AM','08:00 AM','09:00 AM','10:00 AM','11:00 AM','12:00 PM','01:00 PM','02:00 PM','03:00 PM','04:00 PM','05:00 PM','06:00 PM'].map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3">
+                            <p className="text-[10px] uppercase font-bold text-gray-400 mb-0.5">Will be saved as</p>
+                            <p className="text-sm font-black text-indigo-700">{combined}</p>
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-3 mt-8">
+                        <button
+                            disabled={!dateVal.trim() || isSaving}
+                            onClick={() => onSave(combined)}
+                            className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-[0.98] text-sm uppercase flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                            {isSaving ? <RefreshIcon className="h-5 w-5 animate-spin" /> : <CheckCircleIcon className="h-5 w-5" />}
+                            {isSaving ? 'Saving...' : 'Confirm Pickup Date'}
+                        </button>
+                        <button disabled={isSaving} onClick={onClose} className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors">
                             Cancel
                         </button>
                     </div>
@@ -1477,14 +1551,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    const handleAddPickupDate = async (so: GroupedSalesOrder) => {
-        const dateInput = window.prompt(`Enter pickup date for ${so.id} (YYYY-MM-DD)`, new Date().toISOString().split('T')[0]);
-        if (!dateInput) return;
+    const [pickupDateModal, setPickupDateModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, isSaving: boolean }>({ isOpen: false, so: null, isSaving: false });
+
+    const handleAddPickupDate = (so: GroupedSalesOrder) => {
+        setPickupDateModal({ isOpen: true, so, isSaving: false });
+    };
+
+    const handleConfirmPickupDate = async (dateInput: string) => {
+        if (!pickupDateModal.so) return;
+        const so = pickupDateModal.so;
+        setPickupDateModal(prev => ({ ...prev, isSaving: true }));
         try {
-            addNotification(`Pickup Date ${dateInput} added successfully`, "success");
+            await updatePOPickupDate(so.poReference, dateInput);
+            setPurchaseOrders(prev => prev.map(p => p.poNumber === so.poReference ? {...p, pickupDate: dateInput} : p));
+            addNotification(`Pickup Date/Time saved successfully`, "success");
             onSync();
         } catch {
-            addNotification("Failed to add pickup date", "error");
+            addNotification("Failed to save pickup date", "error");
+        } finally {
+            setPickupDateModal({ isOpen: false, so: null, isSaving: false });
         }
     };
 
@@ -1749,7 +1834,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (!val) return;
             filteredResults = filteredResults.filter(so => String((so as any)[key] || '').toLowerCase().includes(val));
         });
-        filteredResults.sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate));
+        if (activeFilter === 'Label Generated') {
+            filteredResults.sort((a, b) => {
+                // Orders with pickup date come first, sorted by pickup date ascending
+                if (a.pickupDate && !b.pickupDate) return -1;
+                if (!a.pickupDate && b.pickupDate) return 1;
+                if (a.pickupDate && b.pickupDate) return a.pickupDate.localeCompare(b.pickupDate);
+                return parseDateString(b.orderDate) - parseDateString(a.orderDate);
+            });
+        } else {
+            filteredResults.sort((a, b) => parseDateString(b.orderDate) - parseDateString(a.orderDate));
+        }
         return { salesOrders: filteredResults, salesTabCounts: counts, allSalesOrders: results };
     }, [purchaseOrders, activeFilter, columnFilters]);
 
@@ -3101,6 +3196,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
                                                             </p>
                                                         )}
+                                                        {(so.status === 'Label Generated' || so.status === 'Shipped') && so.pickupDate && (
+                                                            <p className="text-[10px] font-bold text-indigo-600 mt-1.5 flex items-center gap-1 whitespace-nowrap bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shadow-sm">
+                                                                <CalendarIcon className="h-3 w-3" />
+                                                                Pickup: {so.pickupDate}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                     <div
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
@@ -3167,7 +3268,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
                                                                         >
                                                                             <CalendarIcon className="h-3.5 w-3.5" />
-                                                                            Add Pickup Date
+                                                                            Add Pickup Date & Time
                                                                         </button>
                                                                     </>
                                                                 )}
@@ -3532,6 +3633,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 </table>
             </div>
         </div>
+
+        {pickupDateModal.isOpen && pickupDateModal.so && (
+            <PickupDateModal
+                so={pickupDateModal.so}
+                onSave={handleConfirmPickupDate}
+                onClose={() => setPickupDateModal({ isOpen: false, so: null, isSaving: false })}
+                isSaving={pickupDateModal.isSaving}
+            />
+        )}
     );
 };
 

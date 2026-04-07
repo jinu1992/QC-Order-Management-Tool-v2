@@ -131,6 +131,10 @@ export const fetchUploadMetadata = async (): Promise<UploadMetadata[]> => {
     } catch (error) { return []; }
 };
 
+export const updatePOPickupDate = async (poNumber: string, pickupDate: string): Promise<{ status: string, message?: string }> => {
+    return await postToScript({ action: 'updatePOPickupDate', poNumber, pickupDate });
+};
+
 export const fetchQuotations = async (): Promise<Quotation[]> => {
     try {
         const response = await fetch(`${API_URL}?action=getQuotations`, { redirect: 'follow' });
