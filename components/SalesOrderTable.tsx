@@ -2273,8 +2273,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     so.edd || 'N/A',
                     appointmentDateTime,
                     so.appointmentId || 'N/A',
-                    so.poPdfUrl || 'N/A',
-                    so.invoiceUrl || 'N/A'
+                    (so.poPdfUrl && so.poPdfUrl.startsWith('http')) ? `=HYPERLINK("${so.poPdfUrl}", "${so.awb || so.poReference}_Purchase Order")` : (so.poPdfUrl || 'N/A'),
+                    (so.invoiceUrl && so.invoiceUrl.startsWith('http')) ? `=HYPERLINK("${so.invoiceUrl}", "${so.awb || so.poReference}_Invoice")` : (so.invoiceUrl || 'N/A')
                 ];
             });
 
