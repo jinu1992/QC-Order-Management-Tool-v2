@@ -2274,7 +2274,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     appointmentDateTime,
                     so.appointmentId || 'N/A',
                     so.poPdfUrl || 'N/A',
-                    so.invoicePdfUrl || 'N/A'
+                    so.invoiceUrl || 'N/A'
                 ];
             });
 

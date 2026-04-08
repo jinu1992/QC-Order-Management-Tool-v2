@@ -74,7 +74,7 @@ app.get("/api/auth/google/url", (req: Request, res: Response) => {
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile"
     ],
-    prompt: "select_account",
+    prompt: "consent",
   });
   res.json({ url });
 });
