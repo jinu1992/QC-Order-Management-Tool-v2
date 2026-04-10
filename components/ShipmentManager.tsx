@@ -59,6 +59,24 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         return d.toDateString() === targetDate.toDateString();
     };
 
+    const getDaysAgo = (dateStr: string | undefined): number => {
+        if (!dateStr || dateStr === 'N/A') return 0;
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return 0;
+            const today = new Date();
+            const diffMs = today.getTime() - d.getTime();
+            return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        } catch { return 0; }
+    };
+
+    const getSLAUrgency = (dateStr: string | undefined) => {
+        const days = Math.max(0, getDaysAgo(dateStr));
+        if (days <= 1) return { colorClass: "text-green-600", label: `${days}d (On Track)` };
+        if (days === 2) return { colorClass: "text-orange-500", label: `${days}d (Approaching SLA)` };
+        return { colorClass: "text-red-600 animate-pulse font-bold", label: `${days}d (SLA Breached)` };
+    };
+
     const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
         if (!dateStr) return false;
         const d = new Date(dateStr);
@@ -685,9 +703,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                 {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
                                                 {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
                                             </div>
-                                            <div className="text-xs text-gray-700 mt-1">
-                                                <span className="font-bold border-t border-gray-200 pt-1 mt-1 block w-full">EDD: <span className="font-medium text-gray-600">{so.edd || so.poEdd || '-'}</span></span>
+                                            <div className="text-xs text-gray-700 mt-1 pb-1">
+                                                <span className="font-bold border-t border-gray-200 pt-2 mt-1 block w-full">Order Date: <span className="font-medium text-gray-600">{so.orderDate || '-'}</span></span>
                                             </div>
+                                            {so.orderDate && so.orderDate !== 'N/A' && !isActuallyDelivered && (
+                                                <div className="text-[11px] mt-1 flex items-center gap-1 bg-gray-50 p-1 rounded border border-gray-100 w-fit">
+                                                    SLA: <span className={getSLAUrgency(so.orderDate).colorClass}>{getSLAUrgency(so.orderDate).label}</span>
+                                                </div>
+                                            )}
                                         </td>
 
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

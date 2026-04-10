@@ -119,6 +119,32 @@ const getDaysAgo = (dateInput?: any): string => {
     }
 };
 
+const getSLAUrgencyColor = (dateInput?: any, status?: string): string => {
+    if (!dateInput) return 'text-gray-800';
+    if (status === 'Delivered' || status === 'RTO Initiated' || status === 'Returned') return 'text-gray-800';
+    
+    try {
+        let d = new Date(dateInput);
+        if (isNaN(d.getTime())) {
+            const parts = String(dateInput).split(/[\/\- \:]/);
+            if (parts.length >= 3 && parts[0].length <= 2 && parts[2].length >= 4) {
+                d = new Date(`${parts[2].substring(0,4)}-${parts[1]}-${parts[0]}`);
+            }
+        }
+        if (isNaN(d.getTime())) return 'text-gray-800';
+        
+        const now = new Date();
+        const diffTime = now.getTime() - d.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (diffDays <= 1) return 'text-partners-green';
+        if (diffDays === 2) return 'text-orange-500';
+        return 'text-red-600 animate-[pulse_2s_ease-in-out_infinite]';
+    } catch {
+        return 'text-gray-800';
+    }
+};
+
 const formatDateForInput = (dateStr?: string): string => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
@@ -3539,7 +3565,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
                                                                 {so.awb ? <>
                                                                     <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
-                                                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Exp Delivery Date</p><p className="text-sm font-bold text-partners-green">{so.edd || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
+                                                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Order Date</p><p className={`text-sm font-bold ${getSLAUrgencyColor(so.orderDate, so.status)}`}>{so.orderDate || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
                                                                     <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
                                                                 </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>

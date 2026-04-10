@@ -222,7 +222,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
     const [channelModal, setChannelModal] = useState<{ isOpen: boolean, channel?: ChannelConfig }>({ isOpen: false });
 
     // System Config State
-    const [systemConfig, setSystemConfig] = useState({ easyecom_url: '', easyecom_token: '', easyecom_email: '' });
+    const [systemConfig, setSystemConfig] = useState({ easyecom_url: '', easyecom_token: '', easyecom_email: '', nimbus_notification_email: '' });
     const [configLoading, setConfigLoading] = useState(false);
 
     useEffect(() => {
@@ -238,7 +238,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
             setSystemConfig({
                 easyecom_url: config['easyecom_url'] || 'https://api.easyecom.io/orders/create',
                 easyecom_token: config['easyecom_token'] || '',
-                easyecom_email: config['easyecom_email'] || ''
+                easyecom_email: config['easyecom_email'] || '',
+                nimbus_notification_email: config['nimbus_notification_email'] || ''
             });
         }
         setConfigLoading(false);
@@ -609,6 +610,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                                             placeholder="**************************"
                                         />
                                         <p className="text-xs text-gray-500 mt-1">Credentials are stored securely in the backend 'System_Config' sheet.</p>
+                                    </div>
+                                </div>
+                                <h4 className="font-semibold text-gray-700 flex items-center gap-2 mb-4 mt-8">
+                                    <MailIcon className="h-5 w-5 text-partners-green"/> Nimbus Integration & Email Reports
+                                </h4>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Daily Summary Report Email</label>
+                                        <input 
+                                            type="email" 
+                                            className={inputClassName}
+                                            value={systemConfig.nimbus_notification_email}
+                                            onChange={e => setSystemConfig({...systemConfig, nimbus_notification_email: e.target.value})}
+                                            placeholder="admin@example.com"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">Four-hourly Nimbus tracking updates will be summarized and sent to this email daily.</p>
                                     </div>
                                     <div className="flex justify-end pt-4">
                                          <button 
