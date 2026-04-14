@@ -1669,7 +1669,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
 
                 const maniDate = item.eeManifestDate || po.eeManifestDate;
-                const eeStatus = (item.eeOrderStatus || po.eeOrderStatus || 'Processing').trim();
+                const eeStatus = (item.eeOrderStatus || po.eeOrderStatus || (po.status as string) || 'Processing').trim();
                 const eeStatusLower = eeStatus.toLowerCase();
 
                 const effectiveOrderDate = item.eeOrderDate || po.eeOrderDate || 'N/A';
@@ -1701,6 +1701,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     displayStatus = (isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate)) ? 'Delivered' : (isAmazonOrFlipkart ? 'Label Generated' : 'Invoiced');
                 }
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Processing';
+                else if (eeStatusLower === 'cancelled') displayStatus = 'Cancelled';
                 else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Processing';
 
                 const isZepto = po.channel.toLowerCase().includes('zepto');
@@ -2629,6 +2630,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 if (parentPoNumbers.includes(po.poNumber)) {
                     return {
                         ...po,
+                        status: 'RTD' as any,
                         items: po.items?.map((item: POItem) =>
                             item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
                         )
@@ -3174,19 +3176,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                 so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
                                                                                     so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
                                                                                         so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
-                                                                                            so.status === 'Processing' ? 'bg-purple-100 text-purple-700' :
-                                                                                                'bg-gray-100 text-gray-700'
+                                                                                            so.status === 'Cancelled' ? 'bg-rose-100 text-rose-700' :
+                                                                                                so.status === 'Processing' ? 'bg-purple-100 text-purple-700' :
+                                                                                                    'bg-gray-100 text-gray-700'
                                                         }`}>
                                                         {so.status === 'Processing' ? so.originalEeStatus : so.status}
                                                     </span>
-                                                    {!so.invoiceNumber && getSLAUrgency(so.orderDate, so.status).hoursLeft !== null && (
-                                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase w-fit flex items-center gap-1 ${getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-red-50 text-red-600 border border-red-100 animate-pulse'}`}>
-                                                            <ClockIcon className="h-2.5 w-2.5" />
-                                                            {getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 
-                                                                ? `${getSLAUrgency(so.orderDate, so.status).hoursLeft}h Left` 
-                                                                : `${Math.abs(getSLAUrgency(so.orderDate, so.status).hoursLeft!)}h Overdue`}
-                                                        </span>
-                                                    )}
                                                     {showApptMissing && (
                                                         <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-red-50 text-red-600 border border-red-100 w-fit flex items-center gap-1 animate-pulse">
                                                             <div className="h-1 w-1 rounded-full bg-red-600"></div>
@@ -3297,6 +3292,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 whitespace-nowrap">
                                                                 <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
                                                             </p>
+                                                        )}
+                                                        {!so.invoiceNumber && getSLAUrgency(so.orderDate, so.status).hoursLeft !== null && (
+                                                            <span className={`mt-2 px-2 py-1 rounded-full text-[9px] font-black uppercase flex items-center justify-center gap-1.5 shadow-sm border ${getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-red-50 text-red-600 border-red-200 animate-pulse'}`}>
+                                                                <ClockIcon className="h-3 w-3" />
+                                                                {getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 
+                                                                    ? `${getSLAUrgency(so.orderDate, so.status).hoursLeft}h Left` 
+                                                                    : `${Math.abs(getSLAUrgency(so.orderDate, so.status).hoursLeft!)}h Overdue`}
+                                                            </span>
                                                         )}
                                                     </div>
                                                         {so.status === 'Label Generated' && (
