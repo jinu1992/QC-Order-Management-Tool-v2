@@ -78,13 +78,19 @@ function processNimbusAndSendEmail() {
     
     // Filter active Nimbus shipments
     const nimbusShipments = [];
+    const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
     
     dbData.forEach(row => {
-      const channel = String(row[channelIndex] || "");
-      const isAmazon = channel.toLowerCase().includes('amazon');
+      const channelLabel = String(row[channelIndex] || "");
+      const channel = channelLabel.toLowerCase();
+      const isAllowedChannel = allowedChannels.some(c => channel.includes(c));
       
+      if (!isAllowedChannel) return;
+
+      const isAmazon = channel.includes('amazon');
       const trackingStatus = String(row[trackingStatusIndex] || "").toLowerCase();
-      const isActuallyDelivered = (trackingStatus === 'delivered' || trackingStatus === 'successfully delivered' || !!row[deliveredDateIndex]);
+      const deliveredDate = row[deliveredDateIndex];
+      const isActuallyDelivered = (trackingStatus === 'delivered' || trackingStatus === 'successfully delivered' || !!deliveredDate);
       
       const eeStatus = String(row[eeStatusIndex] || "").toLowerCase();
       const rtoStatus = String(row[rtoStatusIndex] || "");
@@ -110,21 +116,28 @@ function processNimbusAndSendEmail() {
 
       if (shouldInclude && awbText !== "") {
         nimbusShipments.push({
-          bookedDate: row[manifestDateIndex] ? new Date(row[manifestDateIndex]).toLocaleDateString() : (row[batchDateIndex] ? new Date(row[batchDateIndex]).toLocaleDateString() : "N/A"),
+          bookedDate: formatDate(row[manifestDateIndex] || row[batchDateIndex]),
           eeRef: row[eeRefIndex],
-          channel: channel,
+          channel: channelLabel,
           storeCode: String(row[storeCodeIndex] || ""),
           awb: awbText,
           trackingStatus: row[trackingStatusIndex] || "Pending",
           latestStatus: row[latestStatusIndex] || "N/A",
           currentLocation: row[currentLocationIndex] || "N/A",
-          edd: row[eddIndex] ? new Date(row[eddIndex]).toLocaleDateString() : "N/A",
-          apptDateTime: (row[apptDateIndex] ? new Date(row[apptDateIndex]).toLocaleDateString() : "") + " " + (row[apptTimeIndex] ? String(row[apptTimeIndex]) : ""),
+          edd: formatDate(row[eddIndex]),
+          apptDateTime: formatApptDateTime(row[apptDateIndex], row[apptTimeIndex]),
           apptId: String(row[apptIdIndex] || ""),
           poPdf: String(row[poPdfIndex] || ""),
           invoiceUrl: String(row[invoiceUrlIndex] || "")
         });
       }
+    });
+
+    // Sort by Appointment Date ascending
+    nimbusShipments.sort((a, b) => {
+      const dateA = a.apptDateTime === "N/A" ? 0 : 1;
+      const dateB = b.apptDateTime === "N/A" ? 0 : 1;
+      return dateB - dateA;
     });
     
     if (nimbusShipments.length === 0) {
@@ -138,7 +151,7 @@ function processNimbusAndSendEmail() {
     // 3. Send Email
     MailApp.sendEmail({
       to: nimbusEmail,
-      subject: `Nimbus Shipments Daily Update - ${new Date().toLocaleDateString()}`,
+      subject: `Nimbus Shipments Summary - ${formatDate(new Date())}`,
       htmlBody: htmlEmail
     });
     
@@ -146,6 +159,36 @@ function processNimbusAndSendEmail() {
     
   } catch (err) {
     Logger.log("Error in processNimbusAndSendEmail: " + err.toString());
+  }
+}
+
+/**
+ * DD-MM-YYYY formatter
+ */
+function formatDate(date) {
+  if (!date || isNaN(new Date(date).getTime())) return "N/A";
+  const d = new Date(date);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "dd-MM-yyyy");
+}
+
+/**
+ * DD-MM-YYYY HH:mm AM/PM formatter
+ */
+function formatApptDateTime(date, time) {
+  if (!date || isNaN(new Date(date).getTime())) return "N/A";
+  const datePart = formatDate(date);
+  if (!time) return datePart;
+  
+  try {
+    let timePart = "";
+    if (time instanceof Date) {
+      timePart = Utilities.formatDate(time, Session.getScriptTimeZone(), "hh:mm a");
+    } else {
+      timePart = String(time);
+    }
+    return datePart + " " + timePart;
+  } catch (e) {
+    return datePart + " " + String(time);
   }
 }
 

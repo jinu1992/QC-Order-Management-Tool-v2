@@ -119,9 +119,9 @@ const getDaysAgo = (dateInput?: any): string => {
     }
 };
 
-const getSLAUrgency = (dateInput?: any, status?: string): { colorClass: string, text: string } => {
-    if (!dateInput) return { colorClass: 'text-gray-800', text: '' };
-    if (status === 'Delivered' || status === 'RTO Initiated' || status === 'Returned') return { colorClass: 'text-gray-800', text: '' };
+const getSLAUrgency = (dateInput?: any, status?: string, invoiceNumber?: string): { colorClass: string, text: string, hoursLeft: number | null } => {
+    if (!dateInput) return { colorClass: 'text-gray-800', text: '', hoursLeft: null };
+    if (status === 'Delivered' || status === 'RTO Initiated' || status === 'Returned') return { colorClass: 'text-gray-800', text: '', hoursLeft: null };
     
     try {
         let d = new Date(dateInput);
@@ -131,18 +131,22 @@ const getSLAUrgency = (dateInput?: any, status?: string): { colorClass: string, 
                 d = new Date(`${parts[2].substring(0,4)}-${parts[1]}-${parts[0]}`);
             }
         }
-        if (isNaN(d.getTime())) return { colorClass: 'text-gray-800', text: '' };
+        if (isNaN(d.getTime())) return { colorClass: 'text-gray-800', text: '', hoursLeft: null };
         
         const now = new Date();
         const diffTime = now.getTime() - d.getTime();
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
         const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
         
-        if (diffDays <= 1) return { colorClass: 'text-partners-green font-bold', text: `${diffDays}d (On Track)` };
-        if (diffDays === 2) return { colorClass: 'text-orange-500 font-bold', text: `${diffDays}d (Approaching SLA)` };
-        return { colorClass: 'text-red-600 animate-[pulse_2s_ease-in-out_infinite] font-bold', text: `${diffDays}d / ${diffHours}h (SLA Breached)` };
+        // SLA is 48 hours (2 days)
+        const slaTargetHours = 48;
+        const hoursLeft = slaTargetHours - diffHours;
+
+        if (diffDays <= 1) return { colorClass: 'text-partners-green font-bold', text: `${diffDays}d (On Track)`, hoursLeft };
+        if (diffDays === 2) return { colorClass: 'text-orange-500 font-bold', text: `${diffDays}d (Approaching SLA)`, hoursLeft };
+        return { colorClass: 'text-red-600 animate-[pulse_2s_ease-in-out_infinite] font-bold', text: `${diffDays}d / ${diffHours}h (SLA Breached)`, hoursLeft };
     } catch {
-        return { colorClass: 'text-gray-800', text: '' };
+        return { colorClass: 'text-gray-800', text: '', hoursLeft: null };
     }
 };
 
@@ -1502,6 +1506,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
+    const [isUpdatingRTD, setIsUpdatingRTD] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
 
     // Close menu on click outside
@@ -1794,11 +1799,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     const curPo = String(po.poNumber || po.id || '');
                     if (!groups[refCode].poReference.includes(curPo)) groups[refCode].poReference += `, ${curPo}`;
                     const statusRank = (s: string) => {
-                        if (s === 'Returned') return 13;
-                        if (s === 'RTO Initiated') return 12;
-                        if (s === 'Closed') return 11;
-                        if (s === 'Delivered') return 10;
-                        if (s === 'Shipped') return 9;
+                        if (s === 'Returned') return 14;
+                        if (s === 'RTO Initiated') return 13;
+                        if (s === 'Closed') return 12;
+                        if (s === 'Delivered') return 11;
+                        if (s === 'Shipped') return 10;
+                        if (s === 'Ready to Dispatch') return 9;
                         if (s === 'Label Generated') return 8;
                         if (s === 'Create ASN') return 7;
                         if (s === 'Awaiting Appointment Confirmation') return 6;
@@ -2613,6 +2619,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification('Pickup date is required to mark as Ready to Dispatch.', 'warning');
             return;
         }
+        setIsUpdatingRTD(so.id);
         try {
             const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
             await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
@@ -2629,9 +2636,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 }
                 return po;
             }));
+            onSync(); // Force a refresh to ensure consistency
         } catch (e) {
             console.error('Error marking as RTD:', e);
             addNotification('Failed to update status to Ready to Dispatch.', 'error');
+        } finally {
+            setIsUpdatingRTD(null);
         }
     };
 
@@ -3167,8 +3177,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                             so.status === 'Processing' ? 'bg-purple-100 text-purple-700' :
                                                                                                 'bg-gray-100 text-gray-700'
                                                         }`}>
-                                                        {so.status}
+                                                        {so.status === 'Processing' ? so.originalEeStatus : so.status}
                                                     </span>
+                                                    {!so.invoiceNumber && getSLAUrgency(so.orderDate, so.status).hoursLeft !== null && (
+                                                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase w-fit flex items-center gap-1 ${getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-red-50 text-red-600 border border-red-100 animate-pulse'}`}>
+                                                            <ClockIcon className="h-2.5 w-2.5" />
+                                                            {getSLAUrgency(so.orderDate, so.status).hoursLeft! > 0 
+                                                                ? `${getSLAUrgency(so.orderDate, so.status).hoursLeft}h Left` 
+                                                                : `${Math.abs(getSLAUrgency(so.orderDate, so.status).hoursLeft!)}h Overdue`}
+                                                        </span>
+                                                    )}
                                                     {showApptMissing && (
                                                         <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-red-50 text-red-600 border border-red-100 w-fit flex items-center gap-1 animate-pulse">
                                                             <div className="h-1 w-1 rounded-full bg-red-600"></div>
@@ -3281,16 +3299,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             </p>
                                                         )}
                                                     </div>
-                                                    {so.status === 'Label Generated' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
-                                                            disabled={!so.pickupDate}
-                                                            title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch'}
-                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-                                                        >
-                                                            Mark as RTD
-                                                        </button>
-                                                    )}
+                                                        {so.status === 'Label Generated' && (
+                                                            <button
+                                                                onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
+                                                                disabled={!so.pickupDate || isUpdatingRTD === so.id}
+                                                                title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch'}
+                                                                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
+                                                            >
+                                                                {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                                                                {isUpdatingRTD === so.id ? 'Updating...' : 'Mark as RTD'}
+                                                            </button>
+                                                        )}
                                                     {so.status === 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleMarkAsDispatched(so); }}
