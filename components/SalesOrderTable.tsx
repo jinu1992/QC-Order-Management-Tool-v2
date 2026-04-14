@@ -119,9 +119,9 @@ const getDaysAgo = (dateInput?: any): string => {
     }
 };
 
-const getSLAUrgencyColor = (dateInput?: any, status?: string): string => {
-    if (!dateInput) return 'text-gray-800';
-    if (status === 'Delivered' || status === 'RTO Initiated' || status === 'Returned') return 'text-gray-800';
+const getSLAUrgency = (dateInput?: any, status?: string): { colorClass: string, text: string } => {
+    if (!dateInput) return { colorClass: 'text-gray-800', text: '' };
+    if (status === 'Delivered' || status === 'RTO Initiated' || status === 'Returned') return { colorClass: 'text-gray-800', text: '' };
     
     try {
         let d = new Date(dateInput);
@@ -131,17 +131,18 @@ const getSLAUrgencyColor = (dateInput?: any, status?: string): string => {
                 d = new Date(`${parts[2].substring(0,4)}-${parts[1]}-${parts[0]}`);
             }
         }
-        if (isNaN(d.getTime())) return 'text-gray-800';
+        if (isNaN(d.getTime())) return { colorClass: 'text-gray-800', text: '' };
         
         const now = new Date();
         const diffTime = now.getTime() - d.getTime();
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
         
-        if (diffDays <= 1) return 'text-partners-green';
-        if (diffDays === 2) return 'text-orange-500';
-        return 'text-red-600 animate-[pulse_2s_ease-in-out_infinite]';
+        if (diffDays <= 1) return { colorClass: 'text-partners-green font-bold', text: `${diffDays}d (On Track)` };
+        if (diffDays === 2) return { colorClass: 'text-orange-500 font-bold', text: `${diffDays}d (Approaching SLA)` };
+        return { colorClass: 'text-red-600 animate-[pulse_2s_ease-in-out_infinite] font-bold', text: `${diffDays}d / ${diffHours}h (SLA Breached)` };
     } catch {
-        return 'text-gray-800';
+        return { colorClass: 'text-gray-800', text: '' };
     }
 };
 
@@ -1608,12 +1609,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const tabs = [
         { id: 'All POs', name: 'All POs' },
-        { id: 'Confirmed', name: 'Confirmed' },
-        { id: 'Batch Created', name: 'Batch Created' },
+        { id: 'Processing', name: 'Processing' },
         { id: 'Invoiced', name: 'Invoiced' },
         { id: 'Awaiting Appointment Confirmation', name: 'Awaiting Appointment' },
         { id: 'Create ASN', name: 'Create ASN' },
         { id: 'Label Generated', name: 'Label Generated' },
+        { id: 'Ready to Dispatch', name: 'Ready to Dispatch' },
         { id: 'Shipped', name: 'Shipped' },
         { id: 'Delivered', name: 'Delivered' },
         { id: 'RTO Initiated', name: 'RTO Initiated' },
@@ -1625,12 +1626,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const groups: Record<string, GroupedSalesOrder> = {};
         const counts: Record<string, number> = {
             'All POs': 0,
-            'Confirmed': 0,
-            'Batch Created': 0,
+            'Processing': 0,
             'Invoiced': 0,
             'Awaiting Appointment Confirmation': 0,
             'Create ASN': 0,
             'Label Generated': 0,
+            'Ready to Dispatch': 0,
             'Shipped': 0,
             'Delivered': 0,
             'RTO Initiated': 0,
@@ -1682,18 +1683,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
-                else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
+                else if (eeStatusLower === 'dispatched') displayStatus = 'Shipped';
+                else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Processing';
                 else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
                     const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
-                    displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Batch Created';
+                    displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 }
-                else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Batch Created';
+                else if (eeStatusLower === 'rtd' || eeStatusLower === 'ready to dispatch') displayStatus = 'Ready to Dispatch';
+                else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Processing';
                 else if (statusHasInvoice) {
                     const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
                     displayStatus = (isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate)) ? 'Delivered' : (isAmazonOrFlipkart ? 'Label Generated' : 'Invoiced');
                 }
-                else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Batch Created';
-                else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Confirmed';
+                else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Processing';
+                else if (eeStatusLower === 'confirmed' || eeStatusLower === 'open') displayStatus = 'Processing';
 
                 const isZepto = po.channel.toLowerCase().includes('zepto');
 
@@ -1844,7 +1847,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 (so.storeCode.toUpperCase() === 'YEIO');
 
             if (!hasInvoice && progressRequiringInvoice && !isAmazonFbaYeio) {
-                so.status = 'Batch Created';
+                so.status = 'Processing';
             }
         });
 
@@ -2605,6 +2608,56 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
+    const handleMarkAsRTD = async (so: GroupedSalesOrder) => {
+        if (!so.pickupDate) {
+            addNotification('Pickup date is required to mark as Ready to Dispatch.', 'warning');
+            return;
+        }
+        try {
+            const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
+            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
+            addNotification(`${so.id} marked as Ready to Dispatch.`, 'success');
+            // Optimistic UI update
+            setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                if (parentPoNumbers.includes(po.poNumber)) {
+                    return {
+                        ...po,
+                        items: po.items?.map((item: POItem) =>
+                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
+                        )
+                    };
+                }
+                return po;
+            }));
+        } catch (e) {
+            console.error('Error marking as RTD:', e);
+            addNotification('Failed to update status to Ready to Dispatch.', 'error');
+        }
+    };
+
+    const handleMarkAsDispatched = async (so: GroupedSalesOrder) => {
+        try {
+            const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
+            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'Dispatched')));
+            addNotification(`${so.id} marked as Dispatched.`, 'success');
+            // Optimistic UI update
+            setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                if (parentPoNumbers.includes(po.poNumber)) {
+                    return {
+                        ...po,
+                        items: po.items?.map((item: POItem) =>
+                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'Dispatched' } : item
+                        )
+                    };
+                }
+                return po;
+            }));
+        } catch (e) {
+            console.error('Error marking as Dispatched:', e);
+            addNotification('Failed to update status to Dispatched.', 'error');
+        }
+    };
+
     /**
      * Special function for Flipkart Packing Slip CSV generation (Box-wise)
      */
@@ -3106,12 +3159,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' :
                                                                 so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' :
                                                                     so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' :
-                                                                        so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
-                                                                            so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
-                                                                                so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
-                                                                                    so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
-                                                                                        so.status === 'Batch Created' ? 'bg-purple-100 text-purple-700' :
-                                                                                            so.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                                                        so.status === 'Ready to Dispatch' ? 'bg-violet-600 text-white shadow-sm animate-pulse' :
+                                                                            so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
+                                                                                so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
+                                                                                    so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
+                                                                                        so.status === 'Create ASN' ? 'bg-green-100 text-green-700' :
+                                                                                            so.status === 'Processing' ? 'bg-purple-100 text-purple-700' :
                                                                                                 'bg-gray-100 text-gray-700'
                                                         }`}>
                                                         {so.status}
@@ -3228,6 +3281,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             </p>
                                                         )}
                                                     </div>
+                                                    {so.status === 'Label Generated' && (
+                                                        <button
+                                                            onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
+                                                            disabled={!so.pickupDate}
+                                                            title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch'}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                                                        >
+                                                            Mark as RTD
+                                                        </button>
+                                                    )}
+                                                    {so.status === 'Ready to Dispatch' && (
+                                                        <button
+                                                            onClick={(e: any) => { e.stopPropagation(); handleMarkAsDispatched(so); }}
+                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                                                            title="Mark order as Dispatched"
+                                                        >
+                                                            Mark as Dispatched
+                                                        </button>
+                                                    )}
                                                     <div
                                                         className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
                                                         onClick={(e: any) => {
@@ -3565,7 +3637,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
                                                                 {so.awb ? <>
                                                                     <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
-                                                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Order Date</p><p className={`text-sm font-bold ${getSLAUrgencyColor(so.orderDate, so.status)}`}>{so.orderDate || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">Delivered Date</p><p className="text-sm font-bold text-gray-800">{so.deliveredDate || '-'}</p></div></div></div>
+                                                                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Order Date</p><p className={`text-sm font-bold text-gray-900`}>{so.orderDate || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">SLA Urgency</p><p className={`text-sm ${getSLAUrgency(so.orderDate, so.status).colorClass}`}>{getSLAUrgency(so.orderDate, so.status).text || '-'}</p></div></div></div>
                                                                     <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
                                                                 </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>

@@ -1363,62 +1363,21 @@ function saveSystemConfig(data) {
   const props = PropertiesService.getScriptProperties();
   if (data.easyecom_token) props.setProperty('EASY_ECOM_TOKEN', data.easyecom_token);
   if (data.easyecom_email) props.setProperty('EASY_ECOM_EMAIL', data.easyecom_email);
-  
-  try {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    let sheet = ss.getSheetByName('System_Config');
-    if (!sheet) {
-      sheet = ss.insertSheet('System_Config');
-      sheet.appendRow(['Key', 'Value']);
-    }
-    
-    const configPairs = {
-      'easyecom_url': data.easyecom_url,
-      'easyecom_token': data.easyecom_token,
-      'easyecom_email': data.easyecom_email,
-      'nimbus_notification_email': data.nimbus_notification_email
-    };
-    
-    Object.keys(configPairs).forEach(key => {
-      const val = configPairs[key];
-      if (val !== undefined && val !== null) {
-        let found = false;
-        const dataRange = sheet.getDataRange();
-        const values = dataRange.getValues();
-        for (let i = 1; i < values.length; i++) {
-          if (values[i][0] === key) {
-            sheet.getRange(i + 1, 2).setValue(val);
-            found = true;
-            break;
-          }
-        }
-        if (!found) sheet.appendRow([key, val]);
-      }
-    });
-  } catch (e) {
-    Logger.log("Failed to save to System_Config sheet: " + e.toString());
-  }
-  
+  if (data.nimbus_notification_email) props.setProperty('NIMBUS_NOTIFICATION_EMAIL', data.nimbus_notification_email);
   return responseJSON({status: 'success', message: 'Config saved'});
 }
 
 function getSystemConfig() {
-  try {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const sheet = ss.getSheetByName('System_Config');
-    if (!sheet) return responseJSON({status: 'success', data: {}});
-    
-    const dataRange = sheet.getDataRange().getValues();
-    const configData = {};
-    for (let i = 1; i < dataRange.length; i++) {
-      if (dataRange[i][0]) {
-        configData[dataRange[i][0]] = dataRange[i][1];
-      }
+  const props = PropertiesService.getScriptProperties();
+  return responseJSON({
+    status: 'success',
+    data: {
+      easyecom_url: EASYECOM_ORDERS_URL,
+      easyecom_email: props.getProperty('EASY_ECOM_EMAIL') || '',
+      easyecom_token: props.getProperty('EASY_ECOM_TOKEN') ? '********' : '', // Masked
+      nimbus_notification_email : props.getProperty('NIMBUS_NOTIFICATION_EMAIL') || '', // Masked
     }
-    return responseJSON({status: 'success', data: configData});
-  } catch (err) {
-    return responseJSON({status: 'error', message: err.toString()});
-  }
+  });
 }
 
 

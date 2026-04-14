@@ -41,9 +41,10 @@ function processNimbusAndSendEmail() {
     const dbSheet = ss.getSheetByName(SHEET_PO_DATABASE);
     
     // Fetch Email from System Config
-    const nimbusEmail = getSystemConfigEmail(ss, 'nimbus_notification_email');
+    const props = PropertiesService.getScriptProperties();
+    const nimbusEmail = props.getProperty('NIMBUS_NOTIFICATION_EMAIL');
     if (!nimbusEmail) {
-      Logger.log("Nimbus notification email not configured in System Config. Exiting.");
+      Logger.log("Nimbus notification email not configured in Properties. Exiting.");
       return;
     }
 
@@ -52,11 +53,23 @@ function processNimbusAndSendEmail() {
     const headers = dbData.shift();
     
     const awbIndex = headers.indexOf("AWB");
-    const statusIndex = headers.indexOf("Tracking Status");
-    const carrierIndex = headers.indexOf("Carrier");
-    const eeRefIndex = headers.indexOf("EE_reference_code");
-    const lastUpdateIndex = headers.indexOf("Latest Status Date");
+    const trackingStatusIndex = headers.indexOf("Tracking Status");
+    const latestStatusIndex = headers.indexOf("Latest Status");
+    const currentLocationIndex = headers.indexOf("Current Location");
+    const channelIndex = headers.indexOf("Channel Name");
+    const storeCodeIndex = headers.indexOf("Store Code");
+    const eeRefIndex = headers.indexOf("PO Number");
     const eddIndex = headers.indexOf("EDD");
+    const apptDateIndex = headers.indexOf("Appointment Date");
+    const apptTimeIndex = headers.indexOf("Appointment Time");
+    const apptIdIndex = headers.indexOf("Appointment ID");
+    const poPdfIndex = headers.indexOf("PO PDF");
+    const invoiceUrlIndex = headers.indexOf("Invoice Url");
+    const batchDateIndex = headers.indexOf("EE_batch_created_at");
+    const manifestDateIndex = headers.indexOf("EE_manifest_date");
+    const eeStatusIndex = headers.indexOf("EE_order_status");
+    const rtoStatusIndex = headers.indexOf("RTO Status");
+    const deliveredDateIndex = headers.indexOf("Delivered Date");
     
     if (awbIndex === -1 || eeRefIndex === -1) {
       Logger.log("Required columns are missing from PO_Database");
@@ -67,20 +80,49 @@ function processNimbusAndSendEmail() {
     const nimbusShipments = [];
     
     dbData.forEach(row => {
-      const awb = String(row[awbIndex] || "").trim();
-      const carrier = String(row[carrierIndex] || "").toLowerCase();
-      const trackingStatus = String(row[statusIndex] || "").toLowerCase();
+      const channel = String(row[channelIndex] || "");
+      const isAmazon = channel.toLowerCase().includes('amazon');
       
-      // Basic heuristic to capture Nimbus assigned shipments
-      // Assuming carrier may say 'Nimbus' or AWB is present and not delivered via nimbus logic
-      if (awb !== "" && trackingStatus !== "delivered" && trackingStatus !== "rto delivered") {
+      const trackingStatus = String(row[trackingStatusIndex] || "").toLowerCase();
+      const isActuallyDelivered = (trackingStatus === 'delivered' || trackingStatus === 'successfully delivered' || !!row[deliveredDateIndex]);
+      
+      const eeStatus = String(row[eeStatusIndex] || "").toLowerCase();
+      const rtoStatus = String(row[rtoStatusIndex] || "");
+      const awbText = String(row[awbIndex] || "").trim();
+      
+      let displayStatus = 'Processing';
+      const isOutOfDelivery = trackingStatus === 'out for delivery';
+      const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
+      const isRTOInitiated = eeStatus === 'shipped' && rtoStatus !== '';
+
+      if (eeStatus === 'returned' || eeStatus === 'rto') displayStatus = 'Returned';
+      else if (isRTOInitiated) displayStatus = 'RTO Initiated';
+      else if (rtoStatus) displayStatus = 'Returned';
+      else if (eeStatus === 'closed') displayStatus = 'Closed';
+      else if (isDeliveredStatus) displayStatus = 'Delivered';
+      else if (eeStatus === 'shipped' || row[manifestDateIndex] || trackingStatus === 'in transit' || isOutOfDelivery) {
+          displayStatus = isAmazon ? 'Delivered' : 'Shipped';
+      }
+      
+      let shouldInclude = false;
+      if (displayStatus === 'Shipped' || displayStatus === 'RTO Initiated' || displayStatus === 'Returned') shouldInclude = true;
+      if (isAmazon && displayStatus === 'Delivered' && !isActuallyDelivered) shouldInclude = true;
+
+      if (shouldInclude && awbText !== "") {
         nimbusShipments.push({
+          bookedDate: row[manifestDateIndex] ? new Date(row[manifestDateIndex]).toLocaleDateString() : (row[batchDateIndex] ? new Date(row[batchDateIndex]).toLocaleDateString() : "N/A"),
           eeRef: row[eeRefIndex],
-          awb: awb,
-          status: row[statusIndex] || "Pending",
-          carrier: row[carrierIndex] || "Unknown",
+          channel: channel,
+          storeCode: String(row[storeCodeIndex] || ""),
+          awb: awbText,
+          trackingStatus: row[trackingStatusIndex] || "Pending",
+          latestStatus: row[latestStatusIndex] || "N/A",
+          currentLocation: row[currentLocationIndex] || "N/A",
           edd: row[eddIndex] ? new Date(row[eddIndex]).toLocaleDateString() : "N/A",
-          lastUpdate: row[lastUpdateIndex] ? new Date(row[lastUpdateIndex]).toLocaleString() : "N/A"
+          apptDateTime: (row[apptDateIndex] ? new Date(row[apptDateIndex]).toLocaleDateString() : "") + " " + (row[apptTimeIndex] ? String(row[apptTimeIndex]) : ""),
+          apptId: String(row[apptIdIndex] || ""),
+          poPdf: String(row[poPdfIndex] || ""),
+          invoiceUrl: String(row[invoiceUrlIndex] || "")
         });
       }
     });
@@ -107,21 +149,6 @@ function processNimbusAndSendEmail() {
   }
 }
 
-/**
- * Gets a specific key from System_Config sheet
- */
-function getSystemConfigEmail(ss, configKey) {
-  const configSheet = ss.getSheetByName(SHEET_SYSTEM_CONFIG);
-  if (!configSheet) return null;
-  
-  const data = configSheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) { // Skip header
-    if (data[i][0] === configKey) {
-      return data[i][1];
-    }
-  }
-  return null;
-}
 
 /**
  * Generates an HTML table for the email body.
@@ -131,43 +158,59 @@ function buildHtmlEmailTemplate(shipments) {
     // Correctly formatted AWB-prefixed anchor text
     const trackingLink = `https://ship.nimbuspost.com/shipping/tracking/${s.awb}`;
     const awbLink = `<a href="${trackingLink}" style="color: #10B981; text-decoration: none;"><b>AWB-${s.awb}</b></a>`;
+    const poLink = s.poPdf ? `<a href="${s.poPdf}" style="color: #3B82F6; text-decoration: none;">PDF</a>` : 'N/A';
+    const invLink = s.invoiceUrl ? `<a href="${s.invoiceUrl}" style="color: #3B82F6; text-decoration: none;">Invoice</a>` : 'N/A';
     
     return `
       <tr>
+        <td style="padding: 10px; border: 1px solid #E5E7EB; white-space: nowrap;">${s.bookedDate}</td>
         <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.eeRef}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.channel}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.storeCode}</td>
         <td style="padding: 10px; border: 1px solid #E5E7EB;">${awbLink}</td>
-        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.carrier}</td>
         <td style="padding: 10px; border: 1px solid #E5E7EB;">
-          <span style="background-color: #FEF3C7; color: #D97706; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
-            ${s.status}
+          <span style="background-color: #FEF3C7; color: #D97706; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+            ${s.trackingStatus}
           </span>
         </td>
-        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.edd}</td>
-        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.lastUpdate}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.latestStatus}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.currentLocation}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB; white-space: nowrap;">${s.edd}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB; white-space: nowrap;">${s.apptDateTime}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${s.apptId}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${poLink}</td>
+        <td style="padding: 10px; border: 1px solid #E5E7EB;">${invLink}</td>
       </tr>
     `;
   }).join("");
 
   return `
-    <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
+    <div style="font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto;">
       <div style="background-color: #10B981; padding: 20px; color: white; border-radius: 8px 8px 0 0;">
         <h2 style="margin: 0;">Automated Nimbus Dispatch Report</h2>
         <p style="margin: 5px 0 0 0; opacity: 0.9;">System Generated Trackers - ${new Date().toLocaleString()}</p>
       </div>
       
-      <div style="padding: 20px; border: 1px solid #E5E7EB; border-top: none; border-radius: 0 0 8px 8px;">
+      <div style="padding: 20px; border: 1px solid #E5E7EB; border-top: none; border-radius: 0 0 8px 8px; overflow-x: auto;">
         <p>Hello,</p>
         <p>Please find the latest tracking statuses for pending shipments handled via the Nimbus Courier partner.</p>
         
-        <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px;">
+        <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; text-align: left;">
           <thead>
-            <tr style="background-color: #F3F4F6; text-align: left;">
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Order Ref</th>
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Tracking Link</th>
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Carrier</th>
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Status</th>
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">EDD</th>
-              <th style="padding: 12px 10px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Last Update</th>
+            <tr style="background-color: #F3F4F6;">
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Booked Date</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">PO Number</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Channel</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Store Code</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">AWB</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Tracking Status</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Latest Status</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Current Location</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">EDD</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Appt Date/Time</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Appt ID</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">PO PDF</th>
+              <th style="padding: 12px 6px; border: 1px solid #E5E7EB; font-weight: 600; color: #374151;">Invoice URL</th>
             </tr>
           </thead>
           <tbody>

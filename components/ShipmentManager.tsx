@@ -70,13 +70,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         } catch { return 0; }
     };
 
-    const getSLAUrgency = (dateStr: string | undefined) => {
-        const days = Math.max(0, getDaysAgo(dateStr));
-        if (days <= 1) return { colorClass: "text-green-600", label: `${days}d (On Track)` };
-        if (days === 2) return { colorClass: "text-orange-500", label: `${days}d (Approaching SLA)` };
-        return { colorClass: "text-red-600 animate-pulse font-bold", label: `${days}d (SLA Breached)` };
-    };
-
     const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
         if (!dateStr) return false;
         const d = new Date(dateStr);
@@ -706,11 +699,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                             <div className="text-xs text-gray-700 mt-1 pb-1">
                                                 <span className="font-bold border-t border-gray-200 pt-2 mt-1 block w-full">Order Date: <span className="font-medium text-gray-600">{so.orderDate || '-'}</span></span>
                                             </div>
-                                            {so.orderDate && so.orderDate !== 'N/A' && !isActuallyDelivered && (
-                                                <div className="text-[11px] mt-1 flex items-center gap-1 bg-gray-50 p-1 rounded border border-gray-100 w-fit">
-                                                    SLA: <span className={getSLAUrgency(so.orderDate).colorClass}>{getSLAUrgency(so.orderDate).label}</span>
-                                                </div>
-                                            )}
                                         </td>
 
                                                                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

@@ -83,15 +83,41 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
         }
     }, []);
 
-    // Grouping logic similar to ShipmentManager but focused on dispatch
     const allSalesOrders = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
 
         purchaseOrders.forEach(po => {
             (po.items || []).forEach(item => {
-                if (!item.eeReferenceCode) return; // Only show orders pushed to EE
+                if (!item.eeReferenceCode) return;
                 const refCode = item.eeReferenceCode;
-                
+
+                // Compute displayStatus to filter out Dispatched/Shipped
+                const eeStatusLower = (item.eeOrderStatus || po.eeOrderStatus || '').toLowerCase().trim();
+                const trackingStatusLower = (item.trackingStatus || po.trackingStatus || '').toLowerCase();
+                const maniDate = item.eeManifestDate || po.eeManifestDate;
+                const rtoStatus = item.rtoStatus || po.rtoStatus;
+                const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
+                const isActuallyDelivered = trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!item.deliveredDate || !!po.deliveredDate;
+                const isOutOfDelivery = trackingStatusLower === 'out for delivery';
+                const isDeliveredStatus = isActuallyDelivered && !isOutOfDelivery;
+                const isAmazon = po.channel.toLowerCase().includes('amazon');
+                const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+
+                let displayStatus = 'Processing';
+                if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+                else if (isRTOInitiated) displayStatus = 'RTO Initiated';
+                else if (rtoStatus) displayStatus = 'Returned';
+                else if (eeStatusLower === 'closed') displayStatus = 'Closed';
+                else if (eeStatusLower === 'dispatched') displayStatus = 'Shipped'; // dispatched => goes to Shipped
+                else if (isDeliveredStatus) displayStatus = 'Delivered';
+                else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery) {
+                    displayStatus = isAmazonOrFlipkart ? 'Delivered' : 'Shipped';
+                }
+                else if (eeStatusLower === 'rtd' || eeStatusLower === 'ready to dispatch') displayStatus = 'Ready to Dispatch';
+
+                // Only include 'Ready to Dispatch' orders here
+                if (displayStatus !== 'Ready to Dispatch') return;
+
                 if (!groups[refCode]) {
                     let eeBoxCount = 0;
                     try {
@@ -101,8 +127,8 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
                     groups[refCode] = {
                         id: refCode,
                         poReference: String(po.id),
-                        status: po.status,
-                        originalEeStatus: po.status,
+                        status: displayStatus,
+                        originalEeStatus: eeStatusLower,
                         channel: po.channel,
                         storeCode: po.storeCode || '',
                         orderDate: po.orderDate,
@@ -146,9 +172,9 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
 
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
 
-            // Tab Filters
+            // Tab Filters — All orders here are 'Ready to Dispatch' already
             if (activeTab === 'Pending') {
-                return ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(so.status) && so.status !== 'Dispatched';
+                return !so.pickupDate; // No pickup date scheduled yet
             } else if (activeTab === 'Today') {
                 return isSameDay(so.pickupDate);
             } else if (activeTab === 'Upcoming') {
@@ -198,7 +224,7 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
                                 activeTab === tab ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'
                             }`}>
                                 {allSalesOrders.filter(so => {
-                                    if (tab === 'Pending') return ['Shipped', 'Label Generated', 'Batch Created', 'Manifested'].includes(so.status) && so.status !== 'Dispatched';
+                                    if (tab === 'Pending') return !so.pickupDate;
                                     if (tab === 'Today') return isSameDay(so.pickupDate);
                                     if (tab === 'Upcoming') return isUpcoming(so.pickupDate);
                                     return true;
