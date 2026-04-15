@@ -1684,7 +1684,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const rtoStatus = item.rtoStatus || po.rtoStatus;
                 const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
 
-                if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+                // DB Status override: if PO was manually marked RTD in the database, honour it
+                // regardless of the current EasyEcom status (which may not have synced yet)
+                if (po.poDbStatus === 'RTD') {
+                    displayStatus = 'Ready to Dispatch';
+                } else if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';

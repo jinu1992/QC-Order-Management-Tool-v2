@@ -437,9 +437,13 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.pickupDate && row['Pickup Date']) po.pickupDate = formatSheetDate(row['Pickup Date']);
             if (!po.labelUrl && row['Label URL']) po.labelUrl = String(row['Label URL']);
             if (!po.orderNotes && row['Order Notes']) po.orderNotes = String(row['Order Notes']);
+            // Preserve RTD override: if ANY row for this PO has status RTD, keep it
+            if (rawStatus === 'RTD') po.poDbStatus = 'RTD';
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
+                poDbStatus: rawStatus, // Store raw DB Status for RTD override logic
+
                 channel: row['Channel Name'] || 'Unknown',
                 storeCode: row['Store Code'] || '',
                 qty, amount: itemAmount,

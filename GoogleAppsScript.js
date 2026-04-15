@@ -128,6 +128,8 @@ function saveSystemConfig(data) {
   if (data.easyecom_token) props.setProperty('EASY_ECOM_TOKEN', data.easyecom_token);
   if (data.easyecom_email) props.setProperty('EASY_ECOM_EMAIL', data.easyecom_email);
   if (data.nimbus_notification_email) props.setProperty('NIMBUS_NOTIFICATION_EMAIL', data.nimbus_notification_email);
+  if (data.nimbus_to_emails !== undefined) props.setProperty('NIMBUS_TO_EMAILS', data.nimbus_to_emails);
+  if (data.nimbus_cc_emails !== undefined) props.setProperty('NIMBUS_CC_EMAILS', data.nimbus_cc_emails);
   return {status: 'success', message: 'Config saved'};
 }
 
@@ -140,6 +142,8 @@ function getSystemConfig() {
       easyecom_email: props.getProperty('EASY_ECOM_EMAIL') || '',
       easyecom_token: props.getProperty('EASY_ECOM_TOKEN') ? '********' : '', // Masked
       nimbus_notification_email : props.getProperty('NIMBUS_NOTIFICATION_EMAIL') || '',
+      nimbus_to_emails: props.getProperty('NIMBUS_TO_EMAILS') || '',
+      nimbus_cc_emails: props.getProperty('NIMBUS_CC_EMAILS') || '',
     }
   });
 }
@@ -387,12 +391,14 @@ function updatePOStatus(poNumber, status) {
   const poCol = headers.indexOf('PO Number');
   const statusCol = headers.indexOf('Status');
 
+  let found = false;
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][poCol]) === poNumber) {
       sheet.getRange(i + 1, statusCol + 1).setValue(status);
-      return { status: 'success' };
+      found = true;
     }
   }
+  if (found) return { status: 'success' };
   return { status: 'error', message: 'PO not found' };
 }
 

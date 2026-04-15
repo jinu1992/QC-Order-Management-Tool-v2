@@ -222,7 +222,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
     const [channelModal, setChannelModal] = useState<{ isOpen: boolean, channel?: ChannelConfig }>({ isOpen: false });
 
     // System Config State
-    const [systemConfig, setSystemConfig] = useState({ easyecom_url: '', easyecom_token: '', easyecom_email: '', nimbus_notification_email: '' });
+    const [systemConfig, setSystemConfig] = useState({ easyecom_url: '', easyecom_token: '', easyecom_email: '', nimbus_notification_email: '', nimbus_to_emails: '', nimbus_cc_emails: '' });
     const [configLoading, setConfigLoading] = useState(false);
 
     useEffect(() => {
@@ -239,7 +239,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                 easyecom_url: config['easyecom_url'] || 'https://api.easyecom.io/orders/create',
                 easyecom_token: config['easyecom_token'] || '',
                 easyecom_email: config['easyecom_email'] || '',
-                nimbus_notification_email: config['nimbus_notification_email'] || ''
+                nimbus_notification_email: config['nimbus_notification_email'] || '',
+                nimbus_to_emails: config['nimbus_to_emails'] || '',
+                nimbus_cc_emails: config['nimbus_cc_emails'] || ''
             });
         }
         setConfigLoading(false);
@@ -617,15 +619,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                                 </h4>
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700">Daily Summary Report Email</label>
-                                        <input 
-                                            type="email" 
+                                        <label className="block text-sm font-medium text-gray-700">Daily Summary Report — To (primary recipients)</label>
+                                        <textarea 
+                                            rows={2}
                                             className={inputClassName}
-                                            value={systemConfig.nimbus_notification_email}
-                                            onChange={e => setSystemConfig({...systemConfig, nimbus_notification_email: e.target.value})}
-                                            placeholder="admin@example.com"
+                                            value={systemConfig.nimbus_to_emails || systemConfig.nimbus_notification_email}
+                                            onChange={e => setSystemConfig({...systemConfig, nimbus_to_emails: e.target.value, nimbus_notification_email: e.target.value})}
+                                            placeholder="admin@example.com, ops@example.com"
                                         />
-                                        <p className="text-xs text-gray-500 mt-1">Four-hourly Nimbus tracking updates will be summarized and sent to this email daily.</p>
+                                        <p className="text-xs text-gray-500 mt-1">Separate multiple email addresses with a comma. Four-hourly Nimbus summaries will be sent to these recipients.</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Daily Summary Report — CC</label>
+                                        <textarea 
+                                            rows={2}
+                                            className={inputClassName}
+                                            value={systemConfig.nimbus_cc_emails}
+                                            onChange={e => setSystemConfig({...systemConfig, nimbus_cc_emails: e.target.value})}
+                                            placeholder="finance@example.com, manager@example.com"
+                                        />
+                                        <p className="text-xs text-gray-500 mt-1">Optional. Separate multiple CC addresses with a comma.</p>
                                     </div>
                                     <div className="flex justify-end pt-4">
                                          <button 
