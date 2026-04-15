@@ -1507,6 +1507,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
     const [isUpdatingRTD, setIsUpdatingRTD] = useState<string | null>(null);
+    const [isUpdatingDispatched, setIsUpdatingDispatched] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
 
     // Close menu on click outside
@@ -1684,10 +1685,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const rtoStatus = item.rtoStatus || po.rtoStatus;
                 const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
 
-                // DB Status override: if PO was manually marked RTD in the database, honour it
+                // DB Status override: if PO was manually marked RTD or Dispatched in the database, honour it
                 // regardless of the current EasyEcom status (which may not have synced yet)
                 if (po.poDbStatus === 'RTD') {
                     displayStatus = 'Ready to Dispatch';
+                } else if (po.poDbStatus === 'Dispatched') {
+                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 } else if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
@@ -2634,6 +2638,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     return {
                         ...po,
                         status: 'RTD' as any,
+                        poDbStatus: 'RTD', // Ensure DB status is also updated optimistically
                         items: po.items?.map((item: POItem) =>
                             item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
                         )
@@ -2651,6 +2656,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     };
 
     const handleMarkAsDispatched = async (so: GroupedSalesOrder) => {
+        setIsUpdatingDispatched(so.id);
         try {
             const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
             await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'Dispatched')));
@@ -2660,6 +2666,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 if (parentPoNumbers.includes(po.poNumber)) {
                     return {
                         ...po,
+                        poDbStatus: 'Dispatched', // Ensure DB status is updated to prevent reversion
                         items: po.items?.map((item: POItem) =>
                             item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'Dispatched' } : item
                         )
@@ -2670,6 +2677,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         } catch (e) {
             console.error('Error marking as Dispatched:', e);
             addNotification('Failed to update status to Dispatched.', 'error');
+        } finally {
+            setIsUpdatingDispatched(null);
         }
     };
 
@@ -3319,10 +3328,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                     {so.status === 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleMarkAsDispatched(so); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                                                            disabled={isUpdatingDispatched === so.id}
+                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 ${isUpdatingDispatched === so.id ? 'opacity-70' : ''}`}
                                                             title="Mark order as Dispatched"
                                                         >
-                                                            Mark as Dispatched
+                                                            {isUpdatingDispatched === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                                                            {isUpdatingDispatched === so.id ? 'Updating...' : 'Mark as Dispatched'}
                                                         </button>
                                                     )}
                                                     <div
