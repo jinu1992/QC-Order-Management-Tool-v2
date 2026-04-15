@@ -111,6 +111,7 @@ function doPost(e) {
     else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
     else if (action === 'addOrderNote') result = addOrderNote(data);
     else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
+    else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
     else {
       return responseJSON({ status: 'error', message: 'Invalid action: ' + action });
     }
@@ -304,7 +305,15 @@ function sendAndAcceptEstimate(quotationData) {
   // 2. Refresh from Zoho API
   fetchLast14DaysQuotations();
 
-  return { status: 'success', message: `Estimate ${quotationData.quotationNumber || estimateId} accepted, removed from local, and refreshed from Zoho.` };
+  // 3. Return the latest quotations list to the frontend
+  const freshQuotations = getQuotations();
+  const responseData = JSON.parse(freshQuotations.getContentText());
+
+  return { 
+    status: 'success', 
+    data: responseData.data,
+    message: `Estimate ${quotationData.quotationNumber || estimateId} accepted, removed from local, and refreshed from Zoho.` 
+  };
 }
 
 function fetchLast14DaysQuotations() {
@@ -824,6 +833,71 @@ function updatePOPickupDate(data) {
     return { status: 'success', message: 'Pickup Date updated successfully' };
   } catch (e) {
     return { status: 'error', message: 'Error updating pickup date: ' + e.toString() };
+  }
+}
+
+/**
+ * Marks an order as Self Shipped and updates tracking details.
+ */
+function selfShipOrder(data) {
+  const { eeReferenceCode, awb, courier, trackingUrl, labelUrl } = data;
+  if (!eeReferenceCode || !courier) {
+    return { status: 'error', message: 'EE Reference Code and Courier Name are required' };
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const sheetData = dbSheet.getDataRange().getValues();
+    const headers = sheetData[0];
+
+    const refCol = headers.indexOf('EE_reference_code');
+    const awbIdx = headers.indexOf("AWB");
+    const carrierIdx = headers.indexOf('Carrier');
+    const trackingIdx = headers.indexOf('Tracking Status');
+    const trackingUrlIdx = headers.indexOf('Tracking URL');
+    const labelIdx = headers.indexOf('Label URL');
+    const bookedDateIdx = headers.indexOf('Booked Date');
+    const pickupDateIdx = headers.indexOf('Pickup Date');
+
+    if (refCol === -1) return { status: 'error', message: 'EE_reference_code column not found' };
+
+    const now = new Date();
+    const today = new Date(now);
+    const hourIST = parseInt(Utilities.formatDate(now, "Asia/Kolkata", "HH"));
+    
+    let pickupDate = new Date(now);
+    if (hourIST >= 14) {
+      pickupDate.setDate(pickupDate.getDate() + 1);
+    }
+
+    let updated = false;
+    for (let i = 1; i < sheetData.length; i++) {
+      if (String(sheetData[i][refCol]).trim() === String(eeReferenceCode).trim()) {
+        if (awbIdx !== -1) dbSheet.getRange(i + 1, awbIdx + 1).setValue(awb || "");
+        if (carrierIdx !== -1) dbSheet.getRange(i + 1, carrierIdx + 1).setValue(courier + " (Self)");
+        if (trackingIdx !== -1) dbSheet.getRange(i + 1, trackingIdx + 1).setValue("AWB Assigned");
+        if (bookedDateIdx !== -1) dbSheet.getRange(i + 1, bookedDateIdx + 1).setValue(today);
+        if (pickupDateIdx !== -1) dbSheet.getRange(i + 1, pickupDateIdx + 1).setValue(pickupDate);
+        if (trackingUrlIdx !== -1) dbSheet.getRange(i + 1, trackingUrlIdx + 1).setValue(trackingUrl || "");
+        if (labelIdx !== -1) dbSheet.getRange(i + 1, labelIdx + 1).setValue(labelUrl || "");
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      return {
+        status: "success",
+        message: `Order ${eeReferenceCode} marked as Self Shipped via ${courier}`,
+        awb,
+        courier,
+        label: labelUrl,
+        tracking: trackingUrl
+      };
+    }
+    return { status: 'error', message: 'Order not found in database: ' + eeReferenceCode };
+  } catch (e) {
+    return { status: 'error', message: 'Error in selfShipOrder: ' + e.toString() };
   }
 }
 /**

@@ -1293,6 +1293,113 @@ const ZeptoASNHelperModal: FC<{
     );
 };
 
+const SelfShipModal: FC<{
+    so: GroupedSalesOrder,
+    onClose: () => void,
+    addNotification: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void,
+    onComplete: () => void
+}> = ({ so, onClose, addNotification, onComplete }) => {
+    const [courier, setCourier] = useState('');
+    const [awb, setAwb] = useState('');
+    const [trackingUrl, setTrackingUrl] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const handleSubmit = async () => {
+        if (!courier.trim()) {
+            addNotification("Courier Name is required", "error");
+            return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            const res = await selfShipOrder({
+                eeReferenceCode: so.id,
+                courier: courier.trim(),
+                awb: awb.trim() || undefined,
+                trackingUrl: trackingUrl.trim() || undefined
+            });
+
+            if (res.status === 'success') {
+                addNotification(res.message, "success");
+                onComplete();
+                onClose();
+            } else {
+                addNotification(res.message || "Failed to submit self ship details", "error");
+            }
+        } catch (error) {
+            console.error("Self Ship Error:", error);
+            addNotification("Error submitting self ship details", "error");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 flex flex-col animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gray-800 rounded-xl flex items-center justify-center text-white shadow-lg">
+                            <TruckIcon className="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-800">Self Ship Order</h3>
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{so.id}</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                        <XCircleIcon className="h-6 w-6 text-gray-400" />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Courier Name *</label>
+                        <input
+                            type="text"
+                            value={courier}
+                            onChange={(e) => setCourier(e.target.value)}
+                            placeholder="e.g. Local Delivery, Store Pickup, etc."
+                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Tracking Number / AWB (Optional)</label>
+                        <input
+                            type="text"
+                            value={awb}
+                            onChange={(e) => setAwb(e.target.value)}
+                            placeholder="e.g. AWB12345678"
+                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm font-mono"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Tracking URL (Optional)</label>
+                        <input
+                            type="text"
+                            value={trackingUrl}
+                            onChange={(e) => setTrackingUrl(e.target.value)}
+                            placeholder="https://test.com/track"
+                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm"
+                        />
+                    </div>
+                    
+                    <div className="pt-2">
+                        <button
+                            onClick={handleSubmit}
+                            disabled={isSubmitting || !courier.trim()}
+                            className="w-full py-3.5 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                            {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
+                            Submit Self Ship Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const AmazonBoxDetailsModal: FC<{
     so: GroupedSalesOrder,
     onClose: () => void,
@@ -1509,6 +1616,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isUpdatingRTD, setIsUpdatingRTD] = useState<string | null>(null);
     const [isUpdatingDispatched, setIsUpdatingDispatched] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
+    const [selfShipOrderData, setSelfShipOrderData] = useState<GroupedSalesOrder | null>(null);
 
     // Close menu on click outside
     useEffect(() => {
@@ -3288,6 +3396,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
                                                         </button>
                                                     )}
+                                                    {so.status === 'Invoiced' && (
+                                                        <button
+                                                            onClick={(e: any) => { e.stopPropagation(); setSelfShipOrderData(so); }}
+                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 flex items-center gap-1.5"
+                                                            title="Add manual shipment details"
+                                                        >
+                                                            <TruckIcon className="h-3.5 w-3.5" /> Self Ship
+                                                        </button>
+                                                    )}
                                                     {isFlipkart && canInvoice && (
                                                         <button 
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }} 
@@ -3771,6 +3888,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onSave={handleConfirmPickupDate}
                     onClose={() => setPickupDateModal({ isOpen: false, so: null, isSaving: false })}
                     isSaving={pickupDateModal.isSaving}
+                />
+            )}
+            {selfShipOrderData && (
+                <SelfShipModal 
+                    so={selfShipOrderData} 
+                    onClose={() => setSelfShipOrderData(null)}
+                    addNotification={addNotification}
+                    onComplete={() => onSync()}
                 />
             )}
         </div>

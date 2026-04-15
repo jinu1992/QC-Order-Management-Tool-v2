@@ -24,7 +24,7 @@ interface GroupedSalesOrder {
 interface DispatchManagerProps {
     purchaseOrders: PurchaseOrder[];
     currentUser?: User | null;
-    initialTab?: 'Pending' | 'Today' | 'Upcoming' | 'All';
+    initialTab?: 'Missed' | 'Today' | 'Upcoming' | 'All';
 }
 
 // Helper to safely format dates
@@ -38,11 +38,11 @@ const formatSafeDate = (dateStr?: string) => {
     } catch { return dateStr; }
 };
 
-const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, currentUser, initialTab = 'Pending' }: DispatchManagerProps) => {
+const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, currentUser, initialTab = 'All' }: DispatchManagerProps) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
-    const [activeTab, setActiveTab] = useState<'Pending' | 'Today' | 'Upcoming' | 'All'>(initialTab);
+    const [activeTab, setActiveTab] = useState<'Missed' | 'Today' | 'Upcoming' | 'All'>(initialTab);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
 
     const todayDate = useMemo(() => {
@@ -67,6 +67,16 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
         const d1Date = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
         const compareDate = new Date(compare.getFullYear(), compare.getMonth(), compare.getDate());
         return d1Date > compareDate;
+    };
+
+    const isMissed = (d1Str?: string, compare: Date = todayDate) => {
+        if (!d1Str) return false;
+        const d1 = new Date(d1Str);
+        if (isNaN(d1.getTime())) return false;
+        
+        const d1Date = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
+        const compareDate = new Date(compare.getFullYear(), compare.getMonth(), compare.getDate());
+        return d1Date < compareDate;
     };
 
     const handleMarkDispatched = useCallback(async (so: GroupedSalesOrder) => {
@@ -104,7 +114,9 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
                 const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
 
                 let displayStatus = 'Processing';
-                if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
+                if (po.poDbStatus === 'RTD') {
+                    displayStatus = 'Ready to Dispatch';
+                } else if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
@@ -173,8 +185,9 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
             if (!matchesSearch || !matchesAwb || !matchesChannel) return false;
 
             // Tab Filters — All orders here are 'Ready to Dispatch' already
-            if (activeTab === 'Pending') {
-                return !so.pickupDate; // No pickup date scheduled yet
+            // Tab Filters — All orders here are 'Ready to Dispatch' already
+            if (activeTab === 'Missed') {
+                return isMissed(so.pickupDate);
             } else if (activeTab === 'Today') {
                 return isSameDay(so.pickupDate);
             } else if (activeTab === 'Upcoming') {
@@ -204,27 +217,27 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
                 </div>
 
                 {/* Tabs */}
-                <div className="flex border-b border-gray-200 mt-6">
-                    {(['Pending', 'Today', 'Upcoming', 'All'] as const).map((tab) => (
+                <div className="flex border-b border-gray-200 mt-6 overflow-x-auto scrollbar-hide">
+                    {(['Missed', 'Today', 'Upcoming', 'All'] as const).map((tab) => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
-                            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-all whitespace-nowrap ${
                                 activeTab === tab
                                     ? 'border-indigo-600 text-indigo-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    : 'border-transparent text-gray-400 hover:text-gray-600'
                             }`}
                         >
-                            {tab === 'Pending' && 'Pending Dispatches'}
+                            {tab === 'Missed' && 'Missed Pickups'}
                             {tab === 'Today' && "Today's Pickups"}
                             {tab === 'Upcoming' && 'Upcoming Pickups'}
                             {tab === 'All' && 'All Shipments'}
                             
-                            <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
-                                activeTab === tab ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'
+                            <span className={`ml-2 px-2 py-0.5 rounded-full text-xs transition-colors ${
+                                activeTab === tab ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-500 font-medium'
                             }`}>
                                 {allSalesOrders.filter(so => {
-                                    if (tab === 'Pending') return !so.pickupDate;
+                                    if (tab === 'Missed') return isMissed(so.pickupDate);
                                     if (tab === 'Today') return isSameDay(so.pickupDate);
                                     if (tab === 'Upcoming') return isUpcoming(so.pickupDate);
                                     return true;
