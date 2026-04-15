@@ -1692,9 +1692,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
-                else if (eeStatusLower === 'dispatched') displayStatus = 'Shipped';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Processing';
-                else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
+                else if (eeStatusLower === 'shipped' || eeStatusLower === 'dispatched' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
                     const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
                     displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 }
@@ -2879,8 +2878,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 disabled: isExecuting
             };
         }
-        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.awb) {
-            if (so.status === 'Label Generated' && so.pickupDate) {
+        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Ready to Dispatch' || so.awb) {
+            if ((so.status === 'Label Generated' || so.status === 'Ready to Dispatch') && so.pickupDate) {
                 return { label: `Pickup: ${so.pickupDate}`, color: 'bg-indigo-600 text-white hover:bg-indigo-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
             }
             return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };

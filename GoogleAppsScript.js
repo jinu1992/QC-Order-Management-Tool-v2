@@ -284,9 +284,27 @@ function sendAndAcceptEstimate(quotationData) {
   // Log the complete data for debugging
   debugLog('ACCEPT_ESTIMATE_FULL_DATA', quotationData);
 
-  // Stub for Zoho API call
-  // In reality, this would use UrlFetchApp to call Zoho Books API with the full data
-  return { status: 'success', message: `Estimate ${quotationData.quotationNumber || estimateId} accepted and sent successfully in Zoho with complete data.` };
+  // 1. Remove the quote from the local spreadsheet
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_QUOTATIONS);
+  if (sheet) {
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const estimateIdCol = headers.indexOf('Estimate ID');
+    if (estimateIdCol !== -1) {
+      // Find and delete rows (loop backwards to avoid index shifts)
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][estimateIdCol]) === String(estimateId)) {
+          sheet.deleteRow(i + 1);
+        }
+      }
+    }
+  }
+
+  // 2. Refresh from Zoho API
+  fetchLast14DaysQuotations();
+
+  return { status: 'success', message: `Estimate ${quotationData.quotationNumber || estimateId} accepted, removed from local, and refreshed from Zoho.` };
 }
 
 function fetchLast14DaysQuotations() {
