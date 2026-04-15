@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 

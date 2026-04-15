@@ -76,7 +76,7 @@ const App: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState('New POs');
   const [activeInventoryTab, setActiveInventoryTab] = useState<'mapping' | 'shortfall'>('mapping');
   const [activeShipmentTab, setActiveShipmentTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
-  const [activeDispatchTab, setActiveDispatchTab] = useState<'Pending' | 'Today' | 'Upcoming' | 'All'>('Pending');
+  const [activeDispatchTab, setActiveDispatchTab] = useState<'Missed' | 'Today' | 'Upcoming' | 'All'>('Missed');
   const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'logs'>('users');
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
@@ -290,7 +290,7 @@ const App: React.FC = () => {
       { title: 'Total Active POs', value: totalActiveCount.toString(), changeText: 'Across all stages', color: 'blue', targetView: 'Purchase Orders', targetFilter: 'All POs' },
       { title: 'Procurement Shortfall', value: totalShortfall.toString(), changeText: 'Units needed for New POs', color: 'red', targetView: 'Inventory', targetTab: 'shortfall' },
       { title: "Today's Pickups", value: todayPickupsCount.toString(), changeText: 'Scheduled for today', color: 'orange', targetView: 'Dispatch Manager', targetTab: 'Today' },
-      { title: 'Pending Dispatches', value: pendingDispatchesCount.toString(), changeText: 'Awaiting warehouse action', color: 'indigo', targetView: 'Dispatch Manager', targetTab: 'Pending' },
+      { title: 'Pending Dispatches', value: pendingDispatchesCount.toString(), changeText: 'Awaiting warehouse action', color: 'indigo', targetView: 'Dispatch Manager', targetTab: 'Missed' },
       { title: 'Fully Pushed', value: pushed.toString(), changeText: 'To EasyEcom', color: 'green', targetView: 'Purchase Orders', targetFilter: 'Pushed POs' },
       { title: 'Partially Pushed', value: partiallyPushed.toString(), changeText: 'Pending items', color: 'yellow', targetView: 'Purchase Orders', targetFilter: 'Partially Pushed POs' },
     ];
