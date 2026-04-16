@@ -209,7 +209,7 @@ const App: React.FC = () => {
       if (invData.length > 0) setInventoryItems(invData);
       if (channelData.length > 0) setChannelConfigs(channelData);
       if (userData.length > 0) setUsers(userData);
-      if (quotationData.length > 0) setQuotations(quotationData);
+      setQuotations(quotationData);
 
       setLastSynced(Date.now());
     } catch (e) {

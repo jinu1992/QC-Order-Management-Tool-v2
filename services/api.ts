@@ -186,7 +186,7 @@ export const fetchQuotations = async (): Promise<Quotation[]> => {
             });
         }
         return [];
-    } catch (error) { return []; }
+    } catch (error) { throw error; }
 };
 
 export const acceptQuotation = async (quotation: Quotation) => {

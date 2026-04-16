@@ -2765,18 +2765,22 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleMarkAsDispatched = async (so: GroupedSalesOrder) => {
         setIsUpdatingDispatched(so.id);
+        const isAmazon = so.channel.toLowerCase().includes('amazon');
+        const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+        const targetStatus = isAmazon || isFlipkart ? 'Delivered' : 'Dispatched';
+
         try {
             const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
-            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'Dispatched')));
-            addNotification(`${so.id} marked as Dispatched.`, 'success');
+            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, targetStatus)));
+            addNotification(`${so.id} marked as ${targetStatus}.`, 'success');
             // Optimistic UI update
             setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
                 if (parentPoNumbers.includes(po.poNumber)) {
                     return {
                         ...po,
-                        poDbStatus: 'Dispatched', // Ensure DB status is updated to prevent reversion
+                        poDbStatus: targetStatus, // Ensure DB status is updated to prevent reversion
                         items: po.items?.map((item: POItem) =>
-                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'Dispatched' } : item
+                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: targetStatus } : item
                         )
                     };
                 }
