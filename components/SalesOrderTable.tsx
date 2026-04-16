@@ -3581,6 +3581,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         <div><p className="text-[10px] uppercase font-bold text-purple-400">Status</p><p className="text-xs font-bold text-purple-700">{so.invoiceStatus || 'N/A'}</p></div>
                                                                         <div><p className="text-[10px] uppercase font-bold text-purple-400">Total (Inc. Tax)</p><p className="text-xs font-bold text-purple-700">₹{so.invoiceTotal?.toLocaleString('en-IN') || '0'}</p></div>
                                                                         <div><p className="text-[10px] uppercase font-bold text-purple-400">Link</p>{so.invoicePdfUrl ? <a href={so.invoicePdfUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-1 text-xs font-bold">View PDF <ExternalLinkIcon className="h-3 w-3" /></a> : <p className="text-xs text-purple-300 font-bold italic">No URL</p>}</div>
+                                                                        {so.ewb && (
+                                                                            <div className="col-span-2"><p className="text-[10px] uppercase font-bold text-purple-400">EWB Date/Number</p><p className="text-xs font-bold text-purple-700">{so.ewb}</p></div>
+                                                                        )}
                                                                     </> : (
                                                                         <div className="col-span-2 flex flex-col items-center justify-center py-4 text-center">
                                                                             <InvoiceIcon className="h-8 w-8 text-purple-200 mb-2" />
