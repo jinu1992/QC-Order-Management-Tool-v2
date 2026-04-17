@@ -2732,17 +2732,24 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleMarkAsRTD = async (so: GroupedSalesOrder) => {
         if (!so.pickupDate) {
-            addNotification('Pickup date is required to mark as Ready to Dispatch.', 'warning');
+            addNotification('Pickup date is required to mark as RTD.', 'warning');
             return;
         }
 
         const channel = so.channel.toLowerCase();
-        let promptMsg = 'Are you sure you want to mark this order as Ready to Dispatch?';
-        if (channel.includes('blinkit')) promptMsg = 'Have you printed the Appointment Pass and Shipping Label for this Blinkit order?';
-        else if (channel.includes('instamart')) promptMsg = 'Have you printed the Full Packset (PDF) for this Instamart order?';
-        else if (channel.includes('zepto')) promptMsg = 'Have you generated the ASN and printed the labels for this Zepto order?';
-        else if (channel.includes('bb')) promptMsg = 'Have you printed the labels and confirmed the appointment for this bb order?';
-        else promptMsg = 'Have you printed the Shipping Label and packed this order?';
+        let promptMsg = 'Are you sure? Ensure ALL labels and manifests are printed before marking as RTD.';
+        
+        if (channel.includes('blinkit')) {
+            promptMsg = 'Are you sure? Verify Appointment ID is updated, and ALL documents (Appointment Pass, SKU Box Labels, and Manifest) are printed.';
+        } else if (channel.includes('zepto')) {
+            promptMsg = 'Are you sure? Verify Box Count is correct, ASN CSV is generated, and all labels are printed.';
+        } else if (channel.includes('flipkart')) {
+            promptMsg = 'Are you sure? Verify Consignment ID is linked, and ALL labels (Box Labels & Packing Slips) are printed.';
+        } else if (channel.includes('instamart')) {
+            promptMsg = 'Are you sure? Verify Appointment is scheduled and the Full Packset PDF is printed.';
+        } else if (channel.includes('bb')) {
+            promptMsg = 'Are you sure? Verify Box Labels are printed and appointment is confirmed on the Portal.';
+        }
 
         if (!window.confirm(promptMsg)) {
             return;
@@ -2752,7 +2759,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         try {
             const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
             await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
-            addNotification(`${so.id} marked as Ready to Dispatch.`, 'success');
+            addNotification(`${so.id} marked as RTD.`, 'success');
             // Optimistic UI update
             setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
                 if (parentPoNumbers.includes(po.poNumber)) {
@@ -2770,7 +2777,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             onSync(); // Force a refresh to ensure consistency
         } catch (e) {
             console.error('Error marking as RTD:', e);
-            addNotification('Failed to update status to Ready to Dispatch.', 'error');
+            addNotification('Failed to update status to RTD.', 'error');
         } finally {
             setIsUpdatingRTD(null);
         }
@@ -3264,6 +3271,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
 
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
+                                const isRTD = so.status?.toLowerCase().trim() === 'ready to dispatch' || so.status === 'RTD';
                                 const isFinalStatus = so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned';
                                 const isGreyedOut = ((isZepto && so.status === 'Invoiced' && (zeptoEligibility.hasOpen || zeptoEligibility.missingBoxDetails)) ||
                                     (isInstamartChannel && so.status === 'Invoiced' && (instamartEligibility.hasOpen || instamartEligibility.missingBoxDetails))) &&
@@ -3273,14 +3281,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
 
-                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus;
-                                const showFlipkartPrintAction = isFlipkart && hasAppointmentId && !isFinalStatus;
+                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartPrintAction = isFlipkart && hasAppointmentId && !isFinalStatus && !isRTD;
 
-                                const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus;
+                                const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus && !isRTD;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus;
-                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus;
+                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
@@ -3319,7 +3327,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             so.status === 'Delivered' ? 'bg-green-600 text-white shadow-sm' :
                                                                 so.status === 'Shipped' ? 'bg-emerald-100 text-emerald-700' :
                                                                     so.status === 'Label Generated' ? 'bg-amber-100 text-amber-700' :
-                                                                        so.status === 'Ready to Dispatch' ? 'bg-violet-600 text-white shadow-sm animate-pulse' :
+                                                                        isRTD ? 'bg-violet-600 text-white shadow-sm animate-pulse' :
                                                                             so.status === 'Box Data Upload Pending' ? 'bg-red-50 text-red-700 border border-red-100' :
                                                                                 so.status === 'Invoiced' ? 'bg-orange-100 text-orange-700' :
                                                                                     so.status === 'Awaiting Appointment Confirmation' ? 'bg-yellow-100 text-yellow-700' :
@@ -3328,7 +3336,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                                 so.status === 'Processing' ? 'bg-purple-100 text-purple-700' :
                                                                                                     'bg-gray-100 text-gray-700'
                                                         }`}>
-                                                        {so.status === 'Processing' ? so.originalEeStatus : so.status}
+                                                        {so.status === 'Processing' ? so.originalEeStatus : (isRTD ? 'RTD' : so.status)}
                                                     </span>
                                                     {showApptMissing && (
                                                         <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-red-50 text-red-600 border border-red-100 w-fit flex items-center gap-1 animate-pulse">
@@ -3341,10 +3349,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                             <td className="px-6 py-4 font-medium text-gray-800">{so.channel}</td>
                                             <td className="px-6 py-4">{so.storeCode}</td>
                                             <td className="px-6 py-4 font-medium text-gray-900">{so.qty} / ₹{totalAmountIncTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-gray-400">{so.orderDate}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-gray-400">
+                                                {isRTD ? (
+                                                    <div className="flex flex-col">
+                                                        <span className="text-indigo-600 font-bold">{so.pickupDate || 'Date TBD'}</span>
+                                                        <span className="text-[10px]">{so.orderDate}</span>
+                                                    </div>
+                                                ) : so.orderDate}
+                                            </td>
                                             <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e: any) => e.stopPropagation()}>
                                                 <div className="flex items-center justify-center gap-2">
-                                                    {showFlipkartDownload && (
+                                                    {showFlipkartDownload && so.status !== 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
@@ -3353,7 +3368,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <DownloadIcon className="h-3.5 w-3.5" /> Packing Slip
                                                         </button>
                                                     )}
-                                                    {showZeptoDownload && (
+                                                    {showZeptoDownload && so.status !== 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
@@ -3362,7 +3377,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <DownloadIcon className="h-3.5 w-3.5" /> ASN CSV
                                                         </button>
                                                     )}
-                                                    {showBlinkitAppointmentBtn && (
+                                                    {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
                                                             onClick={(e: any) => {
                                                                 e.stopPropagation();
@@ -3376,7 +3391,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
                                                         </button>
                                                     )}
-                                                    {showFlipkartAppointmentBtn && (
+                                                    {showFlipkartAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5"
@@ -3384,7 +3399,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <GlobeIcon className="h-3.5 w-3.5" /> Link Consignment
                                                         </button>
                                                     )}
-                                                    {showFlipkartPrintAction && so.status !== 'Ready to Dispatch' && (
+                                                    {showFlipkartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
@@ -3393,7 +3408,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
-                                                    {showInstamartPrintAction && so.status !== 'Ready to Dispatch' && (
+                                                    {showInstamartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
@@ -3402,7 +3417,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
-                                                    {so.labelUrl && so.status !== 'Ready to Dispatch' && (
+                                                    {so.labelUrl && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <a
                                                             href={so.labelUrl}
                                                             target="_blank"
@@ -3414,7 +3429,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Label
                                                         </a>
                                                     )}
-                                                    {showAmazonBoxDetails && so.status !== 'Ready to Dispatch' && (
+                                                    {showAmazonBoxDetails && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
                                                             disabled={isFetchingBoxDetails === so.id}
@@ -3433,7 +3448,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <TruckIcon className="h-3.5 w-3.5" /> Self Ship
                                                         </button>
                                                     )}
-                                                    {isFlipkart && canInvoice && so.status !== 'Ready to Dispatch' && (
+                                                    {isFlipkart && canInvoice && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button 
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }} 
                                                             disabled={action.disabled} 
@@ -3466,7 +3481,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <button
                                                                     onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
                                                                     disabled={!so.pickupDate || isUpdatingRTD === so.id || needsAppt}
-                                                                    title={needsAppt ? 'Appointment ID required for Blinkit' : (!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch')}
+                                                                    title={needsAppt ? 'Appointment ID required for Blinkit' : (!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as RTD')}
                                                                     className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${(so.pickupDate && !needsAppt) ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
                                                                 >
                                                                     {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -3485,79 +3500,81 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             {isUpdatingDispatched === so.id ? 'Updating...' : 'Mark as Dispatched'}
                                                         </button>
                                                     )}
-                                                    <div
-                                                        className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
-                                                        onClick={(e: any) => {
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(openMenuId === so.id ? null : so.id);
-                                                        }}
-                                                    >
-                                                        <DotsVerticalIcon className="h-4 w-4" />
-                                                        {openMenuId === so.id && (
-                                                            <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                                                                {canUpdateAppt && (
-                                                                    <>
+                                                    {so.status !== 'Ready to Dispatch' && (
+                                                        <div
+                                                            className="text-gray-400 hover:text-gray-600 p-1 relative cursor-pointer z-20"
+                                                            onClick={(e: any) => {
+                                                                e.stopPropagation();
+                                                                setOpenMenuId(openMenuId === so.id ? null : so.id);
+                                                            }}
+                                                        >
+                                                            <DotsVerticalIcon className="h-4 w-4" />
+                                                            {openMenuId === so.id && (
+                                                                <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                                                    {canUpdateAppt && (
+                                                                        <>
+                                                                            <button
+                                                                                onClick={(e: any) => {
+                                                                                    e.stopPropagation();
+                                                                                    setInstamartApptModal({ isOpen: true, so });
+                                                                                    setOpenMenuId(null);
+                                                                                }}
+                                                                                className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-partners-green hover:bg-partners-light-green flex items-center gap-2 transition-colors"
+                                                                            >
+                                                                                <CalendarIcon className="h-3.5 w-3.5" />
+                                                                                Update Appointment
+                                                                            </button>
+                                                                            {(so.appointmentRequestDate || so.appointmentRequestTimestamp) && (
+                                                                                <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 px-4 mb-2">
+                                                                                    <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
+                                                                                </p>
+                                                                            )}
+                                                                        </>
+                                                                    )}
+                                                                    {so.status === 'Shipped' && (
                                                                         <button
                                                                             onClick={(e: any) => {
                                                                                 e.stopPropagation();
-                                                                                setInstamartApptModal({ isOpen: true, so });
-                                                                                setOpenMenuId(null);
+                                                                                handleMarkAsRTOInitiated(so);
                                                                             }}
-                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-partners-green hover:bg-partners-light-green flex items-center gap-2 transition-colors"
+                                                                            disabled={isUpdatingRTO === so.id}
+                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors disabled:opacity-50"
                                                                         >
-                                                                            <CalendarIcon className="h-3.5 w-3.5" />
-                                                                            Update Appointment
+                                                                            {isUpdatingRTO === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <XCircleIcon className="h-3.5 w-3.5" />}
+                                                                            Mark as RTO Initiated
                                                                         </button>
-                                                                        {(so.appointmentRequestDate || so.appointmentRequestTimestamp) && (
-                                                                            <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 px-4 mb-2">
-                                                                                <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
-                                                                            </p>
-                                                                        )}
-                                                                    </>
-                                                                )}
-                                                                {so.status === 'Shipped' && (
-                                                                    <button
-                                                                        onClick={(e: any) => {
-                                                                            e.stopPropagation();
-                                                                            handleMarkAsRTOInitiated(so);
-                                                                        }}
-                                                                        disabled={isUpdatingRTO === so.id}
-                                                                        className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors disabled:opacity-50"
-                                                                    >
-                                                                        {isUpdatingRTO === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <XCircleIcon className="h-3.5 w-3.5" />}
-                                                                        Mark as RTO Initiated
-                                                                    </button>
-                                                                )}
-                                                                {(isFlipkart || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
-                                                                    <>
-                                                                        <button
-                                                                            onClick={(e: any) => {
-                                                                                e.stopPropagation();
-                                                                                setOpenMenuId(null);
-                                                                                handleMarkAsDelivered(so);
-                                                                            }}
-                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-green-700 hover:bg-green-50 flex items-center gap-2 transition-colors"
-                                                                        >
-                                                                            <CheckCircleIcon className="h-3.5 w-3.5" />
-                                                                            Mark as Delivered
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={(e: any) => {
-                                                                                e.stopPropagation();
-                                                                                setOpenMenuId(null);
-                                                                                handleAddPickupDate(so);
-                                                                            }}
-                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
-                                                                        >
-                                                                            <CalendarIcon className="h-3.5 w-3.5" />
-                                                                            Add Pickup Date & Time
-                                                                        </button>
-                                                                    </>
-                                                                )}
-                                                                <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                                                    )}
+                                                                    {(isFlipkart || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
+                                                                        <>
+                                                                            <button
+                                                                                onClick={(e: any) => {
+                                                                                    e.stopPropagation();
+                                                                                    setOpenMenuId(null);
+                                                                                    handleMarkAsDelivered(so);
+                                                                                }}
+                                                                                className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-green-700 hover:bg-green-50 flex items-center gap-2 transition-colors"
+                                                                            >
+                                                                                <CheckCircleIcon className="h-3.5 w-3.5" />
+                                                                                Mark as Delivered
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={(e: any) => {
+                                                                                    e.stopPropagation();
+                                                                                    setOpenMenuId(null);
+                                                                                    handleAddPickupDate(so);
+                                                                                }}
+                                                                                className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+                                                                            >
+                                                                                <CalendarIcon className="h-3.5 w-3.5" />
+                                                                                Add Pickup Date & Time
+                                                                            </button>
+                                                                        </>
+                                                                    )}
+                                                                    <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -3605,7 +3622,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         <div className="col-span-2 flex flex-col items-center justify-center py-4 text-center">
                                                                             <InvoiceIcon className="h-8 w-8 text-purple-200 mb-2" />
                                                                             <p className="text-xs font-bold text-purple-400 uppercase">No Invoice Generated</p>
-                                                                            {(!so.invoiceNumber && so.originalEeStatus.toLowerCase().trim() !== 'open' && (so.originalEeStatus.toLowerCase().trim() === 'confirmed' || so.status === 'Batch Created') && !((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))) ? (
+                                                                            {(!so.invoiceNumber && so.status !== 'Ready to Dispatch' && so.originalEeStatus.toLowerCase().trim() !== 'open' && (so.originalEeStatus.toLowerCase().trim() === 'confirmed' || so.status === 'Batch Created') && !((so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) && (so.storeCode.toUpperCase() === 'YEIO'))) ? (
                                                                                 <div className="flex flex-col gap-3 mt-4 w-full">
                                                                                     {isFlipkart ? (
                                                                                         <>
@@ -3747,7 +3764,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <PrinterIcon className="h-4 w-4" /> Print Box Labels
                                                                         </button>
                                                                     )}
-                                                                    {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0) && (
+                                                                    {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0 && so.status !== 'Ready to Dispatch') && (
                                                                         <div className="flex gap-2">
                                                                             <button
                                                                                 onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
