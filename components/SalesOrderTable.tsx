@@ -3384,7 +3384,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <GlobeIcon className="h-3.5 w-3.5" /> Link Consignment
                                                         </button>
                                                     )}
-                                                    {showFlipkartPrintAction && (
+                                                    {showFlipkartPrintAction && so.status !== 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
@@ -3393,7 +3393,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
-                                                    {showInstamartPrintAction && (
+                                                    {showInstamartPrintAction && so.status !== 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
@@ -3402,7 +3402,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                         </button>
                                                     )}
-                                                    {so.labelUrl && (
+                                                    {so.labelUrl && so.status !== 'Ready to Dispatch' && (
                                                         <a
                                                             href={so.labelUrl}
                                                             target="_blank"
@@ -3414,7 +3414,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <PrinterIcon className="h-3.5 w-3.5" /> Print Label
                                                         </a>
                                                     )}
-                                                    {showAmazonBoxDetails && (
+                                                    {showAmazonBoxDetails && so.status !== 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleFetchBoxDetails(so); }}
                                                             disabled={isFetchingBoxDetails === so.id}
@@ -3433,7 +3433,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <TruckIcon className="h-3.5 w-3.5" /> Self Ship
                                                         </button>
                                                     )}
-                                                    {isFlipkart && canInvoice && (
+                                                    {isFlipkart && canInvoice && so.status !== 'Ready to Dispatch' && (
                                                         <button 
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }} 
                                                             disabled={action.disabled} 
