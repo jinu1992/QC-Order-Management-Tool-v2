@@ -2735,6 +2735,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification('Pickup date is required to mark as Ready to Dispatch.', 'warning');
             return;
         }
+
+        const channel = so.channel.toLowerCase();
+        let promptMsg = 'Are you sure you want to mark this order as Ready to Dispatch?';
+        if (channel.includes('blinkit')) promptMsg = 'Have you printed the Appointment Pass and Shipping Label for this Blinkit order?';
+        else if (channel.includes('instamart')) promptMsg = 'Have you printed the Full Packset (PDF) for this Instamart order?';
+        else if (channel.includes('zepto')) promptMsg = 'Have you generated the ASN and printed the labels for this Zepto order?';
+        else if (channel.includes('bb')) promptMsg = 'Have you printed the labels and confirmed the appointment for this bb order?';
+        else promptMsg = 'Have you printed the Shipping Label and packed this order?';
+
+        if (!window.confirm(promptMsg)) {
+            return;
+        }
+
         setIsUpdatingRTD(so.id);
         try {
             const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
@@ -3446,17 +3459,21 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             </span>
                                                         )}
                                                     </div>
-                                                        {so.status === 'Label Generated' && (
-                                                            <button
-                                                                onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
-                                                                disabled={!so.pickupDate || isUpdatingRTD === so.id}
-                                                                title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch'}
-                                                                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
-                                                            >
-                                                                {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
-                                                                {isUpdatingRTD === so.id ? 'Updating...' : 'Mark as RTD'}
-                                                            </button>
-                                                        )}
+                                                        {so.status === 'Label Generated' && (() => {
+                                                            const isBlinkit = so.channel.toLowerCase().includes('blinkit');
+                                                            const needsAppt = isBlinkit && !so.appointmentId;
+                                                            return (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
+                                                                    disabled={!so.pickupDate || isUpdatingRTD === so.id || needsAppt}
+                                                                    title={needsAppt ? 'Appointment ID required for Blinkit' : (!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as Ready to Dispatch')}
+                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${(so.pickupDate && !needsAppt) ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
+                                                                >
+                                                                    {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                                                                    {isUpdatingRTD === so.id ? 'Updating...' : 'Mark as RTD'}
+                                                                </button>
+                                                            );
+                                                        })()}
                                                     {so.status === 'Ready to Dispatch' && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); handleMarkAsDispatched(so); }}
@@ -3675,7 +3692,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <div className="flex justify-between items-center mb-4">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><GlobeIcon className="h-4 w-4 text-blue-600" /> Logistics & Shipment Status</h4>
                                                                 <div className="flex items-center gap-3">
-                                                                    {so.labelUrl && (
+                                                                    {so.labelUrl && so.status !== 'Ready to Dispatch' && (
                                                                         <a
                                                                             href={so.labelUrl}
                                                                             target="_blank"
@@ -3685,7 +3702,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <PrinterIcon className="h-4 w-4" /> Print Shipping Label
                                                                         </a>
                                                                     )}
-                                                                    {showFlipkartDownload && (
+                                                                    {showFlipkartDownload && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
@@ -3693,7 +3710,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <DownloadIcon className="h-4 w-4" /> Download Flipkart CSV Slip
                                                                         </button>
                                                                     )}
-                                                                    {showZeptoDownload && (
+                                                                    {showZeptoDownload && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
@@ -3701,7 +3718,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <DownloadIcon className="h-4 w-4" /> Download Zepto ASN CSV
                                                                         </button>
                                                                     )}
-                                                                    {showBlinkitAppointmentBtn && (
+                                                                    {showBlinkitAppointmentBtn && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => {
                                                                                 e.stopPropagation();
@@ -3714,7 +3731,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             {hasAppointmentId ? 'Print Appointment Pass' : 'Take Appointment'}
                                                                         </button>
                                                                     )}
-                                                                    {showFlipkartAppointmentBtn && (
+                                                                    {showFlipkartAppointmentBtn && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-blue-700 transition-all active:scale-95"
@@ -3722,7 +3739,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <GlobeIcon className="h-4 w-4" /> Link Consignment Details
                                                                         </button>
                                                                     )}
-                                                                    {isFlipkart && hasAppointmentId && (
+                                                                    {isFlipkart && hasAppointmentId && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95"
