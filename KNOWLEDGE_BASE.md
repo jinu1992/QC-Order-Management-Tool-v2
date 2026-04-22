@@ -1,81 +1,74 @@
 # QuickCommerce Order Management Tool - Knowledge Base
 
-This document provides a comprehensive overview of the end-to-end process for managing orders across multiple quick-commerce channels (Zepto, Blinkit, Swiggy Instamart, BigBasket, Flipkart, etc.).
+This document provides a comprehensive technical and operational overview of the order management tool, covering the lifecycle of orders from Purchase Orders (PO) to final dispatch across various channels.
 
 ---
 
-## 1. Purchase Orders (PO) Lifecycle
+## 1. Dashboard Navigation & UI Features
 
-### 1.1 Data Extraction (Automated)
-- **Background**: A Google Apps Script (GAS) runs periodically to monitor specific Gmail labels and Drive folders.
-- **Process**:
-    - Identify PO PDFs based on sender and filename patterns.
-    - Extract line items, quantities, pricing, and expiry dates using Regex.
-    - Save extracted data to the **PO_Database** and **PO_Repository** Google Sheets.
+### 1.1 SLA Countdown (Hours Left)
+- **Purpose**: Tracks operational urgency for each shipment.
+- **Logic**: Calculated based on the `EE_date_date` (EasyEcom order date).
+- **Thresholds**:
+    - <span style="color:red">**RED (< 2h)**</span>: Critical urgency.
+    - <span style="color:orange">**ORANGE (< 6h)**</span>: High priority.
+    - <span style="color:green">**GREEN (> 6h)**</span>: Standard priority.
+- **Stops When**: The order reaches 'Awaiting Appointment Confirmation' or 'Label Generated' status.
 
-### 1.2 PO Review (Frontend)
-- **Dashboard**: Users can view all incoming POs in the "Purchase Orders" tab.
-- **Actions**:
-    - **Verify SKU Mapping**: Ensure channel items are correctly mapped to Master SKUs.
-    - **Check Thresholds**: Orders below a certain value are flagged.
+### 1.2 "RTD" (Ready to Dispatch) Standardization
+- **Naming**: All UI references to "Ready to Dispatch" have been shortened to **"RTD"** for better visibility.
+- **Persistence**: Status checks are case-insensitive and match both `Ready to Dispatch` (legacy) and `RTD`.
+- **Visibility**: Once an order is marked as RTD, all post-dispatch action buttons (Mark as RTD, Scan to Dispatch, etc.) are hidden to prevent redundant operations.
 
----
+### 1.3 Processing Tab & External Statuses
+- **Original Status**: The 'Processing' tab displays the specific status from EasyEcom (e.g., 'Awaiting Stock', 'Batch Created') in the badge to provide more granular visibility than a generic 'Processing' label.
 
-## 2. Sales Orders (SO) & Synchronization
-
-### 2.1 Pushing to EasyEcom
-- Once a PO is verified, it is pushed to **EasyEcom** as a Sales Order.
-- **Action**: Click "Push to EasyEcom" in the PO detail view.
-- **Result**: The order status in the tool updates to "Confirmed" or "Processing".
-
-### 2.2 Syncing Back to Dashboard
-- The tool periodically syncs with EasyEcom to fetch updated shipment statuses, invoices, and AWB numbers.
-- **Manual Trigger**: Click "EasyEcom Sync" for a global refresh or the "Targeted Refresh" icon for a specific order.
+### 1.4 Logistics Visibility
+- **Pickup Date**: In the RTD tab, the **Pickup Date** is displayed in **bold indigo** within the main table row to assist logistics staff in prioritizing load-outs.
 
 ---
 
-## 3. Shipment Manager & Logistics
+## 2. Channel-Specific Operations
 
-### 3.1 Channel-Wise Handling
-- **Flipkart**: "Flipkart Handled". Users download packing slips and upload E-Invoices back to the Flipkart portal.
-- **Zepto/Blinkit/Instamart**: "Ship with Partner". Logistics are pushed to a shipping aggregator (e.g., Nimbus).
+### 2.1 Blinkit (Compliance Heavy)
+- **Mandatory Logic**: An order **cannot** be marked as "RTD" without a valid `Appointment ID`.
+- **Validation**: If the Appointment ID is missing, the "Mark as RTD" button is greyed out, and a blinking **"Appt. Missing"** badge is shown.
+- **Verification**: Staff are prompted with a channel-specific checklist (ASNs, Box Labels, Packing Slips) before the status can be updated.
 
-### 3.2 Appointment Flow
-- **Requesting**: For channels like Zepto or BB, users send appointment request emails directly from the tool.
-- **Scheduling**: Once an appointment is received, users update the Appointment Date and ID in the tool.
-- **Flipkart Consignment**: Users upload the Flipkart Consignment PDF; the tool extracts the Consignment Number and Appointment Date automatically.
+### 2.2 Flipkart (Marketplace Handled)
+- **Flow**: Orders are handled via the Flipkart portal.
+- **Auto-Extraction**: The tool extracts the `Consignment Number` and `Appointment Date` automatically when a Consignment PDF is uploaded.
+- **E-Invoice Integration**: Users must generate the E-Invoice on the Flipkart portal and upload it to the dashboard to link with Zoho records.
 
----
+### 2.3 Zepto & Swiggy Instamart
+- **Partner Handled**: Generally uses "Ship with Partner" logistics.
+- **Appointment Email**: Appointment request emails are generated with the required 13-column metadata directly from the dashboard.
 
-## 4. Invoicing & Dispatch
-
-### 4.1 Zoho Books Integration
-- For non-VAT/GST marketplace handled channels, the tool triggers invoice creation in **Zoho Books** automatically.
-- **Action**: Click "Create Zoho Invoice" once an order is marked as Ready to Ship.
-
-### 4.2 Flipkart E-Invoice Workflow
-- Download Flipkart Packing Slip -> Upload to Flipkart Portal -> Generate E-Invoice -> Upload E-Invoice PDF to the Dashboard.
-- The tool extracts IRN and Invoice Number to link with the Zoho record.
+### 2.4 Amazon & Generic Channels
+- **Self-Ship**: For orders not covered by automated partner logistics, a "Self-Ship" workflow allows manual entry of courier and tracking details.
+- **Fixed Statuses**: Specific overrides ensure Amazon orders marked as "Dispatched" in EasyEcom are correctly reflected on the dashboard.
 
 ---
 
-## 5. Inventory & Mapping
+## 3. Logistics & Automated Reporting
 
-### 5.1 SKU Mapping
-- **Master SKU Mapping**: A critical sheet that maps Channel SKUs (FSN, EAN) to internal Master SKUs.
-- **Inventory Sync**: Fetches real-time stock levels from EasyEcom to ensure accurate fulfillment capacity.
+### 3.1 Nimbus Scheduler
+- **Automation**: A Google Apps Script sends a summary email every 4 hours.
+- **Content**: Summary of all pending and completed appointments, sorted by time.
+- **Error Handling**: Missing fields are highlighted to ensure data integrity before reporting.
 
-### 5.2 Stock Allocation
-- The tool calculates "Fulfillable Quantity" based on current stock vs. open orders across all channels.
-
----
-
-## 6. Quotations & Estimates
-- Manage custom B2B or ad-hoc quotations.
-- **Flow**: Create Quotation -> Send to Customer -> Accept Estimate (syncs to Zoho as a Sales Order).
+### 3.2 Appointment Manager
+- **Missed Deliveries**: A dedicated tab filters shipments that have passed their scheduled appointment time without being marked as 'Delivered'.
+- **WhatsApp Integration**: Allows sharing of today's, tomorrow's, and missed appointment summaries directly with operations staff.
 
 ---
 
-## 7. RTO & Returns
-- **Shipment Manager**: Tracks "In-Transit", "Delivered", and "RTO" (Return to Origin) orders.
-- **Alerts**: Highlight missed deliveries or RTOs that need physical verification.
+## 4. ERP & Financial Integration
+
+### 4.1 Zoho Books Auto-Invoicing
+- Triggered for marketplace-handled channels.
+- Links IRN and GST details fetched from portal uploads (Flipkart/Blinkit) to the financial record.
+
+### 4.2 EasyEcom Synchronization
+- **Global Sync**: Daily automated fetch of all shipment data.
+- **Targeted Sync**: On-demand refresh for specific orders using the refresh icon in the Sales Order table.
