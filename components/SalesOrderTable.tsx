@@ -38,6 +38,7 @@ import OrderNotesTimeline from './OrderNotesTimeline';
 import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
+import ActionConfirmationModal from './ActionConfirmationModal';
 
 interface SalesOrderTableProps {
     activeFilter: string;
@@ -1617,6 +1618,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isUpdatingDispatched, setIsUpdatingDispatched] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
     const [selfShipOrderData, setSelfShipOrderData] = useState<GroupedSalesOrder | null>(null);
+    const [actionModal, setActionModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        warning?: string;
+        confirmLabel?: string;
+        confirmColor?: string;
+        onConfirm: () => void;
+        iconType?: 'warning' | 'info' | 'danger' | 'success';
+        verificationSteps?: string[];
+    }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
     // Close menu on click outside
     useEffect(() => {
@@ -1626,34 +1638,44 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     }, []);
 
     const handleMarkAsRTOInitiated = async (so: GroupedSalesOrder) => {
-        if (!window.confirm(`Are you sure you want to mark ${so.id} as RTO Initiated?`)) return;
+        setActionModal({
+            isOpen: true,
+            title: 'Confirm RTO Initiation',
+            message: `Are you sure you want to mark ${so.id} as RTO Initiated?`,
+            warning: 'This action will update the status in the database and cannot be easily undone.',
+            confirmLabel: 'Mark as RTO',
+            confirmColor: 'bg-red-600 hover:bg-red-700',
+            iconType: 'danger',
+            onConfirm: async () => {
+                setIsUpdatingRTO(so.id);
+                try {
+                    const timestamp = new Date().toLocaleString('en-IN', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                    }).replace(/\//g, '-');
 
-        setIsUpdatingRTO(so.id);
-        try {
-            const timestamp = new Date().toLocaleString('en-IN', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            }).replace(/\//g, '-');
-
-            const res = await updateRTOStatus(so.id, timestamp);
-            if (res.status === 'success') {
-                addNotification(`Order ${so.id} marked as RTO Initiated`, 'success');
-                onSync(); // Refresh data
-            } else {
-                addNotification(res.message || "Failed to update RTO status", "error");
+                    const res = await updateRTOStatus(so.id, timestamp);
+                    if (res.status === 'success') {
+                        addNotification(`Order ${so.id} marked as RTO Initiated`, 'success');
+                        onSync(); // Refresh data
+                    } else {
+                        addNotification(res.message || "Failed to update RTO status", "error");
+                    }
+                } catch (err) {
+                    console.error("Error updating RTO status:", err);
+                    addNotification("Error updating RTO status", "error");
+                } finally {
+                    setIsUpdatingRTO(null);
+                    setOpenMenuId(null);
+                    setActionModal(prev => ({ ...prev, isOpen: false }));
+                }
             }
-        } catch (err) {
-            console.error("Error updating RTO status:", err);
-            addNotification("Error updating RTO status", "error");
-        } finally {
-            setIsUpdatingRTO(null);
-            setOpenMenuId(null);
-        }
+        });
     };
 
     const handleFetchBoxDetails = async (so: GroupedSalesOrder) => {
@@ -1681,15 +1703,27 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     };
 
     const handleMarkAsDelivered = async (so: GroupedSalesOrder) => {
-        if (!window.confirm(`Are you sure you want to mark ${so.id} as Delivered?`)) return;
-        try {
-            // Optimistic update
-            setPurchaseOrders(prev => prev.map(p => p.poNumber === so.poReference ? {...p, trackingStatus: 'Delivered'} : p));
-            onSync();
-            addNotification(`Order ${so.id} marked as Delivered in timeline`, "info");
-        } catch {
-            addNotification("Failed to update status", "error");
-        }
+        setActionModal({
+            isOpen: true,
+            title: 'Confirm Delivery Status',
+            message: `Are you sure you want to mark ${so.id} as Delivered?`,
+            warning: 'This will update the tracking status and move the order to the Delivered tab.',
+            confirmLabel: 'Mark as Delivered',
+            confirmColor: 'bg-green-600 hover:bg-green-700',
+            iconType: 'success',
+            onConfirm: async () => {
+                try {
+                    // Optimistic update
+                    setPurchaseOrders(prev => prev.map(p => p.poNumber === so.poReference ? {...p, trackingStatus: 'Delivered'} : p));
+                    onSync();
+                    addNotification(`Order ${so.id} marked as Delivered in timeline`, "info");
+                } catch {
+                    addNotification("Failed to update status", "error");
+                } finally {
+                    setActionModal(prev => ({ ...prev, isOpen: false }));
+                }
+            }
+        });
     };
 
     const [pickupDateModal, setPickupDateModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, isSaving: boolean }>({ isOpen: false, so: null, isSaving: false });
@@ -2737,81 +2771,107 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
 
         const channel = so.channel.toLowerCase();
-        let promptMsg = 'Are you sure? Ensure ALL labels and manifests are printed before marking as RTD.';
+        let promptMsg = 'Ensure ALL labels and manifests are printed before marking as RTD.';
+        let verificationSteps: string[] = ['Check Labels Printed', 'Check Manifests Printed'];
         
         if (channel.includes('blinkit')) {
-            promptMsg = 'Are you sure? Verify Appointment ID is updated, and ALL documents (Appointment Pass, SKU Box Labels, and Manifest) are printed.';
+            promptMsg = 'Verify Appointment ID is updated, and ALL documents (Appointment Pass, SKU Box Labels, and Manifest) are printed.';
+            verificationSteps = ['Appointment ID Updated', 'Appointment Pass Printed', 'SKU Box Labels Printed', 'Manifest Printed'];
         } else if (channel.includes('zepto')) {
-            promptMsg = 'Are you sure? Verify Box Count is correct, ASN CSV is generated, and all labels are printed.';
+            promptMsg = 'Verify Box Count is correct, ASN CSV is generated, and all labels are printed.';
+            verificationSteps = ['Box Count Verified', 'ASN CSV Generated', 'All Labels Printed'];
         } else if (channel.includes('flipkart')) {
-            promptMsg = 'Are you sure? Verify Consignment ID is linked, and ALL labels (Box Labels & Packing Slips) are printed.';
+            promptMsg = 'Verify Consignment ID is linked, and ALL labels (Box Labels & Packing Slips) are printed.';
+            verificationSteps = ['Consignment ID Linked', 'Box Labels Printed', 'Packing Slips Printed'];
         } else if (channel.includes('instamart')) {
-            promptMsg = 'Are you sure? Verify Appointment is scheduled and the Full Packset PDF is printed.';
+            promptMsg = 'Verify Appointment is scheduled and the Full Packset PDF is printed.';
+            verificationSteps = ['Appointment Scheduled', 'Full Packset PDF Printed'];
         } else if (channel.includes('bb')) {
-            promptMsg = 'Are you sure? Verify Box Labels are printed and appointment is confirmed on the Portal.';
+            promptMsg = 'Verify Box Labels are printed and appointment is confirmed on the Portal.';
+            verificationSteps = ['Box Labels Printed', 'Portal Appointment Confirmed'];
         }
 
-        if (!window.confirm(promptMsg)) {
-            return;
-        }
-
-        setIsUpdatingRTD(so.id);
-        try {
-            const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
-            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
-            addNotification(`${so.id} marked as RTD.`, 'success');
-            // Optimistic UI update
-            setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
-                if (parentPoNumbers.includes(po.poNumber)) {
-                    return {
-                        ...po,
-                        status: 'RTD' as any,
-                        poDbStatus: 'RTD', // Ensure DB status is also updated optimistically
-                        items: po.items?.map((item: POItem) =>
-                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
-                        )
-                    };
+        setActionModal({
+            isOpen: true,
+            title: 'Mark as Ready to Dispatch',
+            message: promptMsg,
+            verificationSteps,
+            confirmLabel: 'Mark as RTD',
+            confirmColor: 'bg-violet-600 hover:bg-violet-700',
+            iconType: 'warning',
+            onConfirm: async () => {
+                setIsUpdatingRTD(so.id);
+                try {
+                    const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
+                    await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
+                    addNotification(`${so.id} marked as RTD.`, 'success');
+                    // Optimistic UI update
+                    setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                        if (parentPoNumbers.includes(po.poNumber)) {
+                            return {
+                                ...po,
+                                status: 'RTD' as any,
+                                poDbStatus: 'RTD', // Ensure DB status is also updated optimistically
+                                items: po.items?.map((item: POItem) =>
+                                    item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
+                                )
+                            };
+                        }
+                        return po;
+                    }));
+                    onSync(); // Force a refresh to ensure consistency
+                } catch (e) {
+                    console.error('Error marking as RTD:', e);
+                    addNotification('Failed to update status to RTD.', 'error');
+                } finally {
+                    setIsUpdatingRTD(null);
+                    setActionModal(prev => ({ ...prev, isOpen: false }));
                 }
-                return po;
-            }));
-            onSync(); // Force a refresh to ensure consistency
-        } catch (e) {
-            console.error('Error marking as RTD:', e);
-            addNotification('Failed to update status to RTD.', 'error');
-        } finally {
-            setIsUpdatingRTD(null);
-        }
+            }
+        });
     };
 
     const handleMarkAsDispatched = async (so: GroupedSalesOrder) => {
-        setIsUpdatingDispatched(so.id);
         const isAmazon = so.channel.toLowerCase().includes('amazon');
         const isFlipkart = so.channel.toLowerCase().includes('flipkart');
         const targetStatus = isAmazon || isFlipkart ? 'Delivered' : 'Dispatched';
 
-        try {
-            const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
-            await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, targetStatus)));
-            addNotification(`${so.id} marked as ${targetStatus}.`, 'success');
-            // Optimistic UI update
-            setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
-                if (parentPoNumbers.includes(po.poNumber)) {
-                    return {
-                        ...po,
-                        poDbStatus: targetStatus, // Ensure DB status is updated to prevent reversion
-                        items: po.items?.map((item: POItem) =>
-                            item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: targetStatus } : item
-                        )
-                    };
+        setActionModal({
+            isOpen: true,
+            title: `Confirm ${targetStatus}`,
+            message: `Are you sure you want to mark ${so.id} as ${targetStatus}?`,
+            warning: 'This will update the status in the database and notify shipping partners.',
+            confirmLabel: `Mark as ${targetStatus}`,
+            confirmColor: 'bg-emerald-600 hover:bg-emerald-700',
+            iconType: 'info',
+            onConfirm: async () => {
+                setIsUpdatingDispatched(so.id);
+                try {
+                    const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
+                    await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, targetStatus)));
+                    addNotification(`${so.id} marked as ${targetStatus}.`, 'success');
+                    // Optimistic UI update
+                    setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                        if (parentPoNumbers.includes(po.poNumber)) {
+                            return {
+                                ...po,
+                                poDbStatus: targetStatus, // Ensure DB status is updated to prevent reversion
+                                items: po.items?.map((item: POItem) =>
+                                    item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: targetStatus } : item
+                                )
+                            };
+                        }
+                        return po;
+                    }));
+                } catch (e) {
+                    console.error('Error marking as Dispatched:', e);
+                    addNotification('Failed to update status to Dispatched.', 'error');
+                } finally {
+                    setIsUpdatingDispatched(null);
+                    setActionModal(prev => ({ ...prev, isOpen: false }));
                 }
-                return po;
-            }));
-        } catch (e) {
-            console.error('Error marking as Dispatched:', e);
-            addNotification('Failed to update status to Dispatched.', 'error');
-        } finally {
-            setIsUpdatingDispatched(null);
-        }
+            }
+        });
     };
 
     /**
@@ -2902,8 +2962,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         // Delivered, RTO, Returned orders should only show Track Order or Details
         if (so.status === 'Delivered' || so.status === 'RTO Initiated' || so.status === 'Returned') {
-            if (so.awb || so.status === 'Delivered') {
-                return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            if (activeFilter === 'Shipped' || activeFilter === 'All POs' || activeFilter === 'Delivered' || activeFilter === 'RTO Initiated' || activeFilter === 'Returned') {
+                if (so.awb || so.status === 'Delivered') {
+                    return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+                }
             }
             return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
@@ -2944,6 +3006,22 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
             if (isZepto && so.status === 'Create ASN') {
                 return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
+            }
+            
+            // Prioritize "Request Appt." if requested is null
+            const apptMissing = (isZepto || isInstamart || isBB) && !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId;
+            if (apptMissing && so.status === 'Invoiced' && !so.awb) {
+                const canReq = isBB ? (so.boxCount > 0) : (isZepto ? zeptoEligibility.canRequest : instamartEligibility.canRequest);
+                return {
+                    label: isSendingBBAppointment || isSendingZeptoAppointment || isSendingInstamartAppointment ? 'Requesting...' : 'Request Appt.',
+                    color: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md',
+                    onClick: () => {
+                        if (isBB) handleSendBBAppointmentRequest(so);
+                        else if (isZepto) handleSendZeptoAppointmentRequest();
+                        else handleSendInstamartAppointmentRequest();
+                    },
+                    disabled: !canReq || isExecuting
+                };
             }
 
             if (so.status === 'Invoiced' && !so.awb && !so.appointmentId && !so.appointmentDate) {
@@ -3031,10 +3109,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             };
         }
         if (so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Ready to Dispatch' || so.awb) {
+            // Only show Track Order in Shipped tab or All POs tab
+            if (activeFilter === 'Shipped' || activeFilter === 'All POs') {
+                return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
+            }
+            
+            // For Label Generated / RTD, show Details as primary if no pickup action is available
             if ((so.status === 'Label Generated' || so.status === 'Ready to Dispatch') && so.pickupDate) {
                 return { label: `Pickup: ${so.pickupDate}`, color: 'bg-indigo-600 text-white hover:bg-indigo-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
             }
-            return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
         return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
     };
@@ -3359,75 +3442,80 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                             </td>
                                             <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e: any) => e.stopPropagation()}>
                                                 <div className="flex items-center justify-center gap-2">
-                                                    {showFlipkartDownload && so.status !== 'Ready to Dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
-                                                            title="Download Flipkart Minutes CSV Packing Slip"
-                                                        >
-                                                            <DownloadIcon className="h-3.5 w-3.5" /> Packing Slip
-                                                        </button>
-                                                    )}
-                                                    {showZeptoDownload && so.status !== 'Ready to Dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
-                                                            title="Download Zepto ASN CSV"
-                                                        >
-                                                            <DownloadIcon className="h-3.5 w-3.5" /> ASN CSV
-                                                        </button>
-                                                    )}
-                                                    {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => {
-                                                                e.stopPropagation();
-                                                                if (isFlipkartMinutes) setFlipkartConsignmentModal({ isOpen: true, so });
-                                                                else if (hasAppointmentId) setActiveAppointmentPass(so);
-                                                                else setPortalHelper({ isOpen: true, so });
-                                                            }}
-                                                            className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkartMinutes ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
-                                                        >
-                                                            {isFlipkartMinutes ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
-                                                            {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
-                                                        </button>
-                                                    )}
-                                                    {showFlipkartAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5"
-                                                        >
-                                                            <GlobeIcon className="h-3.5 w-3.5" /> Link Consignment
-                                                        </button>
-                                                    )}
-                                                    {showFlipkartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
-                                                            title="Print Flipkart Box Labels"
-                                                        >
-                                                            <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
-                                                        </button>
-                                                    )}
-                                                    {showInstamartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
-                                                            title="Print Instamart Box Labels"
-                                                        >
-                                                            <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
-                                                        </button>
-                                                    )}
-                                                    {so.labelUrl && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
-                                                        <a
-                                                            href={so.labelUrl}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            onClick={(e: any) => e.stopPropagation()}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-                                                            title="Print Shipping Label"
-                                                        >
-                                                            <PrinterIcon className="h-3.5 w-3.5" /> Print Label
-                                                        </a>
+                                                    {/* Secondary actions hidden in Shipped tab to clean up UI */}
+                                                    {activeFilter !== 'Shipped' && (
+                                                        <>
+                                                            {showFlipkartDownload && so.status !== 'Ready to Dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
+                                                                    title="Download Flipkart Minutes CSV Packing Slip"
+                                                                >
+                                                                    <DownloadIcon className="h-3.5 w-3.5" /> Packing Slip
+                                                                </button>
+                                                            )}
+                                                            {showZeptoDownload && so.status !== 'Ready to Dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
+                                                                    title="Download Zepto ASN CSV"
+                                                                >
+                                                                    <DownloadIcon className="h-3.5 w-3.5" /> ASN CSV
+                                                                </button>
+                                                            )}
+                                                            {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => {
+                                                                        e.stopPropagation();
+                                                                        if (isFlipkartMinutes) setFlipkartConsignmentModal({ isOpen: true, so });
+                                                                        else if (hasAppointmentId) setActiveAppointmentPass(so);
+                                                                        else setPortalHelper({ isOpen: true, so });
+                                                                    }}
+                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkartMinutes ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
+                                                                >
+                                                                    {isFlipkartMinutes ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
+                                                                    {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
+                                                                </button>
+                                                            )}
+                                                            {showFlipkartAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5"
+                                                                >
+                                                                    <GlobeIcon className="h-3.5 w-3.5" /> Link Consignment
+                                                                </button>
+                                                            )}
+                                                            {showFlipkartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
+                                                                    title="Print Flipkart Box Labels"
+                                                                >
+                                                                    <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
+                                                                </button>
+                                                            )}
+                                                            {showInstamartPrintAction && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-partners-green text-white hover:bg-green-700 flex items-center gap-1.5"
+                                                                    title="Print Instamart Box Labels"
+                                                                >
+                                                                    <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
+                                                                </button>
+                                                            )}
+                                                            {so.labelUrl && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <a
+                                                                    href={so.labelUrl}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    onClick={(e: any) => e.stopPropagation()}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
+                                                                    title="Print Shipping Label"
+                                                                >
+                                                                    <PrinterIcon className="h-3.5 w-3.5" /> Print Label
+                                                                </a>
+                                                            )}
+                                                        </>
                                                     )}
                                                     {showAmazonBoxDetails && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button
@@ -3950,6 +4038,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onComplete={() => onSync()}
                 />
             )}
+            <ActionConfirmationModal 
+                isOpen={actionModal.isOpen}
+                onClose={() => setActionModal(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={actionModal.onConfirm}
+                title={actionModal.title}
+                message={actionModal.message}
+                warning={actionModal.warning}
+                confirmLabel={actionModal.confirmLabel}
+                confirmColor={actionModal.confirmColor}
+                iconType={actionModal.iconType}
+                verificationSteps={actionModal.verificationSteps}
+            />
         </div>
     );
 };
