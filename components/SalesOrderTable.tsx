@@ -3108,9 +3108,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 disabled: isExecuting
             };
         }
-        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Ready to Dispatch' || so.awb) {
-            // Only show Track Order in Shipped tab or All POs tab
-            if (activeFilter === 'Shipped' || activeFilter === 'All POs') {
+        if (so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Ready to Dispatch' || so.status === 'Delivered' || so.awb) {
+            // Only show Track Order in Shipped, Delivered tab or All POs tab
+            if (activeFilter === 'Shipped' || activeFilter === 'Delivered' || activeFilter === 'All POs') {
                 return { label: 'Track Order', color: 'bg-partners-green text-white hover:bg-green-700', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
             }
             
@@ -3442,8 +3442,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                             </td>
                                             <td className="px-6 py-4 text-center sticky right-0 z-10 bg-inherit border-l border-gray-100 shadow-[-2px_0_4px_rgba(0,0,0,0.02)]" onClick={(e: any) => e.stopPropagation()}>
                                                 <div className="flex items-center justify-center gap-2">
-                                                    {/* Secondary actions hidden in Shipped tab to clean up UI */}
-                                                    {activeFilter !== 'Shipped' && (
+                                                    {/* Secondary actions hidden in Shipped and Delivered tabs to clean up UI */}
+                                                    {(activeFilter !== 'Shipped' && activeFilter !== 'Delivered') && (
                                                         <>
                                                             {showFlipkartDownload && so.status !== 'Ready to Dispatch' && (
                                                                 <button
