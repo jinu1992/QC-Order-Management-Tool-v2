@@ -1827,16 +1827,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const rtoStatus = item.rtoStatus || po.rtoStatus;
                 const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
 
-                // DB Status override: if PO was manually marked RTD or Dispatched in the database, honour it
-                // regardless of the current EasyEcom status (which may not have synced yet)
-                if (po.poDbStatus === 'RTD') {
+                // Prioritize Returned/RTO statuses over DB overrides as per user requirement
+                if (eeStatusLower === 'returned' || eeStatusLower === 'rto' || rtoStatus) {
+                    displayStatus = 'Returned';
+                } else if (isRTOInitiated) {
+                    displayStatus = 'RTO Initiated';
+                } else if (po.poDbStatus === 'RTD') {
                     displayStatus = 'Ready to Dispatch';
+                } else if (po.poDbStatus === 'Delivered') {
+                    displayStatus = 'Delivered';
                 } else if (po.poDbStatus === 'Dispatched') {
                     const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
                     displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
-                } else if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
-                else if (isRTOInitiated) displayStatus = 'RTO Initiated';
-                else if (rtoStatus) displayStatus = 'Returned';
+                }
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Processing';
                 else if (eeStatusLower === 'shipped' || eeStatusLower === 'dispatched' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
