@@ -530,6 +530,10 @@ export const sendZeptoAppointmentRequestEmail = async (params: any) => {
     return await postToScript({ action: 'sendZeptoAppointmentRequestEmail', channelName: 'Zepto', ...params });
 };
 
+export const sendZeptoReminder = async (params: any) => {
+    return await postToScript({ action: 'sendZeptoReminder', channelName: 'Zepto', ...params });
+};
+
 export const sendInstamartAppointmentRequestEmail = async (params: any) => {
     return await postToScript({ action: 'sendInstamartAppointmentRequestEmail', channelName: 'Instamart', ...params });
 };

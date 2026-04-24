@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -1599,6 +1599,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
     const [isSendingBBAppointment, setIsSendingBBAppointment] = useState(false);
+    const [isSendingZeptoReminder, setIsSendingZeptoReminder] = useState<string | null>(null);
     const [isProcessingBlinkit, setIsProcessingBlinkit] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -2113,6 +2114,30 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         return { show: true, canRequest: true, orders: invoicedInstamartOrders, hasOpen: false, missingBoxDetails: false };
     }, [allSalesOrders]);
+
+    const handleSendZeptoReminder = async (so: GroupedSalesOrder) => {
+        setIsSendingZeptoReminder(so.id);
+        try {
+            const res = await sendZeptoReminder({
+                poReference: so.poReference,
+                eeReferenceCode: so.id,
+                channel: so.channel,
+                storeCode: so.storeCode
+            });
+
+            if (res.status === 'success') {
+                addNotification(`Followup reminder sent for ${so.id}`, 'success');
+                addLog('Zepto Reminder', `Sent followup reminder for ${so.id}`);
+            } else {
+                addNotification(res.message || 'Failed to send Zepto reminder.', 'error');
+            }
+        } catch (e: any) {
+            console.error('Error sending Zepto reminder:', e);
+            addNotification(e.message || 'Error occurred while sending reminder.', 'error');
+        } finally {
+            setIsSendingZeptoReminder(null);
+        }
+    };
 
     const handleSendInstamartAppointmentRequest = async () => {
         if (!instamartEligibility.canRequest || isSendingInstamartAppointment) return;
@@ -3551,6 +3576,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                     )}
                                                     <div className="flex flex-col items-center">
                                                         <button onClick={(e: any) => { e.stopPropagation(); action.onClick?.(); }} disabled={action.disabled} className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap ${action.color} ${action.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>{action.label}</button>
+                                                        
+                                                        {isZepto && so.status === 'Awaiting Appointment Confirmation' && (
+                                                            <button
+                                                                onClick={(e: any) => { e.stopPropagation(); handleSendZeptoReminder(so); }}
+                                                                disabled={isSendingZeptoReminder === so.id}
+                                                                className="mt-2 px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap hover:bg-amber-100 flex items-center gap-1.5"
+                                                            >
+                                                                {isSendingZeptoReminder === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <MessageIcon className="h-3 w-3" />}
+                                                                Send Reminder
+                                                            </button>
+                                                        )}
+
                                                         {action.label === 'Update Appt.' && (so.appointmentRequestDate || so.appointmentRequestTimestamp) && (
                                                             <p className="text-[9px] font-bold text-amber-600 mt-1 flex items-center gap-1 whitespace-nowrap">
                                                                 <ClockIcon className="h-3 w-3" /> {getDaysAgo(so.appointmentRequestDate || so.appointmentRequestTimestamp)}
