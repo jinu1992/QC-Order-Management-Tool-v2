@@ -3112,7 +3112,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 };
             }
 
-            const isSelfShipOnly = so.channel?.toLowerCase().includes('bulk') && so.orderNotes?.toLowerCase().includes('self ship');
+            const isSelfShipOnly = so.orderNotes?.toLowerCase().includes('self ship');
 
             if (isSelfShipOnly) {
                 return {
@@ -3555,7 +3555,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
                                                         </button>
                                                     )}
-                                                    {so.status === 'Invoiced' && so.channel?.toLowerCase().includes('bulk') && so.orderNotes?.toLowerCase().includes('self ship') && (
+                                                    {so.status === 'Invoiced' && so.orderNotes?.toLowerCase().includes('self ship') && (
                                                         <button
                                                             onClick={(e: any) => { e.stopPropagation(); setSelfShipOrderData(so); }}
                                                             className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 flex items-center gap-1.5"
@@ -3917,11 +3917,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (!!isPushingPartner || isApptPending || so.boxCount === 0 || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.channel?.toLowerCase().includes('bulk') && so.orderNotes?.toLowerCase().includes('self ship')))}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (!!isPushingPartner || isApptPending || so.boxCount === 0 || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship')))}
                                                                                 className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {isPushingPartner === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.channel?.toLowerCase().includes('bulk') && so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Box Data Pending' : 'Ship with Partner'))))}
+                                                                                {isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Box Data Pending' : 'Ship with Partner'))))}
                                                                             </button>
                                                                             {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
