@@ -2432,6 +2432,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
+            
+            const carrierLower = (so.carrier || '').toLowerCase();
+            if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
+
             if (so.status === 'Shipped') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
@@ -2531,6 +2535,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
+            
+            const carrierLower = (so.carrier || '').toLowerCase();
+            if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
