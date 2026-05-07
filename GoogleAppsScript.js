@@ -735,17 +735,20 @@ function sendRBLAppointmentRequestEmail(data) {
     const requestIdCol = poHeaders.indexOf('Appointment Request ID');
     const requestTimestampCol = poHeaders.indexOf('Appointment Request Timestamp');
 
-    // --- Get POC Email from Channel_Config ---
+    // --- Get POC Email and CC Email from Channel_Config ---
     let pocEmail = '';
+    let ccEmail = '';
     if (configSheet) {
       const configData = configSheet.getDataRange().getValues();
       const configHeaders = configData[0];
       const channelCol = configHeaders.indexOf('Channel');
       const emailAddrCol = configHeaders.indexOf('POC Email');
-      if (channelCol !== -1 && emailAddrCol !== -1) {
+      const ccEmailAddrCol = configHeaders.indexOf('Appointment CC');
+      if (channelCol !== -1) {
         for (let c = 1; c < configData.length; c++) {
           if (String(configData[c][channelCol]).toLowerCase().includes('rbl')) {
-            pocEmail = String(configData[c][emailAddrCol]).trim();
+            if (emailAddrCol !== -1) pocEmail = String(configData[c][emailAddrCol]).trim();
+            if (ccEmailAddrCol !== -1) ccEmail = String(configData[c][ccEmailAddrCol]).trim();
             break;
           }
         }
@@ -765,7 +768,7 @@ function sendRBLAppointmentRequestEmail(data) {
     orders.forEach(order => {
       const poRef = order.poReference || '';
       const invoiceNumber = order.invoiceNumber || '';
-      const invoicePdfUrl = order.invoicePdfUrl || '';
+      const invoicePdfUrl = order.invoiceurl || order.invoicePdfUrl || '';
       const poPdfUrl = order.poPdfUrl || '';
       const items = order.items || [];
 
@@ -869,6 +872,7 @@ function sendRBLAppointmentRequestEmail(data) {
 
     MailApp.sendEmail({
       to: pocEmail,
+      cc: ccEmail,
       subject: 'RBL Appointment Request - Brainlytic Solutions Pvt Ltd',
       htmlBody: htmlBody
     });
