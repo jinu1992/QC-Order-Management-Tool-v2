@@ -109,6 +109,7 @@ function doPost(e) {
     else if (action === 'deleteUser') result = { status: 'success', message: 'User deleted' };
     else if (action === 'FETCH_BOX_DETAILS') result = getBoxSummaryByEEReference(data.eeReferenceCode);
     else if (action === 'sendBBAppointmentRequestEmail') result = sendBBAppointmentRequestEmail(data);
+    else if (action === 'sendRBLAppointmentRequestEmail') result = sendRBLAppointmentRequestEmail(data);
     else if (action === 'addOrderNote') result = addOrderNote(data);
     else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
     else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
@@ -713,6 +714,173 @@ function sendBBAppointmentRequestEmail(data) {
 
   } catch (e) {
     return { status: 'error', message: 'Error sending BB appointments: ' + e.toString() };
+  }
+}
+
+function sendRBLAppointmentRequestEmail(data) {
+  const { orders } = data;
+  if (!orders || !Array.isArray(orders)) return { status: 'error', message: 'Missing orders array' };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const poSheet = ss.getSheetByName(SHEET_PO_DB);
+    const configSheet = ss.getSheetByName('Channel_Config');
+
+    if (!poSheet) return { status: 'error', message: 'PO_Database sheet not found' };
+
+    const poData = poSheet.getDataRange().getValues();
+    const poHeaders = poData[0];
+    const refCol = poHeaders.indexOf('EE_reference_code');
+    const statusCol = poHeaders.indexOf('Status');
+    const requestIdCol = poHeaders.indexOf('Appointment Request ID');
+    const requestTimestampCol = poHeaders.indexOf('Appointment Request Timestamp');
+
+    // --- Get POC Email from Channel_Config ---
+    let pocEmail = '';
+    if (configSheet) {
+      const configData = configSheet.getDataRange().getValues();
+      const configHeaders = configData[0];
+      const channelCol = configHeaders.indexOf('Channel');
+      const emailAddrCol = configHeaders.indexOf('POC Email');
+      if (channelCol !== -1 && emailAddrCol !== -1) {
+        for (let c = 1; c < configData.length; c++) {
+          if (String(configData[c][channelCol]).toLowerCase().includes('rbl')) {
+            pocEmail = String(configData[c][emailAddrCol]).trim();
+            break;
+          }
+        }
+      }
+    }
+    if (!pocEmail) pocEmail = 'brainlytic.logistic@gmail.com'; // Fallback
+
+    const VENDOR_CODE = '40002051';
+    const requestId = 'RBL-REQ-' + Date.now();
+    const timestamp = new Date().toLocaleString();
+
+    // --- Build aggregated item rows across all orders for the HTML table ---
+    let allTableRows = [];
+    let pdfLinks = [];
+    let successCount = 0;
+
+    orders.forEach(order => {
+      const poRef = order.poReference || '';
+      const invoiceNumber = order.invoiceNumber || '';
+      const invoicePdfUrl = order.invoicePdfUrl || '';
+      const poPdfUrl = order.poPdfUrl || '';
+      const items = order.items || [];
+
+      if (invoicePdfUrl) pdfLinks.push({ label: 'Invoice - ' + (invoiceNumber || poRef), url: invoicePdfUrl });
+      if (poPdfUrl) pdfLinks.push({ label: 'PO - ' + poRef, url: poPdfUrl });
+
+      // Group items by articleCode + shippedQuantity per box (Case Pack)
+      const grouped = {};
+      items.forEach(item => {
+        const casePack = item.eeBoxCount > 0 ? Math.round(item.shippedQuantity / item.eeBoxCount) : item.shippedQuantity;
+        const key = (item.articleCode || '') + '|' + casePack;
+        if (!grouped[key]) {
+          grouped[key] = {
+            articleCode: item.articleCode || '',
+            itemName: item.itemName || '',
+            casePack: casePack,
+            boxCount: item.eeBoxCount || 0,
+            totalQty: item.shippedQuantity || 0
+          };
+        } else {
+          grouped[key].boxCount += (item.eeBoxCount || 0);
+          grouped[key].totalQty += (item.shippedQuantity || 0);
+        }
+      });
+
+      Object.values(grouped).forEach(g => {
+        allTableRows.push({
+          poNo: poRef,
+          invoiceNumber: invoiceNumber,
+          articleCode: g.articleCode,
+          description: g.itemName,
+          casePack: g.casePack,
+          boxCount: g.boxCount,
+          totalQty: g.totalQty
+        });
+      });
+
+      // Update PO_Database rows
+      if (refCol !== -1) {
+        for (let i = 1; i < poData.length; i++) {
+          if (String(poData[i][refCol]).trim() === String(order.id).trim()) {
+            if (statusCol !== -1) poSheet.getRange(i + 1, statusCol + 1).setValue('Awaiting Appointment Details');
+            if (requestIdCol !== -1) poSheet.getRange(i + 1, requestIdCol + 1).setValue(requestId);
+            if (requestTimestampCol !== -1) poSheet.getRange(i + 1, requestTimestampCol + 1).setValue(timestamp);
+            successCount++;
+            break;
+          }
+        }
+      }
+    });
+
+    // --- Build HTML Table ---
+    let itemRows = allTableRows.map(r => `
+      <tr>
+        <td style="padding:8px;border:1px solid #ddd;text-align:center;">${VENDOR_CODE}</td>
+        <td style="padding:8px;border:1px solid #ddd;">${r.poNo}</td>
+        <td style="padding:8px;border:1px solid #ddd;">${r.invoiceNumber}</td>
+        <td style="padding:8px;border:1px solid #ddd;">${r.articleCode}</td>
+        <td style="padding:8px;border:1px solid #ddd;">${r.description}</td>
+        <td style="padding:8px;border:1px solid #ddd;text-align:center;">${r.casePack}</td>
+        <td style="padding:8px;border:1px solid #ddd;text-align:center;">${r.boxCount}</td>
+        <td style="padding:8px;border:1px solid #ddd;text-align:center;">${r.totalQty}</td>
+        <td style="padding:8px;border:1px solid #ddd;text-align:center;">TBD</td>
+      </tr>
+    `).join('');
+
+    let pdfSection = pdfLinks.length > 0 ? '<p style="margin-top:16px;"><strong>Attached Documents:</strong></p><ul>' +
+      pdfLinks.map(l => `<li><a href="${l.url}" style="color:#2563EB;">${l.label}</a></li>`).join('') + '</ul>' : '';
+
+    const htmlBody = `
+      <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;">
+        <div style="background-color:#E11D48;padding:16px 24px;color:white;border-radius:8px 8px 0 0;">
+          <h2 style="margin:0;">RBL / Hamleys - Appointment Request</h2>
+          <p style="margin:4px 0 0;opacity:0.9;">Vendor Code: ${VENDOR_CODE} | Brainlytic Solutions Pvt Ltd</p>
+        </div>
+        <div style="padding:20px;border:1px solid #E5E7EB;border-top:none;border-radius:0 0 8px 8px;">
+          <p>Dear Team,</p>
+          <p>We would like to request an appointment for delivery of the following items. Please provide the earliest available delivery slot.</p>
+          <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:13px;">
+            <thead>
+              <tr style="background-color:#FEE2E2;">
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Vendor Code</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">PO No.</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Invoice Number</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">PO Article</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Description</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Case Pack</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">No. of Boxes</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Total Qty</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Required Appt. Date</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          ${pdfSection}
+          <p style="margin-top:24px;">Please confirm the appointment at the earliest.</p>
+          <p>Best regards,<br/>Brainlytic Solutions Pvt Ltd</p>
+        </div>
+      </div>
+    `;
+
+    MailApp.sendEmail({
+      to: pocEmail,
+      subject: 'RBL Appointment Request - Brainlytic Solutions Pvt Ltd',
+      htmlBody: htmlBody
+    });
+
+    return {
+      status: successCount > 0 ? 'success' : 'error',
+      message: `RBL appointment request sent for ${successCount} orders.`,
+      requestId
+    };
+
+  } catch (e) {
+    return { status: 'error', message: 'Error sending RBL appointment request: ' + e.toString() };
   }
 }
 

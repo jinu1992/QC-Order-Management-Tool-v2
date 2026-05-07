@@ -542,6 +542,10 @@ export const sendBBAppointmentRequestEmail = async (params: any) => {
     return await postToScript({ action: 'sendBBAppointmentRequestEmail', channelName: 'BB', ...params });
 };
 
+export const sendRBLAppointmentRequestEmail = async (params: any) => {
+    return await postToScript({ action: 'sendRBLAppointmentRequestEmail', channelName: 'RBL', ...params });
+};
+
 export const sendBBOrderConfirmationEmail = async (params: { poNumbers: string[] | string }) => {
     return await postToScript({ action: 'sendBBOrderConfirmationEmail', channelName: 'BB', ...params });
 };

@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -1599,6 +1599,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
     const [isSendingBBAppointment, setIsSendingBBAppointment] = useState(false);
+    const [isSendingRBLAppointment, setIsSendingRBLAppointment] = useState(false);
     const [isSendingZeptoReminder, setIsSendingZeptoReminder] = useState<string | null>(null);
     const [isProcessingBlinkit, setIsProcessingBlinkit] = useState(false);
     const [isSyncingEE, setIsSyncingEE] = useState(false);
@@ -2216,6 +2217,70 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification('Error sending BB appointment request', 'error');
         } finally {
             setIsSendingBBAppointment(false);
+        }
+    };
+
+    // --- RBL (Hamleys) Appointment Eligibility ---
+    const rblEligibility = useMemo(() => {
+        const rblOrders = allSalesOrders.filter(so => so.channel.toLowerCase().includes('rbl'));
+        if (rblOrders.length === 0) return { show: false, canRequest: false, reason: 'No RBL orders' };
+
+        const activeRBLOrders = rblOrders.filter(so => !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId);
+        const invoicedRBLOrders = activeRBLOrders.filter(so => so.status === 'Invoiced' && !so.awb);
+        const missingBoxDetails = invoicedRBLOrders.some(so => (so.boxCount || 0) === 0);
+
+        if (invoicedRBLOrders.length === 0) return { show: true, canRequest: false, reason: 'No eligible invoiced RBL orders', hasOpen: false, missingBoxDetails: false };
+        if (missingBoxDetails) return { show: true, canRequest: false, reason: 'Box details missing for some orders', hasOpen: false, missingBoxDetails: true };
+
+        return { show: true, canRequest: true, orders: invoicedRBLOrders, hasOpen: false, missingBoxDetails: false };
+    }, [allSalesOrders]);
+
+    const handleSendRBLAppointmentRequest = async (specificSo?: GroupedSalesOrder) => {
+        const ordersToRequest = specificSo ? [specificSo] : rblEligibility.orders;
+        if (!ordersToRequest || ordersToRequest.length === 0 || isSendingRBLAppointment) return;
+
+        setIsSendingRBLAppointment(true);
+        try {
+            // Build item-level detail from the source PO data
+            const orderPayloads = ordersToRequest.map(o => {
+                // Find the matching POs to extract item-level details
+                const matchingItems = purchaseOrders.flatMap(po =>
+                    (po.items || []).filter(item => {
+                        const refCode = String(item.eeReferenceCode || '').trim();
+                        return refCode === o.id;
+                    }).map(item => ({
+                        articleCode: item.articleCode,
+                        itemName: item.itemName || '',
+                        shippedQuantity: item.shippedQuantity || 0,
+                        eeBoxCount: item.eeBoxCount || 0,
+                    }))
+                );
+
+                return {
+                    id: o.id,
+                    poReference: o.poReference,
+                    invoiceNumber: o.invoiceNumber || '',
+                    invoicePdfUrl: o.invoicePdfUrl || o.invoiceUrl || '',
+                    poPdfUrl: o.poPdfUrl || '',
+                    boxCount: o.boxCount,
+                    storeCode: o.storeCode,
+                    items: matchingItems,
+                };
+            });
+
+            const res = await sendRBLAppointmentRequestEmail({ orders: orderPayloads });
+
+            if (res.status === 'success') {
+                addNotification(res.message || 'RBL appointment request sent successfully.', 'success');
+                onSync();
+            } else {
+                addNotification(res.message || 'Failed to send RBL appointment request', 'error');
+            }
+        } catch (err) {
+            console.error('Error sending RBL appointment request:', err);
+            addNotification('Error sending RBL appointment request', 'error');
+        } finally {
+            setIsSendingRBLAppointment(false);
         }
     };
 
@@ -3038,14 +3103,35 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     disabled: isExecuting
                 };
             }
+        }
+
+        // RBL (Hamleys) appointment flow
+        const isRBL = so.channel.toLowerCase().includes('rbl');
+        if (isRBL) {
+            if (so.status === 'Awaiting Appointment Confirmation' || (!!so.appointmentRequestId && !so.appointmentDate && !so.appointmentId)) {
+                return {
+                    label: 'Update Appt.',
+                    color: 'bg-rose-600 text-white hover:bg-rose-700 shadow-md',
+                    onClick: () => setInstamartApptModal({ isOpen: true, so }),
+                    disabled: isExecuting
+                };
+            }
+            if (so.status === 'Invoiced' && !so.awb && !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId) {
+                return {
+                    label: isSendingRBLAppointment ? 'Requesting...' : 'Request Appt.',
+                    color: 'bg-rose-600 text-white hover:bg-rose-700 shadow-md',
+                    onClick: () => handleSendRBLAppointmentRequest(so),
+                    disabled: isSendingRBLAppointment || isExecuting
+                };
+            }
 
             if (isZepto && so.status === 'Create ASN') {
                 return { label: 'Create ASN', color: 'bg-green-600 text-white hover:bg-green-700', onClick: () => setZeptoASNHelper({ isOpen: true, so }), disabled: isExecuting };
             }
             
             // Prioritize "Request Appt." if requested is null
-            const apptMissing = (isZepto || isInstamart || isBB) && !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId;
-            if (apptMissing && so.status === 'Invoiced' && !so.awb) {
+            const apptMissing2 = (isZepto || isInstamart || isBB) && !so.appointmentRequestId && !so.appointmentDate && !so.appointmentId;
+            if (apptMissing2 && so.status === 'Invoiced' && !so.awb) {
                 const canReq = isBB ? (so.boxCount > 0) : (isZepto ? zeptoEligibility.canRequest : instamartEligibility.canRequest);
                 return {
                     label: isSendingBBAppointment || isSendingZeptoAppointment || isSendingInstamartAppointment ? 'Requesting...' : 'Request Appt.',
@@ -3304,6 +3390,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         >
                             <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingBBAppointment ? 'animate-pulse' : ''}`} />
                             <span>{bbEligibility.missingBoxDetails ? 'Box Data Missing' : 'BB Appt.'}</span>
+                        </button>
+                    )}
+                    {rblEligibility.show && (
+                        <button
+                            onClick={() => handleSendRBLAppointmentRequest()}
+                            disabled={!rblEligibility.canRequest || isSendingRBLAppointment}
+                            className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-rose-600 rounded-lg shadow-sm hover:bg-rose-700 transition-all active:scale-95 disabled:opacity-50 group ${!rblEligibility.canRequest ? 'grayscale' : ''}`}
+                            title={rblEligibility.canRequest ? "All RBL orders invoiced. Ready to send appointment request." : rblEligibility.reason}
+                        >
+                            <SendIcon className={`h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 ${isSendingRBLAppointment ? 'animate-pulse' : ''}`} />
+                            <span>{rblEligibility.missingBoxDetails ? 'Box Data Missing' : 'RBL Appt.'}</span>
                         </button>
                     )}
                     <button
