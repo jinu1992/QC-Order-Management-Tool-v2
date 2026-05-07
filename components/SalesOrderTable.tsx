@@ -2270,7 +2270,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     id: o.id,
                     poReference: o.poReference,
                     invoiceNumber: o.invoiceNumber || '',
-                    invoiceurl: o.invoicePdfUrl || o.invoiceUrl || '',
+                    invoiceurl: o.invoiceUrl || o.invoicePdfUrl || '',
                     poPdfUrl: o.poPdfUrl || '',
                     boxCount: o.boxCount,
                     storeCode: o.storeCode,
