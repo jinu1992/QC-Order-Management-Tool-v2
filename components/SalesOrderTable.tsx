@@ -2259,6 +2259,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         return refCode === o.id;
                     }).map(item => ({
                         articleCode: item.articleCode,
+                        sku: item.masterSku || '',
                         itemName: item.itemName || '',
                         shippedQuantity: item.shippedQuantity || 0,
                         eeBoxCount: item.eeBoxCount || 0,

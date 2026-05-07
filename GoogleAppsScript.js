@@ -783,6 +783,7 @@ function sendRBLAppointmentRequestEmail(data) {
         if (!grouped[key]) {
           grouped[key] = {
             articleCode: item.articleCode || '',
+            sku: item.sku || '',
             itemName: item.itemName || '',
             casePack: casePack,
             boxCount: item.eeBoxCount || 0,
@@ -799,6 +800,7 @@ function sendRBLAppointmentRequestEmail(data) {
           poNo: poRef,
           invoiceNumber: invoiceNumber,
           articleCode: g.articleCode,
+          sku: g.sku,
           description: g.itemName,
           casePack: g.casePack,
           boxCount: g.boxCount,
@@ -827,6 +829,7 @@ function sendRBLAppointmentRequestEmail(data) {
         <td style="padding:8px;border:1px solid #ddd;">${r.poNo}</td>
         <td style="padding:8px;border:1px solid #ddd;">${r.invoiceNumber}</td>
         <td style="padding:8px;border:1px solid #ddd;">${r.articleCode}</td>
+        <td style="padding:8px;border:1px solid #ddd;">${r.sku}</td>
         <td style="padding:8px;border:1px solid #ddd;">${r.description}</td>
         <td style="padding:8px;border:1px solid #ddd;text-align:center;">${r.casePack}</td>
         <td style="padding:8px;border:1px solid #ddd;text-align:center;">${r.boxCount}</td>
@@ -854,6 +857,7 @@ function sendRBLAppointmentRequestEmail(data) {
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">PO No.</th>
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Invoice Number</th>
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">PO Article</th>
+                <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">SKU</th>
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Description</th>
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">Case Pack</th>
                 <th style="padding:10px 8px;border:1px solid #ddd;font-weight:600;">No. of Boxes</th>
