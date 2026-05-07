@@ -1895,6 +1895,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     }
                 }
 
+                const isRBLChannel = po.channel.toLowerCase().includes('rbl');
+                if (isRBLChannel && !['Returned', 'Shipped', 'Delivered', 'Closed', 'Label Generated'].includes(displayStatus)) {
+                    if (apptId || apptDate) {
+                        // Appointment confirmed, keep normal status
+                    } else if (apptReqId || apptReqDate) {
+                        displayStatus = 'Awaiting Appointment Confirmation';
+                    }
+                }
+
                 if (!groups[refCode]) {
                     groups[refCode] = {
                         id: refCode,
