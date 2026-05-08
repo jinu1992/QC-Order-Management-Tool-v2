@@ -77,7 +77,7 @@ function doPost(e) {
     else if (action === 'FETCH_LAST_14_DAYS_QUOTATIONS') result = fetchLast14DaysQuotations();
     else if (action === 'syncSinglePO') result = { status: 'success', message: 'PO ' + data.poNumber + ' sync triggered.' };
     else if (action === 'createZohoInvoice') result = { status: 'success', message: 'Zoho Invoice creation triggered for ' + data.eeReferenceCode };
-    else if (action === 'pushToShippingPartner') result = handlePushToShippingAggregator(data.eeReferenceCode);
+    else if (action === 'pushToShippingPartner') result = handlePushToShippingAggregator(data.eeReferenceCode, data.courierId);
     else if (action === 'updateFBAShipmentId') result = { status: 'success', message: 'FBA Shipment ID updated' };
     else if (action === 'syncEasyEcomShipments') result = { status: 'success', message: 'EasyEcom shipments sync triggered' };
     else if (action === 'syncInventory') result = { status: 'success', message: 'Inventory sync triggered' };
@@ -1259,4 +1259,280 @@ function buildHtmlEmailTemplate(shipments) {
       </div>
     </div>
   `;
+}
+
+/**
+ * Gets the Nimbus Post token using script properties.
+ */
+function getNimbusPostToken() {
+  const props = PropertiesService.getScriptProperties();
+  const email = props.getProperty('NIMBUS_POST_EMAIL');
+  const password = props.getProperty('NIMBUS_POST_PASSWORD');
+
+  if (!email || !password) {
+    Logger.log('ERROR: Nimbus Post email or password not found in script properties.');
+    return null;
+  }
+
+  const url = "https://ship.nimbuspost.com/api/users/login";
+  const options = {
+    'method': 'post',
+    'contentType': 'application/json',
+    'payload': JSON.stringify({ email: email, password: password }),
+    'muteHttpExceptions': true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() === 200) {
+      const data = JSON.parse(response.getContentText());
+      return data.data; // Token
+    }
+    return null;
+  } catch (e) {
+    Logger.log(`ERROR fetching Nimbus Post token: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Interface to trigger Nimbus Post B2B shipping creation.
+ */
+function handlePushToShippingAggregator(eeReferenceCode, courierId) {
+  try {
+    const result = createShipment(eeReferenceCode, courierId);
+    return responseJSON(result);
+  } catch (e) {
+    return responseJSON({ status: 'error', message: e.toString() });
+  }
+}
+
+/**
+ * Main logical gate for shipment creation.
+ */
+function createShipment(eeReferenceCode, courierId) {
+  if (!eeReferenceCode) {
+    return { status: "error", message: "No EE Reference Code provided" };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+  const data = dbSheet.getDataRange().getValues();
+  const headers = data.shift();
+
+  const refIdx = headers.indexOf("EE_reference_code");
+  const channelIdx = headers.indexOf("Channel Name");
+  const boxIdx = headers.indexOf("Box Data");
+
+  const row = data.find(r => String(r[refIdx]).trim() === eeReferenceCode);
+  if (!row) return { status: "error", message: "Order not found" };
+
+  const channel = String(row[channelIdx]).trim();
+  const boxCount = Number(row[boxIdx]) || 0;
+
+  // B2B Channels that always use Nimbus
+  const excluded = ["Instamart", "Zepto", "BB", "RBL", "FlipkartMinute", "Blinkit", "Amazon_FBA"];
+  const useShiprocket = !excluded.some(ex => channel.toLowerCase().includes(ex.toLowerCase())) && boxCount === 1;
+
+  if (useShiprocket) {
+    // Shiprocket logic not fully implemented here yet, but we'll stick to nimbus for your B2B needs
+    return { status: "skipped", message: "Shiprocket not supported for B2B channels" };
+  } else {
+    return createNimbusPostShipment(eeReferenceCode, courierId);
+  }
+}
+
+/**
+ * Creates Nimbus Post Shipment.
+ */
+function createNimbusPostShipment(eeReferenceCode, courierId) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { status: "skipped", message: "Shipment creation already in progress. Please wait." };
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const dbData = dbSheet.getDataRange().getValues();
+    const headers = dbData.shift();
+
+    const refIdIndex = headers.indexOf('EE_reference_code');
+    const awbIndex = headers.indexOf('AWB');
+
+    // Duplicate check
+    const blockingRow = dbData.find(row => String(row[refIdIndex]).trim() === eeReferenceCode && String(row[awbIndex]).trim() !== "");
+    if (blockingRow) return { status: "skipped", message: "Shipment already exists", awb: blockingRow[awbIndex] };
+
+    // Mark as Processing
+    const rowsToMark = dbData.map((row, index) => String(row[refIdIndex]).trim() === eeReferenceCode ? index + 2 : null).filter(Boolean);
+    rowsToMark.forEach(r => dbSheet.getRange(r, awbIndex + 1).setValue("PROCESSING"));
+
+    const customerMap = _loadEECustomerData(ss);
+    const packingData = _loadPackingData(ss, eeReferenceCode);
+    const orderData = _loadOrderData(ss, eeReferenceCode);
+
+    if (!orderData.items.length) throw new Error(`No items found for EE Ref: ${eeReferenceCode}`);
+    if (!customerMap.has(orderData.customerId)) throw new Error(`Customer ID not found: ${orderData.customerId}`);
+
+    // Build Payload with Courier ID
+    const payload = _buildNimbusPayload(eeReferenceCode, orderData, customerMap.get(orderData.customerId), packingData, dbSheet, courierId);
+
+    const token = getNimbusPostToken();
+    if (!token) throw new Error("Nimbus token generation failed.");
+
+    const response = UrlFetchApp.fetch("https://ship.nimbuspost.com/api/shipmentcargo/create", {
+      method: "post",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const responseData = JSON.parse(response.getContentText());
+    if (!responseData.status) throw new Error(responseData.message || "Nimbus API error");
+
+    const nimbus = responseData.data;
+    const awbNumber = nimbus.awb_number;
+    const trackingUrl = `https://ship.nimbuspost.com/shipping/tracking/${awbNumber}`;
+
+    // Update DB
+    const carrierIndex = headers.indexOf('Carrier');
+    const trackingIndex = headers.indexOf('Tracking Status');
+    const trackingUrlIndex = headers.indexOf('Tracking URL');
+    const bookedDateIndex = headers.indexOf('Booked Date');
+    const pickupDateIndex = headers.indexOf('Pickup Date');
+
+    rowsToMark.forEach(row => {
+      const now = new Date();
+      let pickupDate = new Date(now);
+      if (parseInt(Utilities.formatDate(now, "Asia/Kolkata", "HH")) >= 14) pickupDate.setDate(pickupDate.getDate() + 1);
+      if (pickupDate.getDay() === 0) pickupDate.setDate(pickupDate.getDate() + 1);
+
+      dbSheet.getRange(row, carrierIndex + 1).setValue(nimbus.courier_name);
+      dbSheet.getRange(row, awbIndex + 1).setValue(awbNumber);
+      if (trackingIndex !== -1) dbSheet.getRange(row, trackingIndex + 1).setValue(nimbus.status);
+      if (trackingUrlIndex !== -1) dbSheet.getRange(row, trackingUrlIndex + 1).setValue(trackingUrl);
+      if (bookedDateIndex !== -1) dbSheet.getRange(row, bookedDateIndex + 1).setValue(now);
+      if (pickupDateIndex !== -1) dbSheet.getRange(row, pickupDateIndex + 1).setValue(pickupDate);
+    });
+
+    return { status: "success", message: "Shipment created successfully", awb: awbNumber };
+  } catch (e) {
+    if (dbSheet && awbIndex !== -1) {
+       const rowsToMark = dbSheet.getDataRange().getValues().map((row, index) => String(row[refIdIndex]).trim() === eeReferenceCode ? index + 1 : null).filter(Boolean);
+       rowsToMark.forEach(r => { if(dbSheet.getRange(r, awbIndex + 1).getValue() === "PROCESSING") dbSheet.getRange(r, awbIndex + 1).setValue(""); });
+    }
+    return { status: "error", message: e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Builds Nimbus Payload.
+ */
+function _buildNimbusPayload(eeReferenceCode, orderData, customerDetails, packingData, dbSheet, courierId) {
+  const firstItem = orderData.items[0];
+  const orderHeaders = dbSheet.getRange(1, 1, 1, 40).getValues()[0];
+  const getVal = (row, colName) => row[orderHeaders.indexOf(colName)];
+
+  const invoiceNumber = getVal(firstItem, 'Invoice Number');
+  const invoiceDate = new Date(getVal(firstItem, 'Invoice Date'));
+  const invoiceValue = parseFloat(getVal(firstItem, 'Invoice Total'));
+  const ewb = parseFloat(getVal(firstItem, 'EWB'));
+
+  const boxes = packingData.reduce((acc, item) => {
+    const boxId = item['Box ID'];
+    if (!acc[boxId]) {
+      acc[boxId] = { box_weight: 0, box_length: 0, box_breadth: 0, box_height: 0, box_price: 0 };
+    }
+    acc[boxId].box_weight = parseFloat(item['Box Weight']);
+    acc[boxId].box_length = Math.max(acc[boxId].box_length, parseFloat(item['Box Length']));
+    acc[boxId].box_breadth = Math.max(acc[boxId].box_breadth, parseFloat(item['Box Width']));
+    acc[boxId].box_height = Math.max(acc[boxId].box_height, parseFloat(item['Box Height']));
+    acc[boxId].box_price += parseFloat(item['Value']);
+    return acc;
+  }, {});
+
+  const productsArray = Object.values(boxes).map(box => ({
+    "product_name": "Puzzles",
+    "product_hsn_code": "95036090",
+    "product_lbh_unit": "cm",
+    "no_of_box": "1",
+    "product_tax_per": "5",
+    "product_price": box.box_price.toFixed(2),
+    "product_weight_unit": "gram",
+    "product_length": box.box_length,
+    "product_breadth": box.box_breadth,
+    "product_height": box.box_height,
+    "product_weight": box.box_weight
+  }));
+
+  return {
+    "order_id": eeReferenceCode,
+    "payment_method": "prepaid",
+    "consignee_name": customerDetails['Company Name'],
+    "consignee_company_name": customerDetails['Company Name'],
+    "consignee_phone": customerDetails['Support Contact'],
+    "consignee_email": customerDetails['Support Email'],
+    "consignee_gst_number": customerDetails['GST'],
+    "consignee_address": customerDetails['Billing Street'],
+    "consignee_pincode": customerDetails['Billing Zip'],
+    "consignee_city": customerDetails['Billing City'],
+    "consignee_state": customerDetails['Billing State'],
+    "no_of_invoices": "1",
+    "no_of_boxes": productsArray.length.toString(),
+    "courier_id": String(courierId || "110"), // Default to Delhivery Bulk if no ID provided
+    "request_auto_pickup": "yes",
+    "invoice": [{
+      "invoice_number": invoiceNumber,
+      "invoice_date": Utilities.formatDate(invoiceDate, "GMT", "dd-MM-yyyy"),
+      "invoice_value": invoiceValue,
+      "ebn_number": ewb || ""
+    }],
+    "pickup": {
+      "warehouse_name": "Brainlytic Solutions Private Limited",
+      "name": "Mohan Dewangan",
+      "address": "Khasra No. 325/5 325/22, Ring Road No, 1, DD Nagar, Raipura,",
+      "address_2": "Near Shree Siddhi Vinayak Marriage Palace, Vinayaka Vihar",
+      "city": "Raipur",
+      "state": "Chhattisgarh",
+      "pincode": "492013",
+      "phone": "8103733766",
+      "gst_number": "22AAICB3513C1ZF"
+    },
+    "products": productsArray
+  };
+}
+
+function _loadEECustomerData(ss) {
+  const sheet = ss.getSheetByName(SHEET_EE_CUSTOMERS);
+  const data = sheet.getDataRange().getValues();
+  const headers = data.shift();
+  const map = new Map();
+  const idIndex = headers.indexOf('Customer ID');
+  data.forEach(row => {
+    const customerId = row[idIndex];
+    if (customerId) map.set(customerId.toString(), Object.fromEntries(headers.map((key, i) => [key, row[i]])));
+  });
+  return map;
+}
+
+function _loadPackingData(ss, eeReferenceCode) {
+  const sheet = ss.getSheetByName(SHEET_MASTER_DATA);
+  const data = sheet.getDataRange().getValues();
+  const headers = data.shift();
+  const refCodeIndex = headers.indexOf('Reference Code');
+  return data.filter(row => String(row[refCodeIndex]).trim() === eeReferenceCode).map(row => Object.fromEntries(headers.map((key, i) => [key, row[i]])));
+}
+
+function _loadOrderData(ss, eeReferenceCode) {
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const data = sheet.getDataRange().getValues();
+  const headers = data.shift();
+  const refIdIndex = headers.indexOf('EE_reference_code');
+  const customerIdIndex = headers.indexOf('EE Customer ID');
+  const items = data.filter(row => String(row[refIdIndex]).trim() === eeReferenceCode);
+  const customerId = items.length > 0 ? items[0][customerIdIndex] : "";
+  return { items: items, customerId: customerId.toString() };
 }

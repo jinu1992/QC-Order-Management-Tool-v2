@@ -1563,6 +1563,56 @@ const AmazonBoxDetailsModal: FC<{
     );
 };
 
+const CourierSelectionModal: FC<{ so: { eeRef: string, poRef: string, channel: string }, onSelect: (courierId: number) => void, onClose: () => void }> = ({ so, onSelect, onClose }) => {
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[200] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-blue-100 animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-blue-600 border-b border-blue-700 flex flex-col items-center text-center">
+                    <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4">
+                        <TruckIcon className="h-10 w-10 text-white" />
+                    </div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Select B2B Courier</h3>
+                    <p className="text-xs text-blue-100 mt-1">Channel: <span className="font-bold text-white">{so.channel}</span> | Ref: <span className="font-bold text-white">{so.eeRef}</span></p>
+                </div>
+                <div className="p-8 space-y-4">
+                    <button 
+                        onClick={() => onSelect(110)}
+                        className="w-full p-6 bg-gray-50 border-2 border-gray-100 rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all group text-left flex items-center justify-between"
+                    >
+                        <div>
+                            <p className="text-lg font-black text-gray-900 group-hover:text-blue-700">Delhivery B2B</p>
+                            <p className="text-xs text-gray-500">Fast and reliable for bulk shipments</p>
+                        </div>
+                        <div className="w-10 h-10 bg-white shadow-md rounded-full flex items-center justify-center group-hover:bg-blue-600 transform transition-transform group-hover:scale-110">
+                           <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-white" />
+                        </div>
+                    </button>
+
+                    <button 
+                        onClick={() => onSelect(71)}
+                        className="w-full p-6 bg-gray-50 border-2 border-gray-100 rounded-2xl hover:border-orange-500 hover:bg-orange-50 transition-all group text-left flex items-center justify-between"
+                    >
+                        <div>
+                            <p className="text-lg font-black text-gray-900 group-hover:text-orange-700">Xpressbees B2B</p>
+                            <p className="text-xs text-gray-500">Efficient logistics for corporate orders</p>
+                        </div>
+                        <div className="w-10 h-10 bg-white shadow-md rounded-full flex items-center justify-center group-hover:bg-orange-600 transform transition-transform group-hover:scale-110">
+                           <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-white" />
+                        </div>
+                    </button>
+
+                    <button 
+                        onClick={onClose}
+                        className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors mt-2"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const parseDateString = (dateStr: string | undefined): number => {
     try {
         if (!dateStr || dateStr.trim() === "") return 0;
@@ -1595,6 +1645,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [isCreatingInvoice, setIsCreatingInvoice] = useState<string | null>(null);
     const [isPushingPartner, setIsPushingPartner] = useState<string | null>(null);
+    const [courierModal, setCourierModal] = useState<{ isOpen: boolean; eeRef: string; poRef: string; channel: string }>({
+        isOpen: false,
+        eeRef: '',
+        poRef: '',
+        channel: ''
+    });
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
@@ -2831,13 +2887,28 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    const handlePushToShippingAction = async (eeRef: string, poRef: string) => {
-        setIsPushingPartner(eeRef);
+    const handlePushToShippingAction = async (eeRef: string, poRef: string, courierId?: number) => {
+        // Find the order to check its channel
+        const so = allSalesOrders.find(o => o.id === eeRef);
+        const channel = so?.channel.toLowerCase() || '';
+        const b2bChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'blinkit'];
 
+        // If it's a B2B channel and no courierId is provided, show the selection modal
+        if (b2bChannels.includes(channel) && !courierId) {
+            setCourierModal({
+                isOpen: true,
+                eeRef,
+                poRef,
+                channel: so?.channel || channel
+            });
+            return;
+        }
+
+        setIsPushingPartner(eeRef);
         const parentPoNumbers = poRef.split(',').map(s => s.trim());
 
         try {
-            const res = await pushToShippingPartner(eeRef);
+            const res = await pushToShippingPartner(eeRef, courierId);
             if (res.status === 'success') {
                 addNotification(res.message || 'Push to shipping partner successful.', 'success');
                 addLog('Logistics Push', `EE Ref: ${eeRef}`);
@@ -4182,6 +4253,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onSave={handleConfirmPickupDate}
                     onClose={() => setPickupDateModal({ isOpen: false, so: null, isSaving: false })}
                     isSaving={pickupDateModal.isSaving}
+                />
+            )}
+            {courierModal.isOpen && (
+                <CourierSelectionModal
+                    so={courierModal}
+                    onSelect={(id) => {
+                        setCourierModal(prev => ({ ...prev, isOpen: false }));
+                        handlePushToShippingAction(courierModal.eeRef, courierModal.poRef, id);
+                    }}
+                    onClose={() => setCourierModal({ isOpen: false, eeRef: '', poRef: '', channel: '' })}
                 />
             )}
             {selfShipOrderData && (

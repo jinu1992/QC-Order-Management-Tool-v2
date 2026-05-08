@@ -115,8 +115,8 @@ export const processFlipkartEInvoice = async (poNumber: string, invoiceData: { i
     return await postToScript({ action: 'processFlipkartEInvoice', poNumber, ...invoiceData, items, userEmail });
 };
 
-export const pushToShippingPartner = async (eeReferenceCode: string): Promise<{ status: string, message?: string, awb?: string }> => {
-    return await postToScript({ action: 'pushToShippingPartner', eeReferenceCode });
+export const pushToShippingPartner = async (eeReferenceCode: string, courierId?: number): Promise<{ status: string, message?: string, awb?: string }> => {
+    return await postToScript({ action: 'pushToShippingPartner', eeReferenceCode, courierId });
 };
 
 export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: string): Promise<{ status: string, message?: string }> => {
