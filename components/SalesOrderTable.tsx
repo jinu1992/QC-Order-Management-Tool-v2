@@ -2557,7 +2557,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const handleUpdateGoogleSheet = async () => {
         const inTransitOrders = allSalesOrders.filter(so => {
             const channelLower = so.channel.toLowerCase();
-            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
+            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit', 'flipkartminute'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
             if (!isAllowedChannel) return false;
             const isAmazon = channelLower.includes('amazon');
@@ -2567,7 +2567,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const carrierLower = (so.carrier || '').toLowerCase();
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
-            if (so.status === 'Shipped') return true;
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
         }).sort((a, b) => {
