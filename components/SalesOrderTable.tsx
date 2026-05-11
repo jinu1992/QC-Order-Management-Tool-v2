@@ -2568,7 +2568,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
             const latestStatusLower = (so.latestStatus || '').toLowerCase();
-            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return')) return false;
+            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return') || 
+                trackingStatusLower.includes('cancelled') || latestStatusLower.includes('cancelled')) return false;
 
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
@@ -2674,7 +2675,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
             const latestStatusLower = (so.latestStatus || '').toLowerCase();
-            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return')) return false;
+            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return') || 
+                trackingStatusLower.includes('cancelled') || latestStatusLower.includes('cancelled')) return false;
 
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;

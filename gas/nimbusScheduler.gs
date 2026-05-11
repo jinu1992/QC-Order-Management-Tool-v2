@@ -115,7 +115,8 @@ function processNimbusAndSendEmail() {
       if (isAmazon && displayStatus === 'Delivered' && !isActuallyDelivered) shouldInclude = true;
 
       const latestStatusRaw = String(row[latestStatusIndex] || "").toLowerCase();
-      if (trackingStatus.includes('return') || latestStatusRaw.includes('return')) {
+      if (trackingStatus.includes('return') || latestStatusRaw.includes('return') ||
+          trackingStatus.includes('cancelled') || latestStatusRaw.includes('cancelled')) {
         shouldInclude = false;
       }
 
