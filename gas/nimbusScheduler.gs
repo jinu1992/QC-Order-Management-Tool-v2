@@ -114,6 +114,11 @@ function processNimbusAndSendEmail() {
       if (displayStatus === 'Shipped' || displayStatus === 'RTO Initiated' || displayStatus === 'Returned') shouldInclude = true;
       if (isAmazon && displayStatus === 'Delivered' && !isActuallyDelivered) shouldInclude = true;
 
+      const latestStatusRaw = String(row[latestStatusIndex] || "").toLowerCase();
+      if (trackingStatus.includes('return') || latestStatusRaw.includes('return')) {
+        shouldInclude = false;
+      }
+
       if (shouldInclude && awbText !== "") {
         nimbusShipments.push({
           bookedDate: formatDate(row[manifestDateIndex] || row[batchDateIndex]),

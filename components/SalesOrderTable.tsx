@@ -2567,6 +2567,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const carrierLower = (so.carrier || '').toLowerCase();
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
+            const latestStatusLower = (so.latestStatus || '').toLowerCase();
+            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return')) return false;
+
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
             return false;
@@ -2669,6 +2672,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             
             const carrierLower = (so.carrier || '').toLowerCase();
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
+
+            const latestStatusLower = (so.latestStatus || '').toLowerCase();
+            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return')) return false;
 
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
             if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
