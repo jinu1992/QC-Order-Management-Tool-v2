@@ -1672,7 +1672,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [isFetchingEasyEcomBoxData, setIsFetchingEasyEcomBoxData] = useState<string | null>(null);
     const [zeptoASNModalSo, setZeptoASNModalSo] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
-    const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
@@ -1766,9 +1765,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleFetchEasyEcomBoxData = async (so: GroupedSalesOrder) => {
         setIsFetchingEasyEcomBoxData(so.id);
-        const payload = { eeReferenceCode: so.id, poReference: so.poReference };
         try {
-            const res = await triggerEasyEcomFetch(payload);
+            const res = await triggerEasyEcomFetch(so.id);
             if (res.status === 'success') {
                 addNotification(res.message || `Fetching packing data for ${so.id}...`, 'info');
                 // Could occasionally poll here, but user can see updating or check logs
