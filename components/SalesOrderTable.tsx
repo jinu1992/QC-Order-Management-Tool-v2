@@ -2,6 +2,7 @@
 import React, { useState, Fragment, useMemo, FC, useRef, useEffect } from 'react';
 import { type PurchaseOrder, type InventoryItem, POItem, GroupedSalesOrder } from '../types';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
+import ZeptoASNModal from './ZeptoASNModal';
 import {
     DotsVerticalIcon,
     CloudDownloadIcon,
@@ -35,7 +36,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder, triggerEasyEcomFetch } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -1669,6 +1670,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [flipkartEInvoiceModal, setFlipkartEInvoiceModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
     const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
+    const [isFetchingEasyEcomBoxData, setIsFetchingEasyEcomBoxData] = useState<string | null>(null);
+    const [zeptoASNModalSo, setZeptoASNModalSo] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
@@ -1757,6 +1761,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification("Error fetching box details", "error");
         } finally {
             setIsFetchingBoxDetails(null);
+        }
+    };
+
+    const handleFetchEasyEcomBoxData = async (so: GroupedSalesOrder) => {
+        setIsFetchingEasyEcomBoxData(so.id);
+        const payload = { eeReferenceCode: so.id, poReference: so.poReference };
+        try {
+            const res = await triggerEasyEcomFetch(payload);
+            if (res.status === 'success') {
+                addNotification(res.message || `Fetching packing data for ${so.id}...`, 'info');
+                // Could occasionally poll here, but user can see updating or check logs
+            } else {
+                addNotification(res.message || "Failed to trigger box data fetch", "error");
+            }
+        } catch (err) {
+            console.error("Error triggering box details fetch:", err);
+            addNotification("Error triggering box details fetch", "error");
+        } finally {
+            setIsFetchingEasyEcomBoxData(null);
         }
     };
 
@@ -4056,6 +4079,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <DownloadIcon className="h-4 w-4" /> Download Zepto ASN CSV
                                                                         </button>
                                                                     )}
+                                                                    {so.channel.toLowerCase().includes('zepto') && so.status === 'Create ASN' && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); setZeptoASNModalSo({ isOpen: true, so }); }}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-purple-700 transition-all active:scale-95"
+                                                                        >
+                                                                            <GlobeIcon className="h-4 w-4" /> Update ASN
+                                                                        </button>
+                                                                    )}
                                                                     {showBlinkitAppointmentBtn && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => {
@@ -4165,7 +4196,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 col-span-1 md:col-span-1"><div className="flex flex-col h-full justify-between"><div><p className="text-[10px] font-bold text-blue-400 uppercase">Carrier & AWB</p><p className="text-sm font-bold text-gray-900 truncate">{so.carrier || 'Pending'}</p><p className="text-xs font-mono text-blue-600 font-bold tracking-wider">{so.awb}</p></div><span className={`mt-2 w-fit px-2 py-0.5 rounded text-[10px] font-bold border ${so.trackingStatus?.toLowerCase() === 'delivered' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{so.trackingStatus || 'In-Transit'}</span></div></div>
                                                                     <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Delivery SLA</p><div className="space-y-3"><div><p className="text-[9px] font-bold text-gray-400">Order Date</p><p className={`text-sm font-bold text-gray-900`}>{so.orderDate || 'TBD'}</p></div><div><p className="text-[9px] font-bold text-gray-400">SLA Urgency</p><p className={`text-sm ${getSLAUrgency(so.orderDate, so.status).colorClass}`}>{getSLAUrgency(so.orderDate, so.status).text || '-'}</p></div></div></div>
                                                                     <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
-                                                                </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400">Update box count in the backend to enable shipping.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
+                                                                </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400 mb-2">Update box count in the backend to enable shipping.</p><button onClick={(e: any) => { e.stopPropagation(); handleFetchEasyEcomBoxData(so); }} disabled={isFetchingEasyEcomBoxData === so.id} className="mt-2 py-2 px-6 bg-red-600 text-white font-bold rounded-lg shadow-md hover:bg-red-700 transition-all flex items-center justify-center gap-2 text-xs">{isFetchingEasyEcomBoxData === so.id ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CloudDownloadIcon className="h-4 w-4" />}{isFetchingEasyEcomBoxData === so.id ? 'Fetching...' : 'Fetch Box Data via AI'}</button><p className="text-[10px] text-red-400 mt-2">Pull packing details from EasyEcom portal automatically.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>
                                                             {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || so.channel.toLowerCase().includes('flipkart')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
                                                                 <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
@@ -4279,6 +4310,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onClose={() => setSelfShipOrderData(null)}
                     addNotification={addNotification}
                     onComplete={() => onSync()}
+                />
+            )}
+            {zeptoASNModalSo.isOpen && zeptoASNModalSo.so && (
+                <ZeptoASNModal
+                    so={zeptoASNModalSo.so}
+                    onClose={() => setZeptoASNModalSo({ isOpen: false, so: null })}
+                    addNotification={addNotification}
+                    onComplete={() => onSync()}
+                    currentUser={currentUser || null}
                 />
             )}
             <ActionConfirmationModal 

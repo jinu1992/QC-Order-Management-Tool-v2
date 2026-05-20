@@ -584,6 +584,17 @@ export const selfShipOrder = async (data: {
     return await postToScript({ action: 'SELF_SHIP_ORDER', ...data });
 };
 
+export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ status: string, message?: string }> => {
+    const response = await fetch('/api/trigger-easyecom-fetch', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ eeReferenceCode })
+    });
+    return response.json();
+};
+
 export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[]) => {
     const itemsToSend = (po.items || [])
         .filter(item => selectedArticleCodes.includes(item.articleCode))

@@ -1,0 +1,7 @@
+node_modules\
+.git\
+.vercel\
+dist\
+QC-Order-Management-Tool-v2 (Github)\
+exclude.txt
+package-lock.json
