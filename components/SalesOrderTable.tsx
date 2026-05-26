@@ -2,7 +2,6 @@
 import React, { useState, Fragment, useMemo, FC, useRef, useEffect } from 'react';
 import { type PurchaseOrder, type InventoryItem, POItem, GroupedSalesOrder } from '../types';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
-import ZeptoASNModal from './ZeptoASNModal';
 import {
     DotsVerticalIcon,
     CloudDownloadIcon,
@@ -1671,7 +1670,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [amazonBoxModal, setAmazonBoxModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null, data?: any[] }>({ isOpen: false, so: null });
     const [isFetchingBoxDetails, setIsFetchingBoxDetails] = useState<string | null>(null);
     const [isFetchingEasyEcomBoxData, setIsFetchingEasyEcomBoxData] = useState<string | null>(null);
-    const [zeptoASNModalSo, setZeptoASNModalSo] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [activeAppointmentPass, setActiveAppointmentPass] = useState<GroupedSalesOrder | null>(null);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [isUpdatingRTO, setIsUpdatingRTO] = useState<string | null>(null);
@@ -2587,6 +2585,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             
             const carrierLower = (so.carrier || '').toLowerCase();
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
+
+            if (!carrierLower.includes('(np)')) return false;
+            if (so.rtoStatus && so.rtoStatus.trim() !== '') return false;
 
             const latestStatusLower = (so.latestStatus || '').toLowerCase();
             if (trackingStatusLower.includes('return') || latestStatusLower.includes('return') || 
@@ -4079,7 +4080,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     )}
                                                                     {so.channel.toLowerCase().includes('zepto') && so.status === 'Create ASN' && (
                                                                         <button
-                                                                            onClick={(e: any) => { e.stopPropagation(); setZeptoASNModalSo({ isOpen: true, so }); }}
+                                                                            onClick={(e: any) => { e.stopPropagation(); setZeptoASNHelper({ isOpen: true, so }); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-purple-700 transition-all active:scale-95"
                                                                         >
                                                                             <GlobeIcon className="h-4 w-4" /> Update ASN
@@ -4309,15 +4310,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onClose={() => setSelfShipOrderData(null)}
                     addNotification={addNotification}
                     onComplete={() => onSync()}
-                />
-            )}
-            {zeptoASNModalSo.isOpen && zeptoASNModalSo.so && (
-                <ZeptoASNModal
-                    so={zeptoASNModalSo.so}
-                    onClose={() => setZeptoASNModalSo({ isOpen: false, so: null })}
-                    addNotification={addNotification}
-                    onComplete={() => onSync()}
-                    currentUser={currentUser || null}
                 />
             )}
             <ActionConfirmationModal 

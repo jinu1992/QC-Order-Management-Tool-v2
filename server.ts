@@ -4,6 +4,7 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { spawn } from "child_process";
 
 dotenv.config();
 
@@ -161,6 +162,40 @@ async function startServer() {
       console.error("Error updating sheet:", error);
       res.status(500).json({ error: error.message || "Failed to update sheet" });
     }
+  });
+
+  app.post("/api/trigger-easyecom-fetch", async (req: Request, res: Response) => {
+    const { eeReferenceCode } = req.body;
+    
+    if (!eeReferenceCode) {
+      return res.status(400).json({ status: 'error', message: 'No reference code provided.' });
+    }
+
+    const scriptPath = path.resolve(__dirname, 'scripts/fetchEasyEcomReport.spec.ts');
+    console.log(`Triggering EasyEcom fetch for: ${eeReferenceCode}`);
+
+    const child = spawn(/^win/.test(process.platform) ? 'npx.cmd' : 'npx', [
+      'playwright', 'test', scriptPath
+    ], {
+      env: { ...process.env, TARGET_REF_CODE: eeReferenceCode },
+      cwd: __dirname
+    });
+
+    child.stdout.on('data', Buffer.prototype.toString);
+    child.stderr.on('data', Buffer.prototype.toString);
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        res.json({ status: 'success', message: 'EasyEcom data fetched and uploaded successfully.' });
+      } else {
+        res.status(500).json({ status: 'error', message: `Playwright script failed with code ${code}` });
+      }
+    });
+
+    child.on('error', (err) => {
+      console.error("Failed to spawn Playwright child process:", err);
+      res.status(500).json({ status: 'error', message: 'Failed to start the fetch process.' });
+    });
   });
 
   // Vite middleware for development
