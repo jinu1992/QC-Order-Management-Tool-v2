@@ -585,14 +585,25 @@ export const selfShipOrder = async (data: {
 };
 
 export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ status: string, message?: string }> => {
-    const response = await fetch('/api/trigger-easyecom-fetch', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ eeReferenceCode })
-    });
-    return response.json();
+    try {
+        const response = await fetch('/api/trigger-easyecom-fetch', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ eeReferenceCode })
+        });
+        const text = await response.text();
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            console.error("Non-JSON response from /api/trigger-easyecom-fetch:", text);
+            return { status: 'error', message: `Server returned non-JSON response (Status: ${response.status})` };
+        }
+    } catch (err: any) {
+        console.error("Network error in triggerEasyEcomFetch:", err);
+        throw err;
+    }
 };
 
 export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[]) => {
