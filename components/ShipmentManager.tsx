@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useCallback } from 'react';
-import { PurchaseOrder, POItem, User, GroupedSalesOrder } from '../types';
-import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon } from './icons/Icons';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { PurchaseOrder, POItem, User, GroupedSalesOrder, POStatus } from '../types';
+import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon, PaperclipIcon, ExternalLinkIcon, RefreshIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
+import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile } from '../services/api';
 
 // GroupedSalesOrder is now imported from ../types
 
@@ -41,9 +42,301 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
-    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
+    const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered' | 'GRN_PO_Upload'>('All');
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [apptUpdateModal, setApptUpdateModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+
+    // Local files and upload state
+    const [localFiles, setLocalFiles] = useState<{ name: string, path: string, folder: string }[]>([]);
+    const [isScanning, setIsScanning] = useState(false);
+    const [uploadingPoId, setUploadingPoId] = useState<string | null>(null);
+    const [uploadingGrnId, setUploadingGrnId] = useState<string | null>(null);
+    const [savingGrnNumberId, setSavingGrnNumberId] = useState<string | null>(null);
+    const [grnNumberInputs, setGrnNumberInputs] = useState<Record<string, string>>({});
+    const [autoUploadingId, setAutoUploadingId] = useState<string | null>(null);
+    const [isBatchUploading, setIsBatchUploading] = useState(false);
+
+    // Scan local downloads folder
+    const scanLocalFiles = async () => {
+        setIsScanning(true);
+        try {
+            const res = await fetchLocalDownloads();
+            if (res.status === 'success' && res.data) {
+                setLocalFiles(res.data);
+                addNotification?.(`Scanned local downloads folder. Found ${res.data.length} files.`, 'success');
+            } else {
+                addNotification?.('Failed to scan local downloads folder.', 'error');
+            }
+        } catch (e: any) {
+            addNotification?.(e.message || 'Error scanning local downloads.', 'error');
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
+    // Trigger scanning when activeTab is GRN_PO_Upload
+    useEffect(() => {
+        if (activeTab === 'GRN_PO_Upload') {
+            scanLocalFiles();
+        }
+    }, [activeTab]);
+
+    // Local files auto-detection match logic
+    const findLocalMatches = useCallback((poReferenceStr: string) => {
+        const poRefs = String(poReferenceStr || '').split(',').map(s => s.trim()).filter(Boolean);
+        let poMatch: typeof localFiles[0] | undefined;
+        let grnMatch: typeof localFiles[0] | undefined;
+
+        for (const poNum of poRefs) {
+            if (!poNum) continue;
+            const poNumLower = poNum.toLowerCase();
+
+            for (const file of localFiles) {
+                const fileNameLower = file.name.toLowerCase();
+                if (fileNameLower.includes(poNumLower)) {
+                    const isInPoFolder = file.folder.toLowerCase() === 'po pdfs';
+                    const isInInvoicesFolder = file.folder.toLowerCase() === 'invoices';
+                    const hasPoInName = fileNameLower.includes('po');
+                    const hasGrnInName = fileNameLower.includes('grn') || fileNameLower.includes('pod') || fileNameLower.includes('invoice') || fileNameLower.includes('inv') || fileNameLower.includes('receipt');
+
+                    // Classification heuristic
+                    if (isInPoFolder || (hasPoInName && !hasGrnInName)) {
+                        if (!poMatch) poMatch = file;
+                    } else if (isInInvoicesFolder || hasGrnInName) {
+                        if (!grnMatch) grnMatch = file;
+                    } else {
+                        if (!poMatch) poMatch = file;
+                    }
+                }
+            }
+        }
+
+        return { poMatch, grnMatch };
+    }, [localFiles]);
+
+    // Auto upload a local matched file
+    const handleAutoUpload = async (
+        poReferenceStr: string,
+        soId: string,
+        docType: 'PO' | 'GRN',
+        localPath: string,
+        localName: string
+    ) => {
+        const poRefs = String(poReferenceStr || '').split(',').map(s => s.trim()).filter(Boolean);
+        const poNumber = poRefs[0] || poReferenceStr;
+
+        if (docType === 'PO') setUploadingPoId(soId);
+        else setUploadingGrnId(soId);
+
+        try {
+            // 1. Read local file as base64
+            const fileDataRes = await readLocalFile(localPath);
+            if (fileDataRes.status !== 'success' || !fileDataRes.fileData) {
+                addNotification?.(`Failed to read local file: ${localName}`, 'error');
+                return null;
+            }
+
+            // 2. Upload file to Google Drive
+            const uploadType = docType === 'PO' ? 'po-pdf' : 'pod-image';
+            const email = currentUser?.email || 'System';
+            const uploadRes = await logFileUpload(uploadType, email, fileDataRes.fileData, localName);
+
+            if (uploadRes.status === 'success' && uploadRes.fileUrl) {
+                const fileUrl = uploadRes.fileUrl;
+
+                // 3. Save link to spreadsheet PO Database
+                const updateRes = await updateShipmentDocuments({
+                    poNumber,
+                    poPdfUrl: docType === 'PO' ? fileUrl : undefined,
+                    podImageUrl: docType === 'GRN' ? fileUrl : undefined
+                });
+
+                if (updateRes.status === 'success') {
+                    if (setPurchaseOrders) {
+                        setPurchaseOrders(prev => prev.map(p => {
+                            if (p.poNumber === poNumber) {
+                                return {
+                                    ...p,
+                                    poPdfUrl: docType === 'PO' ? fileUrl : p.poPdfUrl,
+                                    podImageUrl: docType === 'GRN' ? fileUrl : p.podImageUrl,
+                                    status: docType === 'GRN' ? POStatus.GRNUpdated : p.status
+                                };
+                            }
+                            return p;
+                        }));
+                    }
+                    addNotification?.(`Auto-uploaded local file ${localName} successfully as ${docType} file.`, 'success');
+                    return fileUrl;
+                } else {
+                    addNotification?.(updateRes.message || 'Failed to update sheet database.', 'error');
+                }
+            } else {
+                addNotification?.(uploadRes.message || 'Failed to upload file to storage.', 'error');
+            }
+        } catch (err: any) {
+            addNotification?.(err.message || 'Error during auto-upload.', 'error');
+        } finally {
+            if (docType === 'PO') setUploadingPoId(null);
+            else setUploadingGrnId(null);
+        }
+        return null;
+    };
+
+    // Batch upload all matches
+    const handleBatchAutoUpload = async () => {
+        setIsBatchUploading(true);
+        let uploadCount = 0;
+
+        try {
+            for (const so of trackingOrders) {
+                const { poMatch, grnMatch } = findLocalMatches(so.poReference);
+                const poRefs = String(so.poReference || '').split(',').map(s => s.trim()).filter(Boolean);
+                const poNumber = poRefs[0];
+                if (!poNumber) continue;
+
+                if (!so.poPdfUrl && poMatch) {
+                    setAutoUploadingId(so.id);
+                    const uploaded = await handleAutoUpload(so.poReference, so.id, 'PO', poMatch.path, poMatch.name);
+                    if (uploaded) uploadCount++;
+                }
+
+                if (!so.podImageUrl && grnMatch) {
+                    setAutoUploadingId(so.id);
+                    const uploaded = await handleAutoUpload(so.poReference, so.id, 'GRN', grnMatch.path, grnMatch.name);
+                    if (uploaded) uploadCount++;
+                }
+            }
+
+            if (uploadCount > 0) {
+                addNotification?.(`Batch auto-upload complete! Successfully uploaded ${uploadCount} documents.`, 'success');
+            } else {
+                addNotification?.('No matching files found to auto-upload.', 'info');
+            }
+        } catch (e: any) {
+            addNotification?.(e.message || 'Error during batch auto-upload.', 'error');
+        } finally {
+            setAutoUploadingId(null);
+            setIsBatchUploading(false);
+        }
+    };
+
+    // Manual upload fallback logic
+    const handleManualDocumentUpload = async (
+        file: File,
+        poReferenceStr: string,
+        soId: string,
+        docType: 'PO' | 'GRN'
+    ) => {
+        const poRefs = String(poReferenceStr || '').split(',').map(s => s.trim()).filter(Boolean);
+        const poNumber = poRefs[0] || poReferenceStr;
+
+        if (docType === 'PO') setUploadingPoId(soId);
+        else setUploadingGrnId(soId);
+
+        try {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const base64Data = e.target?.result?.toString().split(',')[1];
+                    if (!base64Data) {
+                        addNotification?.('Failed to read file.', 'error');
+                        return;
+                    }
+
+                    const uploadType = docType === 'PO' ? 'po-pdf' : 'pod-image';
+                    const email = currentUser?.email || 'System';
+                    const uploadRes = await logFileUpload(uploadType, email, base64Data, file.name);
+
+                    if (uploadRes.status === 'success' && uploadRes.fileUrl) {
+                        const fileUrl = uploadRes.fileUrl;
+
+                        const updateRes = await updateShipmentDocuments({
+                            poNumber,
+                            poPdfUrl: docType === 'PO' ? fileUrl : undefined,
+                            podImageUrl: docType === 'GRN' ? fileUrl : undefined
+                        });
+
+                        if (updateRes.status === 'success') {
+                            if (setPurchaseOrders) {
+                                setPurchaseOrders(prev => prev.map(p => {
+                                    if (p.poNumber === poNumber) {
+                                        return {
+                                            ...p,
+                                            poPdfUrl: docType === 'PO' ? fileUrl : p.poPdfUrl,
+                                            podImageUrl: docType === 'GRN' ? fileUrl : p.podImageUrl,
+                                            status: docType === 'GRN' ? POStatus.GRNUpdated : p.status
+                                        };
+                                    }
+                                    return p;
+                                }));
+                            }
+                            addNotification?.(`${docType} file uploaded manually.`, 'success');
+                        } else {
+                            addNotification?.(updateRes.message || 'Failed to update sheet database.', 'error');
+                        }
+                    } else {
+                        addNotification?.(uploadRes.message || 'Failed to upload file.', 'error');
+                    }
+                } catch (err: any) {
+                    addNotification?.(err.message || 'Error during manual upload.', 'error');
+                } finally {
+                    if (docType === 'PO') setUploadingPoId(null);
+                    else setUploadingGrnId(null);
+                }
+            };
+            reader.readAsDataURL(file);
+        } catch (e) {
+            addNotification?.('Failed to read file.', 'error');
+            if (docType === 'PO') setUploadingPoId(null);
+            else setUploadingGrnId(null);
+        }
+    };
+
+    // Save GRN Number and GRN Date (today)
+    const handleSaveGrnNumber = async (poReferenceStr: string, soId: string) => {
+        const poRefs = String(poReferenceStr || '').split(',').map(s => s.trim()).filter(Boolean);
+        const poNumber = poRefs[0] || poReferenceStr;
+        const inputVal = grnNumberInputs[soId];
+        if (inputVal === undefined) return;
+
+        setSavingGrnNumberId(soId);
+        try {
+            const todayStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+            const res = await updateShipmentDocuments({
+                poNumber,
+                grnNumber: inputVal,
+                grnDate: todayStr
+            });
+
+            if (res.status === 'success') {
+                addNotification?.(`GRN number updated successfully for PO ${poNumber}.`, 'success');
+                if (setPurchaseOrders) {
+                    setPurchaseOrders(prev => prev.map(p => {
+                        if (p.poNumber === poNumber) {
+                            return {
+                                ...p,
+                                grnNumber: inputVal,
+                                grnDate: todayStr,
+                                status: POStatus.GRNUpdated
+                            };
+                        }
+                        return p;
+                    }));
+                }
+                setGrnNumberInputs(prev => {
+                    const next = { ...prev };
+                    delete next[soId];
+                    return next;
+                });
+            } else {
+                addNotification?.(res.message || 'Failed to update GRN number.', 'error');
+            }
+        } catch (err: any) {
+            addNotification?.(err.message || 'Error updating GRN number.', 'error');
+        } finally {
+            setSavingGrnNumberId(null);
+        }
+    };
 
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
@@ -221,7 +514,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         consignmentProducts: po.consignmentProducts,
                         consignmentValue: po.consignmentValue,
                         pickupDate: item.pickupDate || po.pickupDate,
-                        orderNotes: po.orderNotes || ''
+                        orderNotes: po.orderNotes || '',
+                        podImageUrl: po.podImageUrl,
+                        grnNumber: po.grnNumber,
+                        grnDate: po.grnDate
                     };
                 } else {
                     const curPo = String(po.id || '');
@@ -258,6 +554,9 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     if (!groups[refCode].qrCodeUrl) groups[refCode].qrCodeUrl = po.qrCodeUrl;
                     if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
+                    if (!groups[refCode].podImageUrl && po.podImageUrl) groups[refCode].podImageUrl = po.podImageUrl;
+                    if (!groups[refCode].grnNumber && po.grnNumber) groups[refCode].grnNumber = po.grnNumber;
+                    if (!groups[refCode].grnDate && po.grnDate) groups[refCode].grnDate = po.grnDate;
                     if (po.orderNotes && !groups[refCode].orderNotes?.includes(po.orderNotes)) {
                         groups[refCode].orderNotes = groups[refCode].orderNotes ? `${groups[refCode].orderNotes} ## ${po.orderNotes}` : po.orderNotes;
                     }
@@ -337,6 +636,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             if (activeTab === 'RTO') {
                 return so.status === 'RTO Initiated' || so.status === 'Returned';
             } else if (activeTab === 'Delivered') {
+                return isActuallyDelivered;
+            } else if (activeTab === 'GRN_PO_Upload') {
                 return isActuallyDelivered;
             } else if (activeTab === 'Today') {
                 return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
@@ -533,6 +834,13 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         Delivered
                     </button>
                     <button
+                        className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'GRN_PO_Upload' ? 'border-teal-500 text-teal-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                        onClick={() => setActiveTab('GRN_PO_Upload')}
+                    >
+                        GRN / PO Upload
+                        <span className="bg-teal-100 text-teal-600 py-0.5 px-2 rounded-full text-xs font-bold">Auto-Sync</span>
+                    </button>
+                    <button
                         className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'RTO' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
                         onClick={() => setActiveTab('RTO')}
                     >
@@ -594,192 +902,447 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
             {/* Tracking Table */}
             <div className="flex-1 overflow-auto p-6">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200 shrink-0">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[140px]">Channel &amp; Store</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[150px]">PO Details</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Quantities</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[220px]">Tracking Details</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[180px]">Status &amp; EDD</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[200px]">Appointment</th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
-                                const isToday = isSameDay(so.appointmentDate, todayDate);
-                                const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
-                                // const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate); // Redundant declaration removed
+                {activeTab === 'GRN_PO_Upload' ? (
+                    <div className="flex flex-col gap-4">
+                        {/* Scanning & batch controls */}
+                        <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
+                                    <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-teal-900 text-sm">Playwright Bot Directory Scan</h3>
+                                    <p className="text-xs text-teal-700">
+                                        {isScanning ? 'Scanning local downloads folder...' : `Scanned local directory: found ${localFiles.length} files.`}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={scanLocalFiles}
+                                    disabled={isScanning || isBatchUploading}
+                                    className="px-4 py-2 bg-white hover:bg-gray-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                    <RefreshIcon className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                                    Scan Files
+                                </button>
+                                <button
+                                    onClick={handleBatchAutoUpload}
+                                    disabled={isScanning || isBatchUploading || trackingOrders.length === 0}
+                                    className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-teal-100 flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {isBatchUploading ? (
+                                        <>
+                                            <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                            Uploading Match...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckCircleIcon className="w-3.5 h-3.5" />
+                                            Scan &amp; Auto-Upload All
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
 
-                                const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-                                const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
-
-                                const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
-                                const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
-
-                                let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
-                                if (isToday && !isActuallyDelivered) {
-                                    rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500 cursor-pointer";
-                                } else if (isTomorrow && !isActuallyDelivered) {
-                                    rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500 cursor-pointer";
-                                } else if (isMissed && !isActuallyDelivered) {
-                                    rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer";
-                                } else if (isActuallyDelivered) {
-                                    rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-pointer";
-                                }
-
-                                const isExpanded = expandedRowId === so.id;
-                                const channelLower = (so.channel || '').toLowerCase();
-
-                                return (
-                                    <React.Fragment key={so.id}>
-                                    <tr 
-                                        onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
-                                        className={rowClass}
-                                    >
-                                        {/* Channel & Store */}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-2">
-                                                {isExpanded ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
-                                                <div>
-                                                    <div className="font-semibold text-gray-900">{so.channel}</div>
-                                                    <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
-                                                </div>
-                                            </div>
-                                        </td>
-
-                                        {/* PO Details */}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium text-gray-900">{so.poReference}</span>
-                                                {so.orderNotes && <MessageIcon className="h-4 w-4 text-orange-500 flex-shrink-0" title="Has Order Notes" />}
-                                            </div>
-                                            <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
-                                            {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
-                                        </td>
-
-                                        {/* Quantities */}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxCount || '-'}</span></div>
-                                            <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.qty || '-'}</span></div>
-                                        </td>
-
-                                        {/* Tracking Details */}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex flex-col gap-0.5">
-                                                {so.awb ? (
-                                                    <>
-                                                        <div className="text-sm text-gray-900 flex items-center gap-1.5">
-                                                            <span className="font-semibold">AWB:</span>
-                                                            {so.trackingUrl ? (
-                                                                <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline">
-                                                                    {so.awb}
-                                                                </a>
-                                                            ) : (
-                                                                <span>{so.awb}</span>
-                                                            )}
-                                                        </div>
-                                                        <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {so.carrier || '-'}</div>
-                                                        {so.currentLocation && <div className="text-xs text-gray-500 truncate mt-1" title={so.currentLocation}>📍 {so.currentLocation}</div>}
-                                                    </>
-                                                ) : (
-                                                    <span className="text-sm text-gray-400 italic">No AWB Extracted</span>
-                                                )}
-                                            </div>
-                                        </td>
-
-                                        {/* Status & EDD */}
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="mb-1.5 flex flex-col gap-1">
-                                                {getStatusBadge(so)}
-                                                {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
-                                                {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
-                                            </div>
-                                            <div className="text-xs text-gray-700 mt-1 pb-1">
-                                                <span className="font-bold border-t border-gray-200 pt-2 mt-1 block w-full">Order Date: <span className="font-medium text-gray-600">{so.orderDate || '-'}</span></span>
-                                            </div>
-                                        </td>
-
-                                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
-                                            {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
-                                            {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Passed Deadline</div>}
-
-                                            <div className="font-medium text-gray-900 mt-0.5">
-                                                {so.appointmentDate ? (
-                                                    <div className="flex flex-col">
-                                                        <span>{formatSafeDate(so.appointmentDate) || so.appointmentDate}</span>
-                                                        <span className="text-xs text-gray-600 font-normal">{formatSafeTime(so.appointmentTime)}</span>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-gray-400 italic font-normal">Pending Appt</span>
-                                                )}
-                                            </div>
-
-                                            {so.appointmentId && (
-                                                <div className="flex flex-col gap-1 mt-1.5">
-                                                    <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded inline-block font-medium w-fit border border-indigo-100">
-                                                        ID: {so.appointmentId}
-                                                    </div>
-                                                    {(channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
-                                                            className="mt-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[10px] font-bold hover:bg-indigo-100 transition-colors flex items-center gap-1 w-fit"
-                                                        >
-                                                            Update Details
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                            {!so.appointmentId && (channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
-                                                    className="mt-2 px-2 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded border border-indigo-100 hover:bg-indigo-100 transition-all active:scale-95 flex items-center gap-1"
-                                                >
-                                                    <PlusIcon className="h-3 w-3" /> Update Appt
-                                                </button>
-                                            )}
-                                        </td>
+                        {/* Document Upload Table */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <table className="min-w-full divide-y divide-gray-200 shrink-0">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[150px]">PO &amp; Channel Details</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[180px]">Delivery Info</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[200px]">PO File (Upload)</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[200px]">GRN File (Upload)</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[220px]">GRN Number &amp; Action</th>
                                     </tr>
-                                    {isExpanded && (
-                                        <tr className="bg-gray-50/50">
-                                            <td colSpan={6} className="px-6 py-4">
-                                                <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
-                                                    <OrderNotesTimeline 
-                                                        poNumber={so.poReference}
-                                                        notesString={so.orderNotes}
-                                                        currentUser={currentUser || null}
-                                                        onNoteAdded={() => {}}
-                                                        onLocalNoteUpdate={(newNotes: string) => {
-                                                            if (setPurchaseOrders) {
-                                                                setPurchaseOrders(prev => prev.map(p => {
-                                                                    if (so.poReference.includes(String(p.id))) {
-                                                                        return { ...p, orderNotes: newNotes };
-                                                                    }
-                                                                    return p;
-                                                                }));
-                                                            }
-                                                        }}
-                                                    />
-                                                </div>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
+                                        const { poMatch, grnMatch } = findLocalMatches(so.poReference);
+                                        const isAutoUploading = autoUploadingId === so.id;
+
+                                        return (
+                                            <tr key={so.id} className="hover:bg-gray-50/50 transition-colors">
+                                                {/* PO & Channel Details */}
+                                                <td className="px-6 py-4">
+                                                    <div className="font-semibold text-gray-900">{so.channel}</div>
+                                                    <div className="text-xs text-gray-500">{so.storeCode || '-'}</div>
+                                                    <div className="text-xs text-indigo-600 font-bold mt-1.5" title={so.poReference}>PO: {so.poReference}</div>
+                                                </td>
+
+                                                {/* Delivery Info */}
+                                                <td className="px-6 py-4">
+                                                    <div className="text-xs text-gray-900"><span className="font-semibold text-gray-600">AWB:</span> {so.awb || '-'}</div>
+                                                    <div className="text-xs text-gray-500 mt-0.5"><span className="font-semibold text-gray-600">Carrier:</span> {so.carrier || '-'}</div>
+                                                    <div className="text-[11px] text-green-600 font-bold mt-1">Delivered: {formatSafeDate(so.deliveredDate) || '-'}</div>
+                                                </td>
+
+                                                {/* PO File Upload */}
+                                                <td className="px-6 py-4">
+                                                    {so.poPdfUrl ? (
+                                                        <div className="flex flex-col gap-1.5">
+                                                            <a href={so.poPdfUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-900 font-bold underline">
+                                                                <ExternalLinkIcon className="w-3.5 h-3.5" />
+                                                                View PO File
+                                                            </a>
+                                                            <label className="text-[10px] text-gray-500 cursor-pointer hover:text-indigo-600 font-semibold underline flex items-center gap-0.5">
+                                                                <PaperclipIcon className="w-3 h-3" />
+                                                                Re-upload PO
+                                                                <input
+                                                                    type="file"
+                                                                    accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                    className="hidden"
+                                                                    onChange={(e) => {
+                                                                        const file = e.target.files?.[0];
+                                                                        if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'PO');
+                                                                    }}
+                                                                    disabled={uploadingPoId === so.id}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col gap-2">
+                                                            {poMatch ? (
+                                                                <button
+                                                                    onClick={() => handleAutoUpload(so.poReference, so.id, 'PO', poMatch.path, poMatch.name)}
+                                                                    disabled={uploadingPoId === so.id || isAutoUploading}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg text-xs font-bold border border-teal-200 transition-colors w-fit shadow-sm animate-pulse"
+                                                                    title={`Auto-detected: ${poMatch.name}`}
+                                                                >
+                                                                    {uploadingPoId === so.id ? (
+                                                                        <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                                    ) : (
+                                                                        <CheckCircleIcon className="w-3.5 h-3.5 text-teal-600" />
+                                                                    )}
+                                                                    Auto-Upload PO
+                                                                </button>
+                                                            ) : null}
+                                                            <div>
+                                                                {uploadingPoId === so.id && !poMatch ? (
+                                                                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                                                                        <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                                        Uploading...
+                                                                    </div>
+                                                                ) : (
+                                                                    <label className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-indigo-200 transition-colors">
+                                                                        <PaperclipIcon className="w-3.5 h-3.5" />
+                                                                        Upload PO File
+                                                                        <input
+                                                                            type="file"
+                                                                            accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                            className="hidden"
+                                                                            onChange={(e) => {
+                                                                                const file = e.target.files?.[0];
+                                                                                if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'PO');
+                                                                            }}
+                                                                        />
+                                                                    </label>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </td>
+
+                                                {/* GRN File Upload */}
+                                                <td className="px-6 py-4">
+                                                    {so.podImageUrl ? (
+                                                        <div className="flex flex-col gap-1.5">
+                                                            <a href={so.podImageUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-green-600 hover:text-green-900 font-bold underline animate-fade-in">
+                                                                <ExternalLinkIcon className="w-3.5 h-3.5" />
+                                                                View GRN File
+                                                            </a>
+                                                            <label className="text-[10px] text-gray-500 cursor-pointer hover:text-green-600 font-semibold underline flex items-center gap-0.5">
+                                                                <PaperclipIcon className="w-3 h-3" />
+                                                                Re-upload GRN
+                                                                <input
+                                                                    type="file"
+                                                                    accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                    className="hidden"
+                                                                    onChange={(e) => {
+                                                                        const file = e.target.files?.[0];
+                                                                        if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'GRN');
+                                                                    }}
+                                                                    disabled={uploadingGrnId === so.id}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col gap-2">
+                                                            {grnMatch ? (
+                                                                <button
+                                                                    onClick={() => handleAutoUpload(so.poReference, so.id, 'GRN', grnMatch.path, grnMatch.name)}
+                                                                    disabled={uploadingGrnId === so.id || isAutoUploading}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg text-xs font-bold border border-teal-200 transition-colors w-fit shadow-sm animate-pulse"
+                                                                    title={`Auto-detected: ${grnMatch.name}`}
+                                                                >
+                                                                    {uploadingGrnId === so.id ? (
+                                                                        <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                                    ) : (
+                                                                        <CheckCircleIcon className="w-3.5 h-3.5 text-teal-600" />
+                                                                    )}
+                                                                    Auto-Upload GRN
+                                                                </button>
+                                                            ) : null}
+                                                            <div>
+                                                                {uploadingGrnId === so.id && !grnMatch ? (
+                                                                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                                                                        <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                                        Uploading...
+                                                                    </div>
+                                                                ) : (
+                                                                    <label className="flex items-center gap-1 px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-green-200 transition-colors">
+                                                                        <PaperclipIcon className="w-3.5 h-3.5" />
+                                                                        Upload GRN File
+                                                                        <input
+                                                                            type="file"
+                                                                            accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                            className="hidden"
+                                                                            onChange={(e) => {
+                                                                                const file = e.target.files?.[0];
+                                                                                if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'GRN');
+                                                                            }}
+                                                                        />
+                                                                    </label>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </td>
+
+                                                {/* GRN Number & Action */}
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="text"
+                                                            placeholder="GRN Number"
+                                                            className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs w-36 focus:ring-teal-500 focus:border-teal-500 outline-none"
+                                                            value={grnNumberInputs[so.id] !== undefined ? grnNumberInputs[so.id] : (so.grnNumber || '')}
+                                                            onChange={(e) => setGrnNumberInputs(prev => ({ ...prev, [so.id]: e.target.value }))}
+                                                        />
+                                                        {(grnNumberInputs[so.id] !== undefined && grnNumberInputs[so.id] !== (so.grnNumber || '')) && (
+                                                            <button
+                                                                onClick={() => handleSaveGrnNumber(so.poReference, so.id)}
+                                                                disabled={savingGrnNumberId === so.id}
+                                                                className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition-colors"
+                                                            >
+                                                                {savingGrnNumberId === so.id ? (
+                                                                    <RefreshIcon className="w-3 h-3 animate-spin" />
+                                                                ) : 'Save'}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    {so.grnNumber && (
+                                                        <div className="text-[10px] text-gray-500 mt-1.5 flex items-center gap-1">
+                                                            <CheckCircleIcon className="w-3 h-3 text-green-500 flex-shrink-0" />
+                                                            <span className="font-medium truncate max-w-[120px]">GRN: {so.grnNumber}</span>
+                                                            {so.grnDate && <span className="italic flex-shrink-0">({so.grnDate})</span>}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    }) : (
+                                        <tr>
+                                            <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                                                <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
+                                                <p className="text-lg font-medium">No delivered shipments found</p>
+                                                <p className="text-sm mt-1">Make sure you have shipments marked as Delivered.</p>
                                             </td>
                                         </tr>
                                     )}
-                                    </React.Fragment>
-                                )
-                            }) : (
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                        <table className="min-w-full divide-y divide-gray-200 shrink-0">
+                            <thead className="bg-gray-50">
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                                        <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-                                        <p className="text-lg font-medium">No shipments matching criteria</p>
-                                        <p className="text-sm mt-1">Adjust filters or select another tab.</p>
-                                    </td>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[140px]">Channel &amp; Store</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[150px]">PO Details</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Quantities</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[220px]">Tracking Details</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[180px]">Status &amp; EDD</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[200px]">Appointment</th>
                                 </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
+                                    const isToday = isSameDay(so.appointmentDate, todayDate);
+                                    const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
+                                    // const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate); // Redundant declaration removed
+ 
+                                    const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+                                    const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+ 
+                                    const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
+                                    const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
+ 
+                                    let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
+                                    if (isToday && !isActuallyDelivered) {
+                                        rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500 cursor-pointer";
+                                    } else if (isTomorrow && !isActuallyDelivered) {
+                                        rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500 cursor-pointer";
+                                    } else if (isMissed && !isActuallyDelivered) {
+                                        rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer";
+                                    } else if (isActuallyDelivered) {
+                                        rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-pointer";
+                                    }
+ 
+                                    const isExpanded = expandedRowId === so.id;
+                                    const channelLower = (so.channel || '').toLowerCase();
+ 
+                                    return (
+                                        <React.Fragment key={so.id}>
+                                        <tr 
+                                            onClick={() => setExpandedRowId(isExpanded ? null : so.id)}
+                                            className={rowClass}
+                                        >
+                                            {/* Channel & Store */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center gap-2">
+                                                    {isExpanded ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
+                                                    <div>
+                                                        <div className="font-semibold text-gray-900">{so.channel}</div>
+                                                        <div className="text-sm text-gray-500">{so.storeCode || '-'}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+ 
+                                            {/* PO Details */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-medium text-gray-900">{so.poReference}</span>
+                                                    {so.orderNotes && <MessageIcon className="h-4 w-4 text-orange-500 flex-shrink-0" title="Has Order Notes" />}
+                                                </div>
+                                                <div className="text-xs text-gray-500">PO Date: {so.orderDate || '-'}</div>
+                                                {so.poExpiryDate && <div className="text-xs text-red-500 mt-0.5">Exp: {so.poExpiryDate}</div>}
+                                            </td>
+ 
+                                            {/* Quantities */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{so.boxCount || '-'}</span></div>
+                                                <div className="text-sm text-gray-500">Shipped Qty: <span className="font-medium">{so.qty || '-'}</span></div>
+                                            </td>
+ 
+                                            {/* Tracking Details */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex flex-col gap-0.5">
+                                                    {so.awb ? (
+                                                        <>
+                                                            <div className="text-sm text-gray-900 flex items-center gap-1.5">
+                                                                <span className="font-semibold">AWB:</span>
+                                                                {so.trackingUrl ? (
+                                                                    <a href={so.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 font-medium underline">
+                                                                        {so.awb}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{so.awb}</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {so.carrier || '-'}</div>
+                                                            {so.currentLocation && <div className="text-xs text-gray-500 truncate mt-1" title={so.currentLocation}>📍 {so.currentLocation}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-sm text-gray-400 italic">No AWB Extracted</span>
+                                                    )}
+                                                </div>
+                                            </td>
+ 
+                                            {/* Status & EDD */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="mb-1.5 flex flex-col gap-1">
+                                                    {getStatusBadge(so)}
+                                                    {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
+                                                    {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
+                                                </div>
+                                                <div className="text-xs text-gray-700 mt-1 pb-1">
+                                                    <span className="font-bold border-t border-gray-200 pt-2 mt-1 block w-full">Order Date: <span className="font-medium text-gray-600">{so.orderDate || '-'}</span></span>
+                                                </div>
+                                            </td>
+ 
+                                            {/* Appointment */}
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {isToday && !isActuallyDelivered && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
+                                                {isTomorrow && !isActuallyDelivered && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
+                                                {isMissed && !isActuallyDelivered && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Missed</div>}
+                                                <div className="font-medium text-gray-900 mt-0.5">
+                                                    {so.appointmentDate ? (
+                                                        <div className="flex flex-col">
+                                                            <span>{formatSafeDate(so.appointmentDate) || so.appointmentDate}</span>
+                                                            <span className="text-xs text-gray-600 font-normal">{formatSafeTime(so.appointmentTime)}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-gray-400 italic font-normal">Pending Appt</span>
+                                                    )}
+                                                </div>
+                                                {so.appointmentId && (
+                                                    <div className="flex flex-col gap-1 mt-1.5">
+                                                        <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded inline-block font-medium w-fit border border-indigo-100">
+                                                            ID: {so.appointmentId}
+                                                        </div>
+                                                        {(channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
+                                                                className="mt-1 px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded text-[10px] font-bold hover:bg-indigo-100 transition-colors flex items-center gap-1 w-fit"
+                                                            >
+                                                                Update Details
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {!so.appointmentId && (channelLower.includes('zepto') || channelLower.includes('instamart') || channelLower.includes('bb') || channelLower.includes('blinkit')) && (
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); setApptUpdateModal({ isOpen: true, so }); }}
+                                                        className="mt-2 px-2 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded border border-indigo-100 hover:bg-indigo-100 transition-all active:scale-95 flex items-center gap-1"
+                                                    >
+                                                        <PlusIcon className="h-3 w-3" /> Update Appt
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                        {isExpanded && (
+                                            <tr className="bg-gray-50/50">
+                                                <td colSpan={6} className="px-6 py-4">
+                                                    <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                                        <OrderNotesTimeline 
+                                                            poNumber={so.poReference}
+                                                            notesString={so.orderNotes}
+                                                            currentUser={currentUser || null}
+                                                            onNoteAdded={() => {}}
+                                                            onLocalNoteUpdate={(newNotes: string) => {
+                                                                if (setPurchaseOrders) {
+                                                                    setPurchaseOrders(prev => prev.map(p => {
+                                                                        if (so.poReference.includes(String(p.id))) {
+                                                                            return { ...p, orderNotes: newNotes };
+                                                                        }
+                                                                        return p;
+                                                                    }));
+                                                                }
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                        </React.Fragment>
+                                    )
+                                }) : (
+                                    <tr>
+                                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                            <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
+                                            <p className="text-lg font-medium">No shipments matching criteria</p>
+                                            <p className="text-sm mt-1">Adjust filters or select another tab.</p>
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
             {apptUpdateModal.isOpen && apptUpdateModal.so && (
                 <AppointmentUpdateModal

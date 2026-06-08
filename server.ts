@@ -5,11 +5,33 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
+import fs from "fs";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Helper to recursively scan downloads directory for files
+function getAllFiles(dirPath: string, arrayOfFiles: { name: string, path: string, folder: string }[] = []) {
+  if (!fs.existsSync(dirPath)) return arrayOfFiles;
+  const files = fs.readdirSync(dirPath);
+
+  files.forEach((file) => {
+    const filePath = path.join(dirPath, file);
+    if (fs.statSync(filePath).isDirectory()) {
+      getAllFiles(filePath, arrayOfFiles);
+    } else {
+      arrayOfFiles.push({
+        name: file,
+        path: filePath,
+        folder: path.basename(dirPath)
+      });
+    }
+  });
+
+  return arrayOfFiles;
+}
 
 async function startServer() {
   const app = express();
@@ -196,6 +218,54 @@ async function startServer() {
       console.error("Failed to spawn Playwright child process:", err);
       res.status(500).json({ status: 'error', message: 'Failed to start the fetch process.' });
     });
+  });
+
+  // scan local downloads folder
+  app.get("/api/local-downloads", (req: Request, res: Response) => {
+    try {
+      const downloadsDir = path.resolve(__dirname, "..", "downloads");
+      if (!fs.existsSync(downloadsDir)) {
+        return res.json({ status: 'success', data: [] });
+      }
+      const filesList = getAllFiles(downloadsDir);
+      res.json({ status: 'success', data: filesList });
+    } catch (error: any) {
+      console.error("Error scanning downloads folder:", error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+
+  // read local file and return base64
+  app.post("/api/read-local-file", async (req: Request, res: Response) => {
+    const { filePath } = req.body;
+    if (!filePath) {
+      return res.status(400).json({ status: 'error', message: 'File path is required' });
+    }
+
+    const downloadsDir = path.resolve(__dirname, "..", "downloads");
+    const absoluteFilePath = path.resolve(filePath);
+    if (!absoluteFilePath.startsWith(downloadsDir)) {
+      return res.status(403).json({ status: 'error', message: 'Access denied: File must be inside the downloads folder.' });
+    }
+
+    try {
+      if (!fs.existsSync(absoluteFilePath)) {
+        return res.status(404).json({ status: 'error', message: 'File not found' });
+      }
+
+      const fileBuffer = await fs.promises.readFile(absoluteFilePath);
+      const base64Data = fileBuffer.toString('base64');
+      const filename = path.basename(absoluteFilePath);
+      
+      res.json({
+        status: 'success',
+        fileName: filename,
+        fileData: base64Data
+      });
+    } catch (error: any) {
+      console.error("Error reading local file:", error);
+      res.status(500).json({ status: 'error', message: error.message });
+    }
   });
 
   // Vite middleware for development

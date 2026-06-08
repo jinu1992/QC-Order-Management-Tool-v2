@@ -99,7 +99,7 @@ export const fetchPackingData = async (referenceCode: string): Promise<any[]> =>
     } catch (error) { return []; }
 };
 
-export const logFileUpload = async (functionId: string, userName: string, fileData?: string, fileName?: string): Promise<{ status: string, message?: string }> => {
+export const logFileUpload = async (functionId: string, userName: string, fileData?: string, fileName?: string): Promise<{ status: string, message?: string, fileUrl?: string }> => {
     return await postToScript({ action: 'logFileUpload', functionId, userName, fileData, fileName });
 };
 
@@ -437,6 +437,9 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.pickupDate && row['Pickup Date']) po.pickupDate = formatSheetDate(row['Pickup Date']);
             if (!po.labelUrl && row['Label URL']) po.labelUrl = String(row['Label URL']);
             if (!po.orderNotes && row['Order Notes']) po.orderNotes = String(row['Order Notes']);
+            if (!po.podImageUrl && (row['POD Image'] || row['POD Image URL'])) po.podImageUrl = String(row['POD Image'] || row['POD Image URL']);
+            if (!po.grnNumber && row['GRN Number']) po.grnNumber = String(row['GRN Number']);
+            if (!po.grnDate && row['GRN Date']) po.grnDate = formatSheetDate(row['GRN Date']);
             // Preserve RTD override: if ANY row for this PO has status RTD, keep it
             if (rawStatus === 'RTD') po.poDbStatus = 'RTD';
         } else {
@@ -451,6 +454,9 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 poEdd: formatSheetDate(row['PO EDD']),
                 poExpiryDate: formatSheetDate(row['PO Expiry Date']) || 'N/A',
                 poPdfUrl: row['PO PDF'] ? String(row['PO PDF']) : undefined,
+                podImageUrl: (row['POD Image'] || row['POD Image URL']) ? String(row['POD Image'] || row['POD Image URL']) : undefined,
+                grnNumber: row['GRN Number'] ? String(row['GRN Number']) : undefined,
+                grnDate: formatSheetDate(row['GRN Date']),
                 eeCustomerId: row['EE Customer ID'] ? String(row['EE Customer ID']) : undefined,
                 zohoContactId: row['Zoho Contact ID'] ? String(row['Zoho Contact ID']) : undefined,
                 eeReferenceCode: row['EE_reference_code'] ? String(row['EE_reference_code']) : undefined,
@@ -617,4 +623,40 @@ export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: st
         isPartial: po.items?.length !== itemsToSend.length,
         shippingCharge: po.shippingCharge
     });
+};
+
+export const fetchLocalDownloads = async (): Promise<{ status: string, data: { name: string, path: string, folder: string }[] }> => {
+    try {
+        const response = await fetch('/api/local-downloads');
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error fetching local downloads:", error);
+        return { status: 'error', data: [] };
+    }
+};
+
+export const readLocalFile = async (filePath: string): Promise<{ status: string, fileName: string, fileData: string }> => {
+    try {
+        const response = await fetch('/api/read-local-file', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ filePath })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error reading local file:", error);
+        throw error;
+    }
+};
+
+export const updateShipmentDocuments = async (data: {
+    poNumber: string;
+    poPdfUrl?: string;
+    podImageUrl?: string;
+    grnNumber?: string;
+    grnDate?: string;
+}): Promise<{ status: string, message?: string }> => {
+    return await postToScript({ action: 'updateShipmentDocuments', ...data });
 };

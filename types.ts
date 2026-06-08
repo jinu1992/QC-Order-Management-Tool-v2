@@ -106,6 +106,7 @@ export interface PurchaseOrder {
     actionToBeTaken?: string;
     poPdfUrl?: string;
     podImageUrl?: string;
+    grnNumber?: string;
     pocPhoneNumber?: string;
     contactVerified: boolean;
     pocEmail?: string;
@@ -309,5 +310,8 @@ export interface GroupedSalesOrder {
     pickupDate?: string;
     labelUrl?: string;
     orderNotes?: string;
+    podImageUrl?: string;
+    grnNumber?: string;
+    grnDate?: string;
 }
 

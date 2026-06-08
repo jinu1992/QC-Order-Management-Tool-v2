@@ -113,6 +113,7 @@ function doPost(e) {
     else if (action === 'addOrderNote') result = addOrderNote(data);
     else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
     else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
+    else if (action === 'updateShipmentDocuments') result = updateShipmentDocuments(data);
     else {
       return responseJSON({ status: 'error', message: 'Invalid action: ' + action });
     }
@@ -428,6 +429,83 @@ function updatePOStatus(poNumber, status) {
   }
   if (found) return { status: 'success' };
   return { status: 'error', message: 'PO not found' };
+}
+
+function updateShipmentDocuments(data) {
+  const { poNumber, poPdfUrl, podImageUrl, grnNumber, grnDate } = data;
+  if (!poNumber) {
+    return { status: 'error', message: 'Missing PO Number' };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+
+  const poColIdx = headers.indexOf("PO Number");
+  if (poColIdx === -1) {
+    return { status: 'error', message: 'PO Number column not found in PO_Database' };
+  }
+
+  // Find or create columns dynamically
+  let poPdfIdx = headers.indexOf("PO PDF");
+  if (poPdfIdx === -1 && poPdfUrl !== undefined) {
+    poPdfIdx = headers.length;
+    sheet.getRange(1, poPdfIdx + 1).setValue("PO PDF");
+    headers.push("PO PDF");
+  }
+
+  let podImageIdx = headers.indexOf("POD Image");
+  if (podImageIdx === -1 && podImageUrl !== undefined) {
+    podImageIdx = headers.length;
+    sheet.getRange(1, podImageIdx + 1).setValue("POD Image");
+    headers.push("POD Image");
+  }
+
+  let grnNumberIdx = headers.indexOf("GRN Number");
+  if (grnNumberIdx === -1 && grnNumber !== undefined) {
+    grnNumberIdx = headers.length;
+    sheet.getRange(1, grnNumberIdx + 1).setValue("GRN Number");
+    headers.push("GRN Number");
+  }
+
+  let grnDateIdx = headers.indexOf("GRN Date");
+  if (grnDateIdx === -1 && grnDate !== undefined) {
+    grnDateIdx = headers.length;
+    sheet.getRange(1, grnDateIdx + 1).setValue("GRN Date");
+    headers.push("GRN Date");
+  }
+
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][poColIdx]).trim() === String(poNumber).trim()) {
+      if (poPdfUrl !== undefined && poPdfIdx !== -1) {
+        sheet.getRange(i + 1, poPdfIdx + 1).setValue(poPdfUrl);
+      }
+      if (podImageUrl !== undefined && podImageIdx !== -1) {
+        sheet.getRange(i + 1, podImageIdx + 1).setValue(podImageUrl);
+      }
+      if (grnNumber !== undefined && grnNumberIdx !== -1) {
+        sheet.getRange(i + 1, grnNumberIdx + 1).setValue(grnNumber);
+      }
+      if (grnDate !== undefined && grnDateIdx !== -1) {
+        sheet.getRange(i + 1, grnDateIdx + 1).setValue(grnDate);
+      }
+      
+      const statusIdx = headers.indexOf("Status");
+      if (statusIdx !== -1 && (grnNumber || podImageUrl)) {
+        sheet.getRange(i + 1, statusIdx + 1).setValue("GRN Updated");
+      }
+      
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    return { status: 'success', message: 'Shipment documents updated successfully' };
+  } else {
+    return { status: 'error', message: 'PO not found in database' };
+  }
 }
 
 function handleCancelLineItem(poNumber, articleCode) {
