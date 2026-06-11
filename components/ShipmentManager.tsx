@@ -39,6 +39,8 @@ const formatSafeTime = (timeStr?: string): string => {
 };
 
 const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser, setPurchaseOrders, addNotification }: ShipmentManagerProps) => {
+    const isCloudEnv = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
@@ -71,10 +73,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             if (res.status === 'success' && res.results) {
                 setSessionStatuses(res.results);
             } else {
-                addNotification?.('Failed to fetch bot sessions status.', 'error');
+                if (!isCloudEnv) {
+                    addNotification?.('Failed to fetch bot sessions status.', 'error');
+                }
             }
         } catch (err: any) {
-            addNotification?.(err.message || 'Error checking session statuses.', 'error');
+            if (!isCloudEnv) {
+                addNotification?.(err.message || 'Error checking session statuses.', 'error');
+            }
         } finally {
             setIsCheckingSessions(false);
         }
@@ -148,6 +154,10 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
     // Scan local downloads folder
     const scanLocalFiles = async () => {
+        if (isCloudEnv) {
+            setLocalFiles([]);
+            return;
+        }
         setIsScanning(true);
         try {
             const res = await fetchLocalDownloads();
@@ -1071,17 +1081,17 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                 <div className="flex gap-2">
                                                     <button
                                                         onClick={() => triggerSessionRefresh(portalId)}
-                                                        disabled={refreshingPortal !== null || isCheckingSessions}
+                                                        disabled={refreshingPortal !== null || isCheckingSessions || isCloudEnv}
                                                         className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all"
-                                                        title="Refresh login token manually"
+                                                        title={isCloudEnv ? "Manual login capture is only supported locally" : "Refresh login token manually"}
                                                     >
                                                         Login Capture
                                                     </button>
                                                     <button
                                                         onClick={() => triggerPortalBotRun(portalId)}
-                                                        disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions}
+                                                        disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions || isCloudEnv}
                                                         className="flex-1 px-2.5 py-1.5 bg-teal-600 border border-teal-700 text-white hover:bg-teal-700 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1"
-                                                        title="Launch bot script to download PO/GRN"
+                                                        title={isCloudEnv ? "Running bots is only supported locally" : "Launch bot script to download PO/GRN"}
                                                     >
                                                         {isBotRunning ? (
                                                             <RefreshIcon className="w-3 h-3 animate-spin" />
@@ -1098,46 +1108,63 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                             </div>
                         </div>
                         {/* Scanning & batch controls */}
-                        <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
-                                    <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
+                        {isCloudEnv ? (
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg mt-0.5">
+                                    <AlertIcon className="w-5 h-5 text-amber-600" />
                                 </div>
-                                <div>
-                                    <h3 className="font-bold text-teal-900 text-sm">Playwright Bot Directory Scan</h3>
-                                    <p className="text-xs text-teal-700">
-                                        {isScanning ? 'Scanning local downloads folder...' : `Scanned local directory: found ${localFiles.length} files.`}
+                                <div className="space-y-1">
+                                    <h3 className="font-bold text-amber-900 text-sm">Cloud Environment Mode</h3>
+                                    <p className="text-xs text-amber-700 max-w-2xl leading-relaxed">
+                                        You are currently viewing the dashboard via the cloud Vercel link. <strong>Browser automation, local download scanning, and automatic GRN match-and-upload</strong> are disabled in this mode.
+                                    </p>
+                                    <p className="text-xs text-amber-600 font-semibold mt-1">
+                                        To use automated match-and-upload, please run the application locally on your desktop by running <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px] text-amber-900">npm run dev</code>.
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={scanLocalFiles}
-                                    disabled={isScanning || isBatchUploading}
-                                    className="px-4 py-2 bg-white hover:bg-gray-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                    <RefreshIcon className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                                    Scan Files
-                                </button>
-                                <button
-                                    onClick={handleBatchAutoUpload}
-                                    disabled={isScanning || isBatchUploading || trackingOrders.length === 0}
-                                    className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-teal-100 flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                    {isBatchUploading ? (
-                                        <>
-                                            <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
-                                            Uploading Match...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckCircleIcon className="w-3.5 h-3.5" />
-                                            Scan &amp; Auto-Upload All
-                                        </>
-                                    )}
-                                </button>
+                        ) : (
+                            <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
+                                        <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-teal-900 text-sm">Playwright Bot Directory Scan</h3>
+                                        <p className="text-xs text-teal-700">
+                                            {isScanning ? 'Scanning local downloads folder...' : `Scanned local directory: found ${localFiles.length} files.`}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={scanLocalFiles}
+                                        disabled={isScanning || isBatchUploading}
+                                        className="px-4 py-2 bg-white hover:bg-gray-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        <RefreshIcon className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                                        Scan Files
+                                    </button>
+                                    <button
+                                        onClick={handleBatchAutoUpload}
+                                        disabled={isScanning || isBatchUploading || trackingOrders.length === 0}
+                                        className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-teal-100 flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        {isBatchUploading ? (
+                                            <>
+                                                <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                Uploading Match...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CheckCircleIcon className="w-3.5 h-3.5" />
+                                                Scan &amp; Auto-Upload All
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         {/* Document Upload Table */}
                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -1197,7 +1224,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {poMatch ? (
+                                                            {poMatch && !isCloudEnv ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'PO', poMatch.path, poMatch.name)}
                                                                     disabled={uploadingPoId === so.id || isAutoUploading}
@@ -1233,7 +1260,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                                                 }}
                                                                             />
                                                                         </label>
-                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && (
+                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && !isCloudEnv && (
                                                                             <button
                                                                                 onClick={() => {
                                                                                     const ch = so.channel.toLowerCase();
@@ -1282,7 +1309,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {grnMatch ? (
+                                                            {grnMatch && !isCloudEnv ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'GRN', grnMatch.path, grnMatch.name)}
                                                                     disabled={uploadingGrnId === so.id || isAutoUploading}
