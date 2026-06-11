@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { User } from '../types';
-import { ShieldCheckIcon, RefreshIcon, XCircleIcon, LockClosedIcon, InfoIcon } from './icons/Icons';
+import { User, Role } from '../types';
+import { ShieldCheckIcon, RefreshIcon, XCircleIcon, LockClosedIcon } from './icons/Icons';
 
 interface LoginProps {
     onLoginSuccess: (user: User, tokens?: any) => void;
@@ -9,6 +9,7 @@ interface LoginProps {
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [showDevLogin, setShowDevLogin] = useState(false);
 
     useEffect(() => {
         const handleMessage = async (event: MessageEvent) => {
@@ -38,6 +39,59 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             setError('Failed to initiate login.');
             setIsLoading(false);
         }
+    };
+
+    const handleDevLogin = (role: Role) => {
+        setIsLoading(true);
+        setError(null);
+
+        const initialsMap: Record<Role, string> = {
+            'Admin': 'DA',
+            'Key Account Manager': 'DK',
+            'Finance Manager': 'DF',
+            'Supply Chain Manager': 'DS',
+            'Limited Access': 'DL'
+        };
+
+        const emailMap: Record<Role, string> = {
+            'Admin': 'admin@cubelelo.com',
+            'Key Account Manager': 'kam@cubelelo.com',
+            'Finance Manager': 'finance@cubelelo.com',
+            'Supply Chain Manager': 'scm@cubelelo.com',
+            'Limited Access': 'limited@cubelelo.com'
+        };
+
+        const nameMap: Record<Role, string> = {
+            'Admin': 'Dev Admin',
+            'Key Account Manager': 'Dev KAM',
+            'Finance Manager': 'Dev Finance',
+            'Supply Chain Manager': 'Dev SCM',
+            'Limited Access': 'Dev Limited'
+        };
+
+        const mockUser: User = {
+            id: `dev-${role.toLowerCase().replace(/\s+/g, '-')}`,
+            name: nameMap[role],
+            email: emailMap[role],
+            role: role,
+            avatarInitials: initialsMap[role],
+            contactNumber: '1234567890',
+            isInitialized: true
+        };
+
+        const mockTokens = {
+            access_token: 'mock-dev-access-token',
+            refresh_token: 'mock-dev-refresh-token',
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            token_type: 'Bearer',
+            expiry_date: Date.now() + 365 * 24 * 60 * 60 * 1000
+        };
+
+        // Simulate a short delay for smooth loading animation transition
+        setTimeout(() => {
+            setIsLoading(false);
+            onLoginSuccess(mockUser, mockTokens);
+        }, 500);
     };
 
     return (
@@ -105,6 +159,51 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                     )}
                                     {isLoading ? 'Verifying...' : 'Sign in with Google'}
                                 </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDevLogin(!showDevLogin)}
+                                    className="text-xs text-gray-400 hover:text-partners-green transition-colors font-bold tracking-wider uppercase mt-4 flex items-center gap-1.5 focus:outline-none"
+                                >
+                                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
+                                    {showDevLogin ? 'Hide Dev Bypass' : 'Dev Bypass Options'}
+                                </button>
+
+                                {showDevLogin && (
+                                    <div className="w-full border-t border-gray-100 mt-4 pt-6 animate-in fade-in slide-in-from-top-4 duration-300">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-600 mb-4 text-center">
+                                            Select Dev Role to Bypass Auth
+                                        </p>
+                                        <div className="space-y-2 w-full">
+                                            {[
+                                                { role: 'Admin', color: 'red', label: 'Admin User' },
+                                                { role: 'Key Account Manager', color: 'blue', label: 'Key Account Manager' },
+                                                { role: 'Finance Manager', color: 'emerald', label: 'Finance Manager' },
+                                                { role: 'Supply Chain Manager', color: 'purple', label: 'Supply Chain Manager' },
+                                                { role: 'Limited Access', color: 'gray', label: 'Limited Access' }
+                                            ].map((item) => {
+                                                const bgColors: Record<string, string> = {
+                                                    red: 'bg-red-50 text-red-700 hover:bg-red-100/70 border-red-100 hover:border-red-200',
+                                                    blue: 'bg-blue-50 text-blue-700 hover:bg-blue-100/70 border-blue-100 hover:border-blue-200',
+                                                    emerald: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100/70 border-emerald-100 hover:border-emerald-200',
+                                                    purple: 'bg-purple-50 text-purple-700 hover:bg-purple-100/70 border-purple-100 hover:border-purple-200',
+                                                    gray: 'bg-gray-50 text-gray-700 hover:bg-gray-100/70 border-gray-100 hover:border-gray-200'
+                                                };
+                                                return (
+                                                    <button
+                                                        key={item.role}
+                                                        onClick={() => handleDevLogin(item.role as Role)}
+                                                        disabled={isLoading}
+                                                        className={`w-full py-2.5 px-4 rounded-2xl font-bold text-xs transition-all flex items-center justify-between border ${bgColors[item.color]} disabled:opacity-50`}
+                                                    >
+                                                        <span>{item.label}</span>
+                                                        <span className="text-[9px] font-mono opacity-50 uppercase">Bypass</span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -112,7 +211,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
                 <div className="mt-12 flex flex-col items-center gap-6">
                     <div className="flex items-center justify-center gap-3 py-2 px-4 bg-white/50 backdrop-blur-sm rounded-full border border-gray-200/50 shadow-sm">
-                        <ShieldCheckIcon className="h-4 w-4 text-partners-green" />
+                        <span className="w-1.5 h-1.5 bg-partners-green rounded-full"></span>
                         <span className="text-[9px] text-gray-500 font-black uppercase tracking-[0.2em]">Encrypted Session Active</span>
                     </div>
                     
