@@ -108,7 +108,6 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                     {isLoading ? 'Verifying...' : 'Sign in with Google'}
                                 </button>
 
-
                             </div>
                         </div>
                     </div>
