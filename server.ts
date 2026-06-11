@@ -6,11 +6,285 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import fs from "fs";
+import { chromium } from "playwright";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+interface PortalConfig {
+  id: string;
+  name: string;
+  stateFile: string;
+  checkUrl: string;
+  loginUrl: string;
+  host: string;
+  loggedOutUrlRegex: RegExp;
+  requiredCookieNames?: string[];
+  requiredCookiePattern?: RegExp;
+}
+
+interface RefreshJob {
+  portalId: string;
+  status: 'starting' | 'waiting-login' | 'completed' | 'failed' | 'idle';
+  message: string;
+  startedAt?: string;
+  finishedAt?: string | null;
+  updatedAt?: string;
+}
+
+const HARD_EXPIRY_HOURS = 24;
+const HARD_EXPIRY_MS = HARD_EXPIRY_HOURS * 60 * 60 * 1000;
+const PARENT_DIR = path.resolve(__dirname, "..");
+
+const PORTALS: Record<string, PortalConfig> = {
+  flipkart: {
+    id: "flipkart",
+    name: "Flipkart Vendor Hub",
+    stateFile: path.join(__dirname, "bots", "vendor_state.json"),
+    checkUrl: "https://vendorhub.flipkart.com/#/welcome/select-account",
+    loginUrl: "https://vendorhub.flipkart.com/#/welcome/login",
+    host: "vendorhub.flipkart.com",
+    loggedOutUrlRegex: /welcome\/login|\/login/i,
+    requiredCookieNames: ["access_token"],
+  },
+  instamart: {
+    id: "instamart",
+    name: "Instamart Partner",
+    stateFile: path.join(__dirname, "bots", "instamart_state.json"),
+    checkUrl: "https://partner.instamart.in/",
+    loginUrl: "https://partner.instamart.in/login",
+    host: "partner.instamart.in",
+    loggedOutUrlRegex: /\/login|auth|otp|signin/i,
+    requiredCookieNames: ["__IM_ADS_ACCESS_TOKEN__"],
+  },
+  blinkit: {
+    id: "blinkit",
+    name: "Blinkit PartnersBiz",
+    stateFile: path.join(__dirname, "bots", "partnersbiz_state.json"),
+    checkUrl: "https://www.partnersbiz.com/",
+    loginUrl: "https://www.partnersbiz.com/",
+    host: "www.partnersbiz.com",
+    loggedOutUrlRegex: /\/login|auth|signin/i,
+    requiredCookieNames: ["access_token", "refresh_token"],
+  },
+  zepto: {
+    id: "zepto",
+    name: "Zepto Brands",
+    stateFile: path.join(__dirname, "bots", "zepto-brands-state.json"),
+    checkUrl: "https://brands.zepto.co.in/vendor/po/grn",
+    loginUrl: "https://brands.zepto.co.in/login",
+    host: "brands.zepto.co.in",
+    loggedOutUrlRegex: /\/login|auth|signin|otp/i,
+    requiredCookiePattern: /_AUTH_TOKEN$/,
+  },
+};
+
+const refreshJobs = new Map<string, RefreshJob>();
+
+function formatDuration(ms: number) {
+  const totalMinutes = Math.max(0, Math.floor(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
+}
+
+function isLoggedOutUrl(portal: PortalConfig, url: string) {
+  if (!url) return true;
+  if (!url.includes(portal.host)) return true;
+  return portal.loggedOutUrlRegex.test(url);
+}
+
+function hasRequiredAuthCookies(portal: PortalConfig, cookies: any[]) {
+  if (!Array.isArray(cookies) || cookies.length === 0) {
+    return false;
+  }
+
+  const hostCookies = cookies.filter((cookie) =>
+    typeof cookie.domain === "string" && cookie.domain.includes(portal.host),
+  );
+
+  if (hostCookies.length === 0) {
+    return false;
+  }
+
+  const names = hostCookies.map((cookie) => cookie.name);
+
+  if (Array.isArray(portal.requiredCookieNames) && portal.requiredCookieNames.length > 0) {
+    const hasAnyRequired = portal.requiredCookieNames.some((requiredName) => names.includes(requiredName));
+    if (!hasAnyRequired) {
+      return false;
+    }
+  }
+
+  if (portal.requiredCookiePattern instanceof RegExp) {
+    return names.some((name) => portal.requiredCookiePattern!.test(name));
+  }
+
+  return true;
+}
+
+async function checkPortalSession(portal: PortalConfig) {
+  if (!fs.existsSync(portal.stateFile)) {
+    return {
+      portalId: portal.id,
+      name: portal.name,
+      status: "expired",
+      detail: "State file not found",
+      stateFile: path.basename(portal.stateFile),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const stat = fs.statSync(portal.stateFile);
+  const stateModifiedAt = stat.mtime;
+  const stateAgeMs = Date.now() - stateModifiedAt.getTime();
+  const expiredByAge = stateAgeMs > HARD_EXPIRY_MS;
+
+  let browser: any;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      storageState: portal.stateFile,
+      ignoreHTTPSErrors: true,
+    });
+
+    const page = await context.newPage();
+    await page.goto(portal.checkUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 45000,
+    });
+    await page.waitForTimeout(2500);
+
+    const finalUrl = page.url();
+    const cookies = await context.cookies(portal.checkUrl);
+    const loggedOutByUrl = isLoggedOutUrl(portal, finalUrl);
+    const hasAuthCookie = hasRequiredAuthCookies(portal, cookies);
+    const expired = loggedOutByUrl || !hasAuthCookie || expiredByAge;
+
+    let detail = "Session looks valid";
+    if (loggedOutByUrl) {
+      detail = "Redirected to login";
+    } else if (!hasAuthCookie) {
+      detail = "Auth token cookie missing";
+    } else if (expiredByAge) {
+      detail = `Session older than ${HARD_EXPIRY_HOURS}h (age: ${formatDuration(stateAgeMs)})`;
+    }
+
+    return {
+      portalId: portal.id,
+      name: portal.name,
+      status: expired ? "expired" : "active",
+      detail,
+      finalUrl,
+      stateFile: path.basename(portal.stateFile),
+      stateModifiedAt: stateModifiedAt.toISOString(),
+      stateAgeHours: Number((stateAgeMs / 3600000).toFixed(2)),
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error: any) {
+    return {
+      portalId: portal.id,
+      name: portal.name,
+      status: "error",
+      detail: error?.message || String(error),
+      stateFile: path.basename(portal.stateFile),
+      stateModifiedAt: stateModifiedAt ? stateModifiedAt.toISOString() : new Date().toISOString(),
+      stateAgeHours: stateModifiedAt ? Number((stateAgeMs / 3600000).toFixed(2)) : null,
+      checkedAt: new Date().toISOString(),
+    };
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
+async function waitForManualLogin(page: any, context: any, portal: PortalConfig, timeoutMs: number) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    if (page.isClosed()) {
+      throw new Error("Browser window was closed before login completed");
+    }
+
+    const currentUrl = page.url();
+    if (!isLoggedOutUrl(portal, currentUrl)) {
+      const cookies = await context.cookies(portal.checkUrl);
+      if (!hasRequiredAuthCookies(portal, cookies)) {
+        await page.waitForTimeout(1500);
+        continue;
+      }
+
+      await page.waitForTimeout(1500);
+      return;
+    }
+
+    await page.waitForTimeout(2000);
+  }
+
+  throw new Error("Timed out while waiting for manual login");
+}
+
+function startRefreshJob(portal: PortalConfig) {
+  const existing = refreshJobs.get(portal.id);
+  if (existing && (existing.status === "starting" || existing.status === "waiting-login")) {
+    return existing;
+  }
+
+  const job: RefreshJob = {
+    portalId: portal.id,
+    status: "starting",
+    message: "Opening browser for manual login...",
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+
+  refreshJobs.set(portal.id, job);
+
+  (async () => {
+    let browser: any;
+    try {
+      browser = await chromium.launch({ headless: false });
+      const context = await browser.newContext({ ignoreHTTPSErrors: true });
+      const page = await context.newPage();
+
+      job.status = "waiting-login";
+      job.message = "Browser opened. Please login manually. Session will save automatically.";
+      job.updatedAt = new Date().toISOString();
+
+      await page.goto(portal.loginUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+
+      await waitForManualLogin(page, context, portal, 30 * 60 * 1000);
+
+      await context.storageState({ path: portal.stateFile });
+
+      const verification = await checkPortalSession(portal);
+      if (verification.status !== "active") {
+        throw new Error(`Session saved but verification failed: ${verification.detail}`);
+      }
+
+      job.status = "completed";
+      job.message = "Session refreshed and saved successfully.";
+      job.finishedAt = new Date().toISOString();
+      job.updatedAt = new Date().toISOString();
+
+      await browser.close();
+    } catch (error: any) {
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+      job.status = "failed";
+      job.message = error?.message || String(error);
+      job.finishedAt = new Date().toISOString();
+      job.updatedAt = new Date().toISOString();
+    }
+  })();
+
+  return job;
+}
 
 // Helper to recursively scan downloads directory for files
 function getAllFiles(dirPath: string, arrayOfFiles: { name: string, path: string, folder: string }[] = []) {
@@ -223,7 +497,7 @@ async function startServer() {
   // scan local downloads folder
   app.get("/api/local-downloads", (req: Request, res: Response) => {
     try {
-      const downloadsDir = path.resolve(__dirname, "..", "downloads");
+      const downloadsDir = path.resolve(__dirname, "downloads");
       if (!fs.existsSync(downloadsDir)) {
         return res.json({ status: 'success', data: [] });
       }
@@ -242,7 +516,7 @@ async function startServer() {
       return res.status(400).json({ status: 'error', message: 'File path is required' });
     }
 
-    const downloadsDir = path.resolve(__dirname, "..", "downloads");
+    const downloadsDir = path.resolve(__dirname, "downloads");
     const absoluteFilePath = path.resolve(filePath);
     if (!absoluteFilePath.startsWith(downloadsDir)) {
       return res.status(403).json({ status: 'error', message: 'Access denied: File must be inside the downloads folder.' });
@@ -266,6 +540,88 @@ async function startServer() {
       console.error("Error reading local file:", error);
       res.status(500).json({ status: 'error', message: error.message });
     }
+  });
+
+  // --- Bot Session Management & Run Routes ---
+  app.get("/api/bot-sessions", async (req: Request, res: Response) => {
+    try {
+      const results = await Promise.all(Object.values(PORTALS).map((p) => checkPortalSession(p)));
+      res.json({
+        status: 'success',
+        results,
+        checkedAt: new Date().toISOString()
+      });
+    } catch (error: any) {
+      res.status(500).json({ status: 'error', message: error.message });
+    }
+  });
+
+  app.post("/api/bot-sessions/refresh", (req: Request, res: Response) => {
+    const { portalId } = req.body;
+    if (!portalId || !PORTALS[portalId]) {
+      return res.status(400).json({ status: 'error', message: 'Invalid or missing portalId' });
+    }
+    const portal = PORTALS[portalId];
+    const job = startRefreshJob(portal);
+    res.json({
+      status: 'success',
+      portalId: portal.id,
+      jobStatus: job.status,
+      message: job.message
+    });
+  });
+
+  app.get("/api/bot-sessions/refresh/:portalId", (req: Request, res: Response) => {
+    const portalId = req.params.portalId as string;
+    if (!portalId || !PORTALS[portalId]) {
+      return res.status(404).json({ status: 'error', message: 'Unknown portal ID' });
+    }
+    const job = refreshJobs.get(portalId) || {
+      portalId,
+      status: "idle",
+      message: "No refresh running"
+    };
+    res.json({
+      status: 'success',
+      job
+    });
+  });
+
+  app.post("/api/run-bot", (req: Request, res: Response) => {
+    const { portalId } = req.body;
+    if (!portalId || !PORTALS[portalId]) {
+      return res.status(400).json({ status: 'error', message: 'Invalid or missing portalId' });
+    }
+
+    const scriptName = portalId === 'flipkart' ? 'flipkart_report.cjs' : 
+                       portalId === 'blinkit' ? 'blinkit_report.cjs' : 
+                       portalId === 'instamart' ? 'instamart_report.cjs' : 'zepto_report.cjs';
+
+    const scriptPath = path.resolve(__dirname, "bots", scriptName);
+
+    if (!fs.existsSync(scriptPath)) {
+      return res.status(404).json({ status: 'error', message: `Bot script not found at ${scriptPath}` });
+    }
+
+    console.log(`Spawning bot: node ${scriptPath}`);
+    const botsDir = path.resolve(__dirname, "bots");
+    
+    const child = spawn('node', [scriptPath], {
+      cwd: botsDir,
+      env: { ...process.env },
+      detached: true,
+      stdio: 'pipe'
+    });
+
+    child.stdout?.on('data', (data) => console.log(`[BOT ${portalId}] ${data.toString().trim()}`));
+    child.stderr?.on('data', (data) => console.error(`[BOT ${portalId} ERROR] ${data.toString().trim()}`));
+
+    child.unref();
+
+    res.json({
+      status: 'success',
+      message: `Bot execution triggered for ${portalId}.`
+    });
   });
 
   // Vite middleware for development

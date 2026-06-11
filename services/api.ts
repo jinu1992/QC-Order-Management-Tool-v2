@@ -660,3 +660,55 @@ export const updateShipmentDocuments = async (data: {
 }): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updateShipmentDocuments', ...data });
 };
+
+export const fetchBotSessions = async (): Promise<{ status: string, results: any[], checkedAt: string }> => {
+    try {
+        const response = await fetch('/api/bot-sessions');
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error fetching bot sessions:", error);
+        return { status: 'error', results: [], checkedAt: new Date().toISOString() };
+    }
+};
+
+export const refreshBotSession = async (portalId: string): Promise<{ status: string, portalId: string, jobStatus: string, message: string }> => {
+    try {
+        const response = await fetch('/api/bot-sessions/refresh', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ portalId })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error refreshing bot session:", error);
+        return { status: 'error', portalId, jobStatus: 'failed', message: error.message };
+    }
+};
+
+export const getBotSessionRefreshStatus = async (portalId: string): Promise<{ status: string, job: any }> => {
+    try {
+        const response = await fetch(`/api/bot-sessions/refresh/${encodeURIComponent(portalId)}`);
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error getting refresh status:", error);
+        return { status: 'error', job: { portalId, status: 'failed', message: error.message } };
+    }
+};
+
+export const runPortalBot = async (portalId: string): Promise<{ status: string, message?: string }> => {
+    try {
+        const response = await fetch('/api/run-bot', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ portalId })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error running portal bot:", error);
+        return { status: 'error', message: error.message };
+    }
+};
