@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import { google } from "googleapis";
 import { spawn } from "child_process";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -231,6 +232,117 @@ app.post("/api/trigger-easyecom-fetch", async (req: Request, res: Response) => {
     console.error("Failed to spawn Playwright child process:", err);
     res.status(500).json({ status: 'error', message: 'Failed to start the fetch process.' });
   });
+});
+
+// --- Local File and Bot Session Routes (Local environment only) ---
+const handleLocalOnlyRoute = (req: Request, res: Response, next: () => void) => {
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Browser automation and local file access are not supported in the cloud/Vercel environment. Please run the application locally using "npm run dev".'
+    });
+  }
+  next();
+};
+
+app.get("/api/local-downloads", handleLocalOnlyRoute, (req: Request, res: Response) => {
+  try {
+    const downloadsDir = path.resolve(__dirname, "../downloads");
+    // Helper to recursively scan downloads directory for files
+    const getAllFiles = (dirPath: string, arrayOfFiles: { name: string, path: string, folder: string }[] = []) => {
+      if (!fs.existsSync(dirPath)) return arrayOfFiles;
+      const files = fs.readdirSync(dirPath);
+      files.forEach((file) => {
+        const filePath = path.join(dirPath, file);
+        if (fs.statSync(filePath).isDirectory()) {
+          getAllFiles(filePath, arrayOfFiles);
+        } else {
+          arrayOfFiles.push({
+            name: file,
+            path: filePath,
+            folder: path.basename(dirPath)
+          });
+        }
+      });
+      return arrayOfFiles;
+    };
+
+    if (!fs.existsSync(downloadsDir)) {
+      return res.json({ status: 'success', data: [] });
+    }
+    const filesList = getAllFiles(downloadsDir);
+    res.json({ status: 'success', data: filesList });
+  } catch (error: any) {
+    console.error("Error scanning downloads folder:", error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+app.post("/api/read-local-file", handleLocalOnlyRoute, async (req: Request, res: Response) => {
+  const { filePath } = req.body;
+  if (!filePath) {
+    return res.status(400).json({ status: 'error', message: 'File path is required' });
+  }
+
+  const downloadsDir = path.resolve(__dirname, "../downloads");
+  const absoluteFilePath = path.resolve(filePath);
+  if (!absoluteFilePath.startsWith(downloadsDir)) {
+    return res.status(403).json({ status: 'error', message: 'Access denied: File must be inside the downloads folder.' });
+  }
+
+  try {
+    if (!fs.existsSync(absoluteFilePath)) {
+      return res.status(404).json({ status: 'error', message: 'File not found' });
+    }
+
+    const fileBuffer = await fs.promises.readFile(absoluteFilePath);
+    const base64Data = fileBuffer.toString('base64');
+    const filename = path.basename(absoluteFilePath);
+    
+    res.json({
+      status: 'success',
+      fileName: filename,
+      fileData: base64Data
+    });
+  } catch (error: any) {
+    console.error("Error reading local file:", error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+// Since the bot sessions and Playwright require libraries not installed on Vercel, 
+// we stub these out when running in production/Vercel or return empty statuses.
+app.get("/api/bot-sessions", async (req: Request, res: Response) => {
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    return res.json({
+      status: 'success',
+      results: [
+        { portalId: 'blinkit', name: 'Blinkit PartnersBiz', status: 'expired', detail: 'Not supported in cloud environment' },
+        { portalId: 'instamart', name: 'Instamart Partner', status: 'expired', detail: 'Not supported in cloud environment' },
+        { portalId: 'zepto', name: 'Zepto Brands', status: 'expired', detail: 'Not supported in cloud environment' },
+        { portalId: 'flipkart', name: 'Flipkart Vendor Hub', status: 'expired', detail: 'Not supported in cloud environment' }
+      ],
+      checkedAt: new Date().toISOString()
+    });
+  }
+
+  res.json({
+    status: 'success',
+    results: [],
+    checkedAt: new Date().toISOString()
+  });
+});
+
+app.post("/api/bot-sessions/refresh", handleLocalOnlyRoute, (req: Request, res: Response) => {
+  res.status(400).json({ status: 'error', message: 'Session refresh is only supported on a local desktop environment.' });
+});
+
+app.get("/api/bot-sessions/refresh/:portalId", handleLocalOnlyRoute, (req: Request, res: Response) => {
+  res.json({ status: 'success', job: { status: 'idle', message: 'No refresh running' } });
+});
+
+app.post("/api/run-bot", handleLocalOnlyRoute, (req: Request, res: Response) => {
+  res.status(400).json({ status: 'error', message: 'Running bots is only supported on a local desktop environment.' });
 });
 
 export default app;

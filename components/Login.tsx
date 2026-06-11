@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { ShieldCheckIcon, RefreshIcon, XCircleIcon, LockClosedIcon, InfoIcon } from './icons/Icons';
+import { RefreshIcon, XCircleIcon, LockClosedIcon } from './icons/Icons';
 
 interface LoginProps {
     onLoginSuccess: (user: User, tokens?: any) => void;
@@ -39,6 +39,8 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             setIsLoading(false);
         }
     };
+
+
 
     return (
         <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center p-4 font-sans relative overflow-hidden">
@@ -105,6 +107,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                     )}
                                     {isLoading ? 'Verifying...' : 'Sign in with Google'}
                                 </button>
+
                             </div>
                         </div>
                     </div>
@@ -112,7 +115,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
                 <div className="mt-12 flex flex-col items-center gap-6">
                     <div className="flex items-center justify-center gap-3 py-2 px-4 bg-white/50 backdrop-blur-sm rounded-full border border-gray-200/50 shadow-sm">
-                        <ShieldCheckIcon className="h-4 w-4 text-partners-green" />
+                        <span className="w-1.5 h-1.5 bg-partners-green rounded-full"></span>
                         <span className="text-[9px] text-gray-500 font-black uppercase tracking-[0.2em]">Encrypted Session Active</span>
                     </div>
                     

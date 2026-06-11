@@ -159,7 +159,9 @@ export interface PurchaseOrder {
     pickupDate?: string;
     labelUrl?: string;
     orderNotes?: string;
-    poDbStatus?: string; // Raw DB Status value (e.g. 'RTD') preserved for frontend override logic
+    poDbStatus?: string; 
+    locationKey?: string;    
+    // Raw DB Status value (e.g. 'RTD') preserved for frontend override logic
 }
 
 
@@ -313,5 +315,6 @@ export interface GroupedSalesOrder {
     podImageUrl?: string;
     grnNumber?: string;
     grnDate?: string;
+    locationKey?: string;
 }
 

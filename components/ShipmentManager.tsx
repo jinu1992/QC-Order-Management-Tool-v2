@@ -3,7 +3,7 @@ import { PurchaseOrder, POItem, User, GroupedSalesOrder, POStatus } from '../typ
 import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon, PaperclipIcon, ExternalLinkIcon, RefreshIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
-import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile } from '../services/api';
+import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile, fetchBotSessions, refreshBotSession, getBotSessionRefreshStatus, runPortalBot } from '../services/api';
 
 // GroupedSalesOrder is now imported from ../types
 
@@ -39,6 +39,8 @@ const formatSafeTime = (timeStr?: string): string => {
 };
 
 const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, currentUser, setPurchaseOrders, addNotification }: ShipmentManagerProps) => {
+    const isCloudEnv = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
     const [searchTerm, setSearchTerm] = useState('');
     const [channelFilter, setChannelFilter] = useState('');
     const [awbSearch, setAwbSearch] = useState('');
@@ -48,6 +50,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
     // Local files and upload state
     const [localFiles, setLocalFiles] = useState<{ name: string, path: string, folder: string }[]>([]);
+    const [isLocalServerConnected, setIsLocalServerConnected] = useState<boolean | null>(null);
+
     const [isScanning, setIsScanning] = useState(false);
     const [uploadingPoId, setUploadingPoId] = useState<string | null>(null);
     const [uploadingGrnId, setUploadingGrnId] = useState<string | null>(null);
@@ -56,6 +60,103 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const [autoUploadingId, setAutoUploadingId] = useState<string | null>(null);
     const [isBatchUploading, setIsBatchUploading] = useState(false);
 
+    // Bot Session health and run states
+    const [sessionStatuses, setSessionStatuses] = useState<any[]>([]);
+    const [isCheckingSessions, setIsCheckingSessions] = useState(false);
+    const [refreshingPortal, setRefreshingPortal] = useState<string | null>(null);
+    const [refreshMessage, setRefreshMessage] = useState<string>('');
+    const [runningBots, setRunningBots] = useState<Record<string, boolean>>({});
+
+    // Fetch all portal session health statuses
+    const checkAllSessions = async () => {
+        setIsCheckingSessions(true);
+        try {
+            const res = await fetchBotSessions();
+            if (res.status === 'success' && res.results) {
+                setSessionStatuses(res.results);
+                setIsLocalServerConnected(true);
+            } else {
+                setIsLocalServerConnected(false);
+                if (!isCloudEnv) {
+                    addNotification?.('Failed to fetch bot sessions status.', 'error');
+                }
+            }
+        } catch (err: any) {
+            setIsLocalServerConnected(false);
+            if (!isCloudEnv) {
+                addNotification?.(err.message || 'Error checking session statuses.', 'error');
+            }
+        } finally {
+            setIsCheckingSessions(false);
+        }
+    };
+
+    // Run browser automation script for a portal
+    const triggerPortalBotRun = async (portalId: string) => {
+        setRunningBots(prev => ({ ...prev, [portalId]: true }));
+        try {
+            const res = await runPortalBot(portalId);
+            if (res.status === 'success') {
+                addNotification?.(`Triggered bot script for ${portalId}. Browser opened on host desktop.`, 'success');
+            } else {
+                addNotification?.(res.message || `Failed to run bot for ${portalId}.`, 'error');
+            }
+        } catch (err: any) {
+            addNotification?.(err.message || `Error running bot for ${portalId}.`, 'error');
+        } finally {
+            setRunningBots(prev => ({ ...prev, [portalId]: false }));
+        }
+    };
+
+    // Trigger session refresh (opens headful browser on host desktop)
+    const triggerSessionRefresh = async (portalId: string) => {
+        setRefreshingPortal(portalId);
+        setRefreshMessage('Launching browser...');
+        try {
+            const res = await refreshBotSession(portalId);
+            if (res.status === 'success') {
+                addNotification?.(`Session refresh started for ${portalId}. Please log in in the opened browser.`, 'info');
+                // Start polling status
+                pollRefreshJob(portalId);
+            } else {
+                addNotification?.(res.message || 'Failed to start session refresh.', 'error');
+                setRefreshingPortal(null);
+            }
+        } catch (err: any) {
+            addNotification?.(err.message || 'Error starting session refresh.', 'error');
+            setRefreshingPortal(null);
+        }
+    };
+
+    // Poll current active refresh job status
+    const pollRefreshJob = (portalId: string) => {
+        const timer = setInterval(async () => {
+            try {
+                const res = await getBotSessionRefreshStatus(portalId);
+                if (res.status === 'success' && res.job) {
+                    const job = res.job;
+                    setRefreshMessage(job.message || '');
+                    
+                    if (job.status === 'completed') {
+                        clearInterval(timer);
+                        setRefreshingPortal(null);
+                        setRefreshMessage('');
+                        addNotification?.(`Successfully refreshed session for ${portalId}!`, 'success');
+                        checkAllSessions();
+                    } else if (job.status === 'failed') {
+                        clearInterval(timer);
+                        setRefreshingPortal(null);
+                        setRefreshMessage('');
+                        addNotification?.(`Session refresh failed for ${portalId}: ${job.message}`, 'error');
+                        checkAllSessions();
+                    }
+                }
+            } catch (err) {
+                console.error("Error polling refresh job status:", err);
+            }
+        }, 2500);
+    };
+
     // Scan local downloads folder
     const scanLocalFiles = async () => {
         setIsScanning(true);
@@ -63,12 +164,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             const res = await fetchLocalDownloads();
             if (res.status === 'success' && res.data) {
                 setLocalFiles(res.data);
+                setIsLocalServerConnected(true);
                 addNotification?.(`Scanned local downloads folder. Found ${res.data.length} files.`, 'success');
             } else {
+                setIsLocalServerConnected(false);
                 addNotification?.('Failed to scan local downloads folder.', 'error');
             }
         } catch (e: any) {
-            addNotification?.(e.message || 'Error scanning local downloads.', 'error');
+            setIsLocalServerConnected(false);
+            if (isCloudEnv) {
+                addNotification?.('Failed to connect to local desktop server. Please check if "npm run dev" is running locally.', 'error');
+            } else {
+                addNotification?.(e.message || 'Error scanning local downloads.', 'error');
+            }
         } finally {
             setIsScanning(false);
         }
@@ -78,6 +186,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     useEffect(() => {
         if (activeTab === 'GRN_PO_Upload') {
             scanLocalFiles();
+            checkAllSessions();
         }
     }, [activeTab]);
 
@@ -904,47 +1013,173 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             <div className="flex-1 overflow-auto p-6">
                 {activeTab === 'GRN_PO_Upload' ? (
                     <div className="flex flex-col gap-4">
-                        {/* Scanning & batch controls */}
-                        <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
-                                    <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
+                        {/* Bot Session Health Panel */}
+                        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-teal-500 animate-ping"></div>
+                                    <h3 className="font-bold text-gray-900 text-sm">Portal Bot Session Health</h3>
                                 </div>
-                                <div>
-                                    <h3 className="font-bold text-teal-900 text-sm">Playwright Bot Directory Scan</h3>
-                                    <p className="text-xs text-teal-700">
-                                        {isScanning ? 'Scanning local downloads folder...' : `Scanned local directory: found ${localFiles.length} files.`}
+                                <button
+                                    onClick={checkAllSessions}
+                                    disabled={isCheckingSessions || refreshingPortal !== null}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-all"
+                                >
+                                    <RefreshIcon className={`w-3.5 h-3.5 ${isCheckingSessions ? 'animate-spin' : ''}`} />
+                                    Check All Sessions
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                {['blinkit', 'instamart', 'zepto', 'flipkart'].map((portalId) => {
+                                    const statusObj = sessionStatuses.find((s) => s.portalId === portalId);
+                                    const name = portalId === 'blinkit' ? 'Blinkit PartnersBiz' :
+                                                 portalId === 'instamart' ? 'Instamart Partner' :
+                                                 portalId === 'zepto' ? 'Zepto Brands' : 'Flipkart Vendor Hub';
+                                                 
+                                    const isPortalRefreshing = refreshingPortal === portalId;
+                                    const isBotRunning = !!runningBots[portalId];
+
+                                    let badgeColor = 'bg-gray-100 text-gray-700';
+                                    let badgeText = 'Unknown';
+                                    
+                                    if (statusObj) {
+                                        if (statusObj.status === 'active') {
+                                            badgeColor = 'bg-green-100 text-green-700 border border-green-200';
+                                            badgeText = 'Session Active';
+                                        } else if (statusObj.status === 'expired') {
+                                            badgeColor = 'bg-yellow-100 text-yellow-700 border border-yellow-200';
+                                            badgeText = 'Session Expired';
+                                        } else if (statusObj.status === 'error') {
+                                            badgeColor = 'bg-red-100 text-red-700 border border-red-200';
+                                            badgeText = 'Check Failed';
+                                        }
+                                    }
+
+                                    return (
+                                        <div key={portalId} className="border border-gray-100 rounded-xl p-4 bg-gray-50/50 hover:shadow-md hover:border-gray-200 transition-all flex flex-col justify-between min-h-[160px]">
+                                            <div>
+                                                <div className="flex items-start justify-between gap-2 mb-1.5">
+                                                    <h4 className="font-bold text-gray-800 text-xs truncate max-w-[130px]" title={name}>{name}</h4>
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeColor}`}>
+                                                        {badgeText}
+                                                    </span>
+                                                </div>
+                                                <p className="text-[10px] text-gray-500 line-clamp-2 min-h-[30px]" title={statusObj?.detail}>
+                                                    {statusObj ? statusObj.detail : 'No status checked yet.'}
+                                                </p>
+                                                {statusObj?.stateModifiedAt && (
+                                                    <div className="text-[9px] text-gray-400 mt-1">
+                                                        Age: <span className="font-medium">{statusObj.stateAgeHours ? `${statusObj.stateAgeHours}h` : '-'}</span> | Mod: <span className="font-medium">{new Date(statusObj.stateModifiedAt).toLocaleDateString('en-IN', {day:'2-digit', month:'short'})}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-3">
+                                                {isPortalRefreshing ? (
+                                                    <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-2 mb-2 text-[9px] text-indigo-700 font-medium">
+                                                        <div className="flex items-center gap-1 mb-1">
+                                                            <RefreshIcon className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                                                            <span>Refreshing Session...</span>
+                                                        </div>
+                                                        <p className="truncate" title={refreshMessage}>{refreshMessage}</p>
+                                                    </div>
+                                                ) : null}
+
+                                                <div className="flex gap-2 w-full">
+                                                    <button
+                                                        onClick={() => triggerSessionRefresh(portalId)}
+                                                        disabled={refreshingPortal !== null || isCheckingSessions || (isCloudEnv && isLocalServerConnected !== true)}
+                                                        className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all"
+                                                        title={
+                                                            isCloudEnv && isLocalServerConnected !== true
+                                                                ? "Use Chrome Extension to sync cookies on cloud"
+                                                                : (isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Refresh login token manually")
+                                                        }
+                                                    >
+                                                        Login Capture
+                                                    </button>
+                                                    <button
+                                                        onClick={() => triggerPortalBotRun(portalId)}
+                                                        disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}
+                                                        className="flex-1 px-2.5 py-1.5 bg-teal-600 border border-teal-700 text-white hover:bg-teal-700 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1"
+                                                        title={isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Launch bot script to download PO/GRN"}
+                                                    >
+                                                        {isBotRunning ? (
+                                                            <RefreshIcon className="w-3 h-3 animate-spin" />
+                                                        ) : (
+                                                            <TruckIcon className="w-3 h-3" />
+                                                        )}
+                                                        Run Bot
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        {/* Scanning & batch controls */}
+                        {isCloudEnv && isLocalServerConnected !== true ? (
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg mt-0.5">
+                                    <AlertIcon className="w-5 h-5 text-amber-600" />
+                                </div>
+                                <div className="space-y-1">
+                                    <h3 className="font-bold text-amber-900 text-sm">Local Server Disconnected</h3>
+                                    <p className="text-xs text-amber-700 max-w-2xl leading-relaxed">
+                                        You are viewing the dashboard on the cloud Vercel link. To use **local file scanning, automatic GRN matching, or browser automation**, please ensure your local Express server is running on your desktop by executing <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px] text-amber-900">npm run dev</code>.
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={scanLocalFiles}
-                                    disabled={isScanning || isBatchUploading}
-                                    className="px-4 py-2 bg-white hover:bg-gray-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                    <RefreshIcon className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-                                    Scan Files
-                                </button>
-                                <button
-                                    onClick={handleBatchAutoUpload}
-                                    disabled={isScanning || isBatchUploading || trackingOrders.length === 0}
-                                    className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-teal-100 flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                    {isBatchUploading ? (
-                                        <>
-                                            <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
-                                            Uploading Match...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckCircleIcon className="w-3.5 h-3.5" />
-                                            Scan &amp; Auto-Upload All
-                                        </>
-                                    )}
-                                </button>
+                        ) : (
+                            <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm relative overflow-hidden">
+                                {isCloudEnv && isLocalServerConnected === true && (
+                                    <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-green-100 border border-green-200 py-0.5 px-2 rounded-full">
+                                        <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                        <span className="text-[9px] text-green-700 font-bold uppercase tracking-wider">Desktop Server Connected</span>
+                                    </div>
+                                )}
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
+                                        <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-teal-900 text-sm">Playwright Bot Directory Scan</h3>
+                                        <p className="text-xs text-teal-700">
+                                            {isScanning ? 'Scanning local downloads folder...' : `Scanned local directory: found ${localFiles.length} files.`}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={scanLocalFiles}
+                                        disabled={isScanning || isBatchUploading}
+                                        className="px-4 py-2 bg-white hover:bg-gray-50 text-teal-700 border border-teal-200 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        <RefreshIcon className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                                        Scan Files
+                                    </button>
+                                    <button
+                                        onClick={handleBatchAutoUpload}
+                                        disabled={isScanning || isBatchUploading || trackingOrders.length === 0}
+                                        className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-teal-100 flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        {isBatchUploading ? (
+                                            <>
+                                                <RefreshIcon className="w-3.5 h-3.5 animate-spin" />
+                                                Uploading Match...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CheckCircleIcon className="w-3.5 h-3.5" />
+                                                Scan &amp; Auto-Upload All
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         {/* Document Upload Table */}
                         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -1004,7 +1239,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {poMatch ? (
+                                                            {poMatch && (!isCloudEnv || isLocalServerConnected === true) ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'PO', poMatch.path, poMatch.name)}
                                                                     disabled={uploadingPoId === so.id || isAutoUploading}
@@ -1026,19 +1261,38 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                                         Uploading...
                                                                     </div>
                                                                 ) : (
-                                                                    <label className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-indigo-200 transition-colors">
-                                                                        <PaperclipIcon className="w-3.5 h-3.5" />
-                                                                        Upload PO File
-                                                                        <input
-                                                                            type="file"
-                                                                            accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
-                                                                            className="hidden"
-                                                                            onChange={(e) => {
-                                                                                const file = e.target.files?.[0];
-                                                                                if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'PO');
-                                                                            }}
-                                                                        />
-                                                                    </label>
+                                                                    <div className="flex flex-col gap-1.5">
+                                                                        <label className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-indigo-200 transition-colors">
+                                                                            <PaperclipIcon className="w-3.5 h-3.5" />
+                                                                            Upload PO File
+                                                                            <input
+                                                                                type="file"
+                                                                                accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                                className="hidden"
+                                                                                onChange={(e) => {
+                                                                                    const file = e.target.files?.[0];
+                                                                                    if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'PO');
+                                                                                }}
+                                                                            />
+                                                                        </label>
+                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && (!isCloudEnv || isLocalServerConnected === true) && (
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    const ch = so.channel.toLowerCase();
+                                                                                    const portalId = ch.includes('zepto') ? 'zepto' :
+                                                                                                     ch.includes('blinkit') ? 'blinkit' :
+                                                                                                     ch.includes('instamart') ? 'instamart' :
+                                                                                                     ch.includes('flipkart') ? 'flipkart' : null;
+                                                                                    if (portalId) triggerPortalBotRun(portalId);
+                                                                                }}
+                                                                                disabled={refreshingPortal !== null}
+                                                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg text-xs font-bold border border-gray-200 transition-all shadow-sm w-fit"
+                                                                            >
+                                                                                <TruckIcon className="w-3.5 h-3.5 text-gray-400" />
+                                                                                Launch Bot
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -1070,7 +1324,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {grnMatch ? (
+                                                            {grnMatch && (!isCloudEnv || isLocalServerConnected === true) ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'GRN', grnMatch.path, grnMatch.name)}
                                                                     disabled={uploadingGrnId === so.id || isAutoUploading}
@@ -1092,19 +1346,38 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                                         Uploading...
                                                                     </div>
                                                                 ) : (
-                                                                    <label className="flex items-center gap-1 px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-green-200 transition-colors">
-                                                                        <PaperclipIcon className="w-3.5 h-3.5" />
-                                                                        Upload GRN File
-                                                                        <input
-                                                                            type="file"
-                                                                            accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
-                                                                            className="hidden"
-                                                                            onChange={(e) => {
-                                                                                const file = e.target.files?.[0];
-                                                                                if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'GRN');
-                                                                            }}
-                                                                        />
-                                                                    </label>
+                                                                    <div className="flex flex-col gap-1.5">
+                                                                        <label className="flex items-center gap-1 px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-bold cursor-pointer w-fit border border-green-200 transition-colors">
+                                                                            <PaperclipIcon className="w-3.5 h-3.5" />
+                                                                            Upload GRN File
+                                                                            <input
+                                                                                type="file"
+                                                                                accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls"
+                                                                                className="hidden"
+                                                                                onChange={(e) => {
+                                                                                    const file = e.target.files?.[0];
+                                                                                    if (file) handleManualDocumentUpload(file, so.poReference, so.id, 'GRN');
+                                                                                }}
+                                                                            />
+                                                                        </label>
+                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && (
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    const ch = so.channel.toLowerCase();
+                                                                                    const portalId = ch.includes('zepto') ? 'zepto' :
+                                                                                                     ch.includes('blinkit') ? 'blinkit' :
+                                                                                                     ch.includes('instamart') ? 'instamart' :
+                                                                                                     ch.includes('flipkart') ? 'flipkart' : null;
+                                                                                    if (portalId) triggerPortalBotRun(portalId);
+                                                                                }}
+                                                                                disabled={refreshingPortal !== null}
+                                                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg text-xs font-bold border border-gray-200 transition-all shadow-sm w-fit"
+                                                                            >
+                                                                                <TruckIcon className="w-3.5 h-3.5 text-gray-400" />
+                                                                                Launch Bot
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         </div>

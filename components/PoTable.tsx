@@ -237,6 +237,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                 <td className="px-6 py-4"><StatusBadge status={poStatus} /></td>
                 <td className="px-6 py-4 font-medium text-gray-700">{po.channel}</td>
                 <td className="px-6 py-4 text-gray-500">{po.storeCode}</td>
+                <td className="px-6 py-4 text-gray-500">{po.locationKey || '-'}</td>
                 <td className="px-6 py-4">
                     <div className="flex flex-col">
                         <div className="flex items-center gap-1 font-bold">
@@ -352,7 +353,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
             </tr>
             {isExpanded && (
                 <tr className="bg-gray-50/50">
-                    <td colSpan={8} className="px-4 py-8 sm:px-12">
+                    <td colSpan={9} className="px-4 py-8 sm:px-12">
                         <div className="bg-white border border-partners-border rounded-xl p-6 space-y-6 shadow-sm ring-1 ring-black/5">
                             <div className="pb-6 border-b border-gray-100">
                                 <div className="flex justify-between items-start mb-4">
@@ -950,6 +951,7 @@ const PoTable: React.FC<PoTableProps> = ({
                                 )}
                             </th>
                             <th className="px-6 py-4">Store</th>
+                            <th className="px-6 py-4">Location Key</th>
                             <th className="px-6 py-4">Fulfillable / Qty / Total</th>
                             <th className="px-6 py-4">PO Date</th>
                             <th className="px-6 py-4 text-center sticky right-0 bg-gray-50 z-30 border-l border-gray-100 min-w-[200px]">Action</th>

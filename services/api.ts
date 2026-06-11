@@ -449,6 +449,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
 
                 channel: row['Channel Name'] || 'Unknown',
                 storeCode: row['Store Code'] || '',
+                locationKey: row['Location_Key'] || row['Location Key'] || '',
                 qty, amount: itemAmount,
                 orderDate: formatSheetDate(row['PO Date']),
                 poEdd: formatSheetDate(row['PO EDD']),
@@ -589,7 +590,6 @@ export const selfShipOrder = async (data: {
 }): Promise<{ status: string, message: string }> => {
     return await postToScript({ action: 'SELF_SHIP_ORDER', ...data });
 };
-
 export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ status: string, message?: string }> => {
     try {
         const response = await fetch('/api/trigger-easyecom-fetch', {
@@ -631,7 +631,7 @@ export const fetchLocalDownloads = async (): Promise<{ status: string, data: { n
         return await response.json();
     } catch (error: any) {
         console.error("Error fetching local downloads:", error);
-        return { status: 'error', data: [] };
+        throw error;
     }
 };
 
@@ -659,4 +659,72 @@ export const updateShipmentDocuments = async (data: {
     grnDate?: string;
 }): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updateShipmentDocuments', ...data });
+};
+
+export const fetchBotSessions = async (): Promise<{ status: string, results: any[], checkedAt: string }> => {
+    try {
+        const response = await fetch('/api/bot-sessions');
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error fetching bot sessions:", error);
+        throw error;
+    }
+};
+
+export const refreshBotSession = async (portalId: string): Promise<{ status: string, portalId: string, jobStatus: string, message: string }> => {
+    try {
+        const response = await fetch('/api/bot-sessions/refresh', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ portalId })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error refreshing bot session:", error);
+        return { status: 'error', portalId, jobStatus: 'failed', message: error.message };
+    }
+};
+
+export const getBotSessionRefreshStatus = async (portalId: string): Promise<{ status: string, job: any }> => {
+    try {
+        const response = await fetch(`/api/bot-sessions/refresh/${encodeURIComponent(portalId)}`);
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error getting refresh status:", error);
+        return { status: 'error', job: { portalId, status: 'failed', message: error.message } };
+    }
+};
+
+export const runPortalBot = async (portalId: string): Promise<{ status: string, message?: string }> => {
+    try {
+        const response = await fetch('/api/run-bot', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ portalId })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error running portal bot:", error);
+        return { status: 'error', message: error.message };
+    }
+};
+
+export const uploadBotSessionState = async (portalId: string, sessionJson: any): Promise<{ status: string, message: string }> => {
+    try {
+        const response = await fetch('/api/bot-sessions/upload-state', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ portalId, sessionJson })
+        });
+        return await response.json();
+    } catch (error: any) {
+        console.error("Error uploading bot session state:", error);
+        return { status: 'error', message: error.message };
+    }
 };

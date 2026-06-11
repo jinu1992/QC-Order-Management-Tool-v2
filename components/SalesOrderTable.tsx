@@ -2033,6 +2033,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         pickupDate: item.pickupDate || po.pickupDate,
                         labelUrl: item.labelUrl || po.labelUrl,
                         orderNotes: po.orderNotes || '',
+                        locationKey: po.locationKey || '',
                     };
                 } else {
                     const curPo = String(po.poNumber || po.id || '');
@@ -3572,6 +3573,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 {activeFilterColumn === 'channel' && (<div ref={filterMenuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 p-2 z-40 normal-case"><select className="w-full px-2 py-1.5 text-xs border rounded-md" value={columnFilters.channel || ''} onChange={(e: any) => setColumnFilters({ ...columnFilters, channel: e.target.value })}><option value="">All Channels</option>{uniqueChannels.map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
                             </th>
                             <th className="px-6 py-3">Store</th>
+                            
                             <th className="px-6 py-3">Qty / Total</th>
                             <th className="px-6 py-3">Order Date (EE)</th>
                             <th className="px-6 py-3 text-center sticky right-0 bg-gray-50 z-30 border-l border-gray-100 min-w-[200px]">Action</th>
@@ -3579,7 +3581,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     </thead>
                     <tbody className="divide-y divide-gray-100/50">
                         {salesOrders.length === 0 ? (
-                            <tr><td colSpan={8} className="px-6 py-10 text-center text-gray-500 italic">No sales orders found matching current criteria.</td></tr>
+                            <tr><td colSpan={9} className="px-6 py-10 text-center text-gray-500 italic">No sales orders found matching current criteria.</td></tr>
                         ) : (
                             salesOrders.map((so) => {
                                 const isExpanded = expandedRowId === so.id;
@@ -3672,8 +3674,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 font-medium text-gray-800">{so.channel}</td>
+                                            <td className="px-6 py-4">
+    <div className="font-medium text-gray-800">
+        {so.channel}
+    </div>
+
+    {so.locationKey && (
+        <div className="text-xs text-gray-500 mt-1">
+            {so.locationKey}
+        </div>
+    )}
+</td>
                                             <td className="px-6 py-4">{so.storeCode}</td>
+                                            
                                             <td className="px-6 py-4 font-medium text-gray-900">{so.qty} / ₹{totalAmountIncTax.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
                                             <td className="px-6 py-4 whitespace-nowrap text-gray-400">
                                                 {isRTD ? (
