@@ -582,6 +582,35 @@ async function startServer() {
     });
   });
 
+  app.post("/api/bot-sessions/upload-state", (req: Request, res: Response) => {
+    const { portalId, sessionJson } = req.body;
+    if (!portalId || !PORTALS[portalId] || !sessionJson) {
+      return res.status(400).json({ status: 'error', message: 'Invalid or missing portalId or sessionJson' });
+    }
+    const portal = PORTALS[portalId];
+    try {
+      const parsed = typeof sessionJson === 'string' ? JSON.parse(sessionJson) : sessionJson;
+      if (!parsed.cookies || !Array.isArray(parsed.cookies)) {
+        return res.status(400).json({ status: 'error', message: 'Invalid session JSON: missing cookies array' });
+      }
+
+      const dir = path.dirname(portal.stateFile);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      fs.writeFileSync(portal.stateFile, JSON.stringify(parsed, null, 2));
+      console.log(`[API] Saved manually uploaded session JSON for ${portal.name} at ${portal.stateFile}`);
+      
+      res.json({
+        status: 'success',
+        message: `Successfully saved active session for ${portal.name}.`
+      });
+    } catch (e: any) {
+      res.status(400).json({ status: 'error', message: 'Failed to save session JSON: ' + e.message });
+    }
+  });
+
   app.get("/api/bot-sessions/refresh/:portalId", (req: Request, res: Response) => {
     const portalId = req.params.portalId as string;
     if (!portalId || !PORTALS[portalId]) {

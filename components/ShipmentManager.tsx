@@ -3,7 +3,7 @@ import { PurchaseOrder, POItem, User, GroupedSalesOrder, POStatus } from '../typ
 import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon, PaperclipIcon, ExternalLinkIcon, RefreshIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
-import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile, fetchBotSessions, refreshBotSession, getBotSessionRefreshStatus, runPortalBot } from '../services/api';
+import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile, fetchBotSessions, refreshBotSession, getBotSessionRefreshStatus, runPortalBot, uploadBotSessionState } from '../services/api';
 
 // GroupedSalesOrder is now imported from ../types
 
@@ -51,6 +51,38 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     // Local files and upload state
     const [localFiles, setLocalFiles] = useState<{ name: string, path: string, folder: string }[]>([]);
     const [isLocalServerConnected, setIsLocalServerConnected] = useState<boolean | null>(null);
+    const [uploadingSessionPortal, setUploadingSessionPortal] = useState<string | null>(null);
+
+    const handleSessionStateUpload = async (portalId: string, file: File) => {
+        setUploadingSessionPortal(portalId);
+        try {
+            const text = await file.text();
+            let parsedJson;
+            try {
+                parsedJson = JSON.parse(text);
+            } catch {
+                addNotification?.('Invalid JSON file format.', 'error');
+                return;
+            }
+
+            if (!parsedJson.cookies || !Array.isArray(parsedJson.cookies)) {
+                addNotification?.('Invalid Playwright session state JSON: missing cookies array.', 'error');
+                return;
+            }
+
+            const res = await uploadBotSessionState(portalId, parsedJson);
+            if (res.status === 'success') {
+                addNotification?.(`Successfully uploaded session state for ${portalId}.`, 'success');
+                checkAllSessions();
+            } else {
+                addNotification?.(res.message || 'Failed to upload session state.', 'error');
+            }
+        } catch (err: any) {
+            addNotification?.(err.message || 'Error uploading session file.', 'error');
+        } finally {
+            setUploadingSessionPortal(null);
+        }
+    };
     const [isScanning, setIsScanning] = useState(false);
     const [uploadingPoId, setUploadingPoId] = useState<string | null>(null);
     const [uploadingGrnId, setUploadingGrnId] = useState<string | null>(null);
@@ -1085,15 +1117,41 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                     </div>
                                                 ) : null}
 
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => triggerSessionRefresh(portalId)}
-                                                        disabled={refreshingPortal !== null || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}
-                                                        className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all"
-                                                        title={isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Refresh login token manually"}
-                                                    >
-                                                        Login Capture
-                                                    </button>
+                                                <div className="flex gap-2 w-full">
+                                                    {isCloudEnv && isLocalServerConnected !== true ? (
+                                                        <label className={`flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-[10px] font-bold rounded-lg shadow-sm cursor-pointer transition-all ${uploadingSessionPortal === portalId ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                                            {uploadingSessionPortal === portalId ? (
+                                                                <>
+                                                                    <RefreshIcon className="w-3.5 h-3.5 animate-spin text-gray-500" />
+                                                                    Uploading...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <PaperclipIcon className="w-3.5 h-3.5 text-gray-500" />
+                                                                    Upload Session JSON
+                                                                </>
+                                                            )}
+                                                            <input 
+                                                                type="file" 
+                                                                accept=".json" 
+                                                                className="hidden" 
+                                                                disabled={uploadingSessionPortal === portalId}
+                                                                onChange={(e) => {
+                                                                    const file = e.target.files?.[0];
+                                                                    if (file) handleSessionStateUpload(portalId, file);
+                                                                }}
+                                                            />
+                                                        </label>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => triggerSessionRefresh(portalId)}
+                                                            disabled={refreshingPortal !== null || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}
+                                                            className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all"
+                                                            title={isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Refresh login token manually"}
+                                                        >
+                                                            Login Capture
+                                                        </button>
+                                                    )}
                                                     <button
                                                         onClick={() => triggerPortalBotRun(portalId)}
                                                         disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Cubelelo Session Sync",
+  "version": "1.0",
+  "description": "Capture and sync portal cookies to the Cubelelo B2B dashboard",
+  "permissions": [
+    "cookies",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "https://*.onrender.com/*",
+    "https://vendorhub.flipkart.com/*",
+    "https://partner.instamart.in/*",
+    "https://www.partnersbiz.com/*",
+    "https://brands.zepto.co.in/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
