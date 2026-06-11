@@ -50,6 +50,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
     // Local files and upload state
     const [localFiles, setLocalFiles] = useState<{ name: string, path: string, folder: string }[]>([]);
+    const [isLocalServerConnected, setIsLocalServerConnected] = useState<boolean | null>(null);
     const [isScanning, setIsScanning] = useState(false);
     const [uploadingPoId, setUploadingPoId] = useState<string | null>(null);
     const [uploadingGrnId, setUploadingGrnId] = useState<string | null>(null);
@@ -72,12 +73,15 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             const res = await fetchBotSessions();
             if (res.status === 'success' && res.results) {
                 setSessionStatuses(res.results);
+                setIsLocalServerConnected(true);
             } else {
+                setIsLocalServerConnected(false);
                 if (!isCloudEnv) {
                     addNotification?.('Failed to fetch bot sessions status.', 'error');
                 }
             }
         } catch (err: any) {
+            setIsLocalServerConnected(false);
             if (!isCloudEnv) {
                 addNotification?.(err.message || 'Error checking session statuses.', 'error');
             }
@@ -154,21 +158,24 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
     // Scan local downloads folder
     const scanLocalFiles = async () => {
-        if (isCloudEnv) {
-            setLocalFiles([]);
-            return;
-        }
         setIsScanning(true);
         try {
             const res = await fetchLocalDownloads();
             if (res.status === 'success' && res.data) {
                 setLocalFiles(res.data);
+                setIsLocalServerConnected(true);
                 addNotification?.(`Scanned local downloads folder. Found ${res.data.length} files.`, 'success');
             } else {
+                setIsLocalServerConnected(false);
                 addNotification?.('Failed to scan local downloads folder.', 'error');
             }
         } catch (e: any) {
-            addNotification?.(e.message || 'Error scanning local downloads.', 'error');
+            setIsLocalServerConnected(false);
+            if (isCloudEnv) {
+                addNotification?.('Failed to connect to local desktop server. Please check if "npm run dev" is running locally.', 'error');
+            } else {
+                addNotification?.(e.message || 'Error scanning local downloads.', 'error');
+            }
         } finally {
             setIsScanning(false);
         }
@@ -1081,17 +1088,17 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                 <div className="flex gap-2">
                                                     <button
                                                         onClick={() => triggerSessionRefresh(portalId)}
-                                                        disabled={refreshingPortal !== null || isCheckingSessions || isCloudEnv}
+                                                        disabled={refreshingPortal !== null || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}
                                                         className="flex-1 px-2.5 py-1.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all"
-                                                        title={isCloudEnv ? "Manual login capture is only supported locally" : "Refresh login token manually"}
+                                                        title={isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Refresh login token manually"}
                                                     >
                                                         Login Capture
                                                     </button>
                                                     <button
                                                         onClick={() => triggerPortalBotRun(portalId)}
-                                                        disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions || isCloudEnv}
+                                                        disabled={refreshingPortal !== null || isBotRunning || isCheckingSessions || (isCloudEnv && isLocalServerConnected === false)}
                                                         className="flex-1 px-2.5 py-1.5 bg-teal-600 border border-teal-700 text-white hover:bg-teal-700 disabled:opacity-50 text-[10px] font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1"
-                                                        title={isCloudEnv ? "Running bots is only supported locally" : "Launch bot script to download PO/GRN"}
+                                                        title={isCloudEnv && isLocalServerConnected === false ? "Local desktop server disconnected" : "Launch bot script to download PO/GRN"}
                                                     >
                                                         {isBotRunning ? (
                                                             <RefreshIcon className="w-3 h-3 animate-spin" />
@@ -1108,23 +1115,26 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                             </div>
                         </div>
                         {/* Scanning & batch controls */}
-                        {isCloudEnv ? (
+                        {isCloudEnv && isLocalServerConnected !== true ? (
                             <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
                                 <div className="p-2 bg-amber-100 text-amber-800 rounded-lg mt-0.5">
                                     <AlertIcon className="w-5 h-5 text-amber-600" />
                                 </div>
                                 <div className="space-y-1">
-                                    <h3 className="font-bold text-amber-900 text-sm">Cloud Environment Mode</h3>
+                                    <h3 className="font-bold text-amber-900 text-sm">Local Server Disconnected</h3>
                                     <p className="text-xs text-amber-700 max-w-2xl leading-relaxed">
-                                        You are currently viewing the dashboard via the cloud Vercel link. <strong>Browser automation, local download scanning, and automatic GRN match-and-upload</strong> are disabled in this mode.
-                                    </p>
-                                    <p className="text-xs text-amber-600 font-semibold mt-1">
-                                        To use automated match-and-upload, please run the application locally on your desktop by running <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px] text-amber-900">npm run dev</code>.
+                                        You are viewing the dashboard on the cloud Vercel link. To use **local file scanning, automatic GRN matching, or browser automation**, please ensure your local Express server is running on your desktop by executing <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px] text-amber-900">npm run dev</code>.
                                     </p>
                                 </div>
                             </div>
                         ) : (
-                            <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-50 border border-teal-100 rounded-xl p-4 shadow-sm relative overflow-hidden">
+                                {isCloudEnv && isLocalServerConnected === true && (
+                                    <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-green-100 border border-green-200 py-0.5 px-2 rounded-full">
+                                        <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                        <span className="text-[9px] text-green-700 font-bold uppercase tracking-wider">Desktop Server Connected</span>
+                                    </div>
+                                )}
                                 <div className="flex items-center gap-3">
                                     <div className="p-2.5 bg-teal-600 text-white rounded-xl shadow-lg shadow-teal-100">
                                         <RefreshIcon className={`w-5 h-5 ${isScanning ? 'animate-spin' : ''}`} />
@@ -1224,7 +1234,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {poMatch && !isCloudEnv ? (
+                                                            {poMatch && (!isCloudEnv || isLocalServerConnected === true) ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'PO', poMatch.path, poMatch.name)}
                                                                     disabled={uploadingPoId === so.id || isAutoUploading}
@@ -1260,7 +1270,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                                                 }}
                                                                             />
                                                                         </label>
-                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && !isCloudEnv && (
+                                                                        {['zepto', 'blinkit', 'instamart', 'flipkart'].some(c => so.channel.toLowerCase().includes(c)) && (!isCloudEnv || isLocalServerConnected === true) && (
                                                                             <button
                                                                                 onClick={() => {
                                                                                     const ch = so.channel.toLowerCase();
@@ -1309,7 +1319,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                         </div>
                                                     ) : (
                                                         <div className="flex flex-col gap-2">
-                                                            {grnMatch && !isCloudEnv ? (
+                                                            {grnMatch && (!isCloudEnv || isLocalServerConnected === true) ? (
                                                                 <button
                                                                     onClick={() => handleAutoUpload(so.poReference, so.id, 'GRN', grnMatch.path, grnMatch.name)}
                                                                     disabled={uploadingGrnId === so.id || isAutoUploading}
