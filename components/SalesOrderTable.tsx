@@ -205,6 +205,7 @@ const formatTimeForInput = (timeInput?: any): string => {
 const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, userEmail }: { so: GroupedSalesOrder, onClose: () => void, onSuccess: () => void, addNotification: any, userEmail: string }) => {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadComplete, setUploadComplete] = useState(false);
+    const [consignmentNumber, setConsignmentNumber] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const extractTextFromPdf = async (file: File): Promise<string> => {
@@ -248,6 +249,35 @@ const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, use
         } catch (err: any) {
             console.error("PDF Extraction Error:", err);
             addNotification('Error reading PDF file. Ensure it is a valid Flipkart Consignment PDF.', 'error');
+            setIsUploading(false);
+        }
+    };
+
+    const handleManualSubmit = async () => {
+        if (!consignmentNumber.trim()) {
+            addNotification('Please enter a valid Consignment Number.', 'warning');
+            return;
+        }
+
+        setIsUploading(true);
+
+        try {
+            // Construct simulated PDF text pattern to satisfy backend validation
+            const simulatedText = `PO Number: ${so.poReference}\nConsignment Number: ${consignmentNumber.trim()}`;
+
+            const res = await processFlipkartConsignment(so.poReference, simulatedText, userEmail);
+
+            if (res.status === 'success') {
+                setUploadComplete(true);
+                addNotification(res.message, 'success');
+                onSuccess();
+            } else {
+                addNotification(res.message || 'Linking failed.', 'error');
+                setIsUploading(false);
+            }
+        } catch (err: any) {
+            console.error("Manual Linking Error:", err);
+            addNotification('Error linking consignment number. Please try again.', 'error');
             setIsUploading(false);
         }
     };
@@ -298,35 +328,68 @@ const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, use
                     </div>
 
                     {!uploadComplete ? (
-                        <div className="space-y-4">
-                            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
-                                <InfoIcon className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                                <p className="text-xs text-blue-800 leading-relaxed">Please upload the <b>Consignment PDF</b> file generated from the Flipkart portal. Our AI will extract the Consignment ID and Delivery Schedule automatically.</p>
+                        <div className="space-y-6">
+                            {/* Manual Entry Section */}
+                            <div className="space-y-2.5">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    Consignment Number
+                                </label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Enter Consignment Number..."
+                                        value={consignmentNumber}
+                                        onChange={(e) => setConsignmentNumber(e.target.value)}
+                                        disabled={isUploading}
+                                        className="flex-1 px-4 py-3 text-sm border-2 border-gray-150 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
+                                    />
+                                    <button
+                                        onClick={handleManualSubmit}
+                                        disabled={isUploading || !consignmentNumber.trim()}
+                                        className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-2xl shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center min-w-[100px]"
+                                    >
+                                        {isUploading && !fileInputRef.current?.files?.length ? (
+                                            <RefreshIcon className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                            'Link Now'
+                                        )}
+                                    </button>
+                                </div>
                             </div>
 
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept=".pdf"
-                                onChange={handleFileUpload}
-                            />
+                            {/* Divider */}
+                            <div className="relative flex py-2 items-center">
+                                <div className="flex-grow border-t border-gray-200"></div>
+                                <span className="flex-shrink mx-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest">or upload pdf</span>
+                                <div className="flex-grow border-t border-gray-200"></div>
+                            </div>
 
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={isUploading}
-                                className="w-full py-6 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-3 group disabled:opacity-50"
-                            >
-                                {isUploading ? (
-                                    <RefreshIcon className="h-10 w-10 animate-spin text-blue-500" />
-                                ) : (
-                                    <UploadIcon className="h-10 w-10 text-gray-300 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
-                                )}
-                                <div className="text-center">
-                                    <span className="text-sm block">{isUploading ? 'Extracting Data...' : 'Select Consignment PDF'}</span>
-                                    {!isUploading && <span className="text-[10px] uppercase tracking-widest opacity-50">Click or Drag File Here</span>}
-                                </div>
-                            </button>
+                            {/* PDF Upload Section */}
+                            <div className="space-y-4">
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept=".pdf"
+                                    onChange={handleFileUpload}
+                                />
+
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isUploading}
+                                    className="w-full py-5 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-2 group disabled:opacity-50"
+                                >
+                                    {isUploading && fileInputRef.current?.files?.length ? (
+                                        <RefreshIcon className="h-8 w-8 animate-spin text-blue-500" />
+                                    ) : (
+                                        <UploadIcon className="h-8 w-8 text-gray-300 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
+                                    )}
+                                    <div className="text-center">
+                                        <span className="text-sm block">{isUploading && fileInputRef.current?.files?.length ? 'Extracting Data...' : 'Select Consignment PDF'}</span>
+                                        {!isUploading && <span className="text-[10px] uppercase tracking-widest opacity-50">Click to Browse</span>}
+                                    </div>
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <div className="text-center py-6 animate-in fade-in slide-in-from-bottom-2">
