@@ -3188,7 +3188,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
         if (canInvoice) {
-            const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minutes');
             return {
                 label: isCreatingInvoice === so.id ? 'Creating...' : (isFlipkart ? 'Upload E-Invoice' : 'Create Invoice'),
                 color: isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-purple-600 text-white hover:bg-purple-700',
@@ -3274,16 +3274,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
             const isInstamart = so.channel.toLowerCase().includes('instamart');
             const isAmazonFba = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
-            const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minutes');
+            const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
-            if (isAmazonFba || isFlipkart) {
+            if (isAmazonFba || isFlipkart || isFlipkartMinutes) {
                 return {
                     label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
                     color: isAmazonFba 
                         ? 'bg-amber-900 text-white border border-amber-800 cursor-default shadow-sm' 
                         : 'bg-indigo-950 text-white border border-indigo-900 cursor-default shadow-sm',
-                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
+                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : (isFlipkartMinutes ? 'Flipkart Minutes' : 'Flipkart')} orders are handled by the portal, not our shipping partners.`, 'info'),
                     disabled: false
                 };
             }
@@ -3590,13 +3591,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const isRefreshing = isRefreshingSo === so.poReference;
 
                                 const isInstamart = so.channel.toLowerCase().includes('instamart');
-                                const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+                                const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
+                                const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !isFlipkartMinutes;
                                 const isAmazonFBA = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
                                 const isZepto = so.channel.toLowerCase().includes('zepto');
                                 const isBB = so.channel.toLowerCase().includes('bb');
                                 const isRBL = so.channel.toLowerCase().includes('rbl');
-                                const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
 
                                 const isInstamartChannel = so.channel.toLowerCase().includes('instamart');
                                 const isRTD = so.status?.toLowerCase().trim() === 'ready to dispatch' || so.status === 'RTD';
@@ -3610,9 +3611,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
 
                                 const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus && !isRTD;
-                                const showFlipkartPrintAction = isFlipkart && hasAppointmentId && !isFinalStatus && !isRTD;
+                                const showFlipkartPrintAction = (isFlipkart || isFlipkartMinutes) && hasAppointmentId && !isFinalStatus && !isRTD;
 
-                                const showFlipkartDownload = isFlipkart && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartDownload = (isFlipkart || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
                                 const showZeptoDownload = false;
 
                                 const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
@@ -3792,7 +3793,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                             <TruckIcon className="h-3.5 w-3.5" /> Self Ship
                                                         </button>
                                                     )}
-                                                    {isFlipkart && canInvoice && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                    {(isFlipkart || isFlipkartMinutes) && canInvoice && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                         <button 
                                                             onClick={(e: any) => { e.stopPropagation(); handleDownloadFlipkartPackingSlip(so); }} 
                                                             disabled={action.disabled} 
@@ -3900,7 +3901,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             Mark as RTO Initiated
                                                                         </button>
                                                                     )}
-                                                                    {(isFlipkart || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
+                                                                    {(isFlipkart || isFlipkartMinutes || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
                                                                         <>
                                                                             <button
                                                                                 onClick={(e: any) => {
@@ -4120,7 +4121,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             <GlobeIcon className="h-4 w-4" /> Link Consignment Details
                                                                         </button>
                                                                     )}
-                                                                    {isFlipkart && hasAppointmentId && so.status !== 'Ready to Dispatch' && (
+                                                                    {(isFlipkart || isFlipkartMinutes) && hasAppointmentId && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95"
@@ -4142,7 +4143,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={(e: any) => {
-                                                                                    if (isAmazonFBA || isFlipkart) return;
+                                                                                    if (isAmazonFBA || isFlipkart || isFlipkartMinutes) return;
                                                                                     if (so.boxCount === 0) { 
                                                                                         e.stopPropagation();
                                                                                         handleFetchEasyEcomBoxData(so);
@@ -4154,13 +4155,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
-                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
+                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : (isFlipkart || isFlipkartMinutes) ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
-                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
+                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart || isFlipkartMinutes) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
+                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : (isFlipkart || isFlipkartMinutes) ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
                                                                             </button>
-                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
+                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
@@ -4168,10 +4169,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 </div>
                                                             </div>
                                                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart || so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart || so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart || so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{isFlipkart ? (so.consignmentQty && Number(so.consignmentQty) > 0 ? so.consignmentQty : (so.boxCount > 0 ? so.boxCount : 'N/A')) : (so.boxCount || 0)}</p></div></div></div>
-
+                                                                <div className={`p-4 rounded-xl border transition-all ${(isFlipkart || isFlipkartMinutes || so.boxCount > 0) ? 'bg-partners-light-green border-partners-green/20' : 'bg-red-50 border-red-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Package Detail</p><div className="flex items-center gap-2"><CubeIcon className={`h-5 w-5 ${(isFlipkart || isFlipkartMinutes || so.boxCount > 0) ? 'text-partners-green' : 'text-red-400'}`} /><div><p className="text-sm font-bold text-gray-800">Box Count</p><p className={`text-lg font-black ${(isFlipkart || isFlipkartMinutes || so.boxCount > 0) ? 'text-partners-green' : 'text-red-600'}`}>{ (isFlipkart || isFlipkartMinutes) ? (so.consignmentQty && Number(so.consignmentQty) > 0 ? so.consignmentQty : (so.boxCount > 0 ? so.boxCount : 'N/A')) : (so.boxCount || 0)}</p></div></div></div>
+ 
                                                                 <div className="p-4 bg-partners-light-blue rounded-xl border border-blue-100 flex flex-col">
-                                                                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{isFlipkart ? 'Consignment Details' : 'Appointment Details'}</p>
+                                                                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-3">{(isFlipkart || isFlipkartMinutes) ? 'Consignment Details' : 'Appointment Details'}</p>
                                                                     <div className="flex-1 flex flex-col justify-between space-y-3">
                                                                         <div>
                                                                             <div className="flex items-center gap-2 mb-1">
