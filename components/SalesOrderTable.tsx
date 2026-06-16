@@ -3278,13 +3278,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
-            if (isAmazonFba || isFlipkart || isFlipkartMinutes) {
+            if (isAmazonFba || isFlipkart) {
                 return {
                     label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
                     color: isAmazonFba 
                         ? 'bg-amber-900 text-white border border-amber-800 cursor-default shadow-sm' 
                         : 'bg-indigo-950 text-white border border-indigo-900 cursor-default shadow-sm',
-                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : (isFlipkartMinutes ? 'Flipkart Minutes' : 'Flipkart')} orders are handled by the portal, not our shipping partners.`, 'info'),
+                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
                     disabled: false
                 };
             }
@@ -4143,7 +4143,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={(e: any) => {
-                                                                                    if (isAmazonFBA || isFlipkart || isFlipkartMinutes) return;
+                                                                                    if (isAmazonFBA || isFlipkart) return;
                                                                                     if (so.boxCount === 0) { 
                                                                                         e.stopPropagation();
                                                                                         handleFetchEasyEcomBoxData(so);
@@ -4155,13 +4155,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
-                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : (isFlipkart || isFlipkartMinutes) ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
+                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
-                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart || isFlipkartMinutes) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : (isFlipkart || isFlipkartMinutes) ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
+                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
+                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
                                                                             </button>
-                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (
+                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
