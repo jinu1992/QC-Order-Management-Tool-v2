@@ -205,6 +205,7 @@ const formatTimeForInput = (timeInput?: any): string => {
 const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, userEmail }: { so: GroupedSalesOrder, onClose: () => void, onSuccess: () => void, addNotification: any, userEmail: string }) => {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadComplete, setUploadComplete] = useState(false);
+    const [consignmentNumber, setConsignmentNumber] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const extractTextFromPdf = async (file: File): Promise<string> => {
@@ -248,6 +249,35 @@ const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, use
         } catch (err: any) {
             console.error("PDF Extraction Error:", err);
             addNotification('Error reading PDF file. Ensure it is a valid Flipkart Consignment PDF.', 'error');
+            setIsUploading(false);
+        }
+    };
+
+    const handleManualSubmit = async () => {
+        if (!consignmentNumber.trim()) {
+            addNotification('Please enter a valid Consignment Number.', 'warning');
+            return;
+        }
+
+        setIsUploading(true);
+
+        try {
+            // Construct simulated PDF text pattern to satisfy backend validation
+            const simulatedText = `PO Number: ${so.poReference}\nConsignment Number: ${consignmentNumber.trim()}`;
+
+            const res = await processFlipkartConsignment(so.poReference, simulatedText, userEmail);
+
+            if (res.status === 'success') {
+                setUploadComplete(true);
+                addNotification(res.message, 'success');
+                onSuccess();
+            } else {
+                addNotification(res.message || 'Linking failed.', 'error');
+                setIsUploading(false);
+            }
+        } catch (err: any) {
+            console.error("Manual Linking Error:", err);
+            addNotification('Error linking consignment number. Please try again.', 'error');
             setIsUploading(false);
         }
     };
@@ -298,35 +328,68 @@ const FlipkartConsignmentModal = ({ so, onClose, onSuccess, addNotification, use
                     </div>
 
                     {!uploadComplete ? (
-                        <div className="space-y-4">
-                            <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
-                                <InfoIcon className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                                <p className="text-xs text-blue-800 leading-relaxed">Please upload the <b>Consignment PDF</b> file generated from the Flipkart portal. Our AI will extract the Consignment ID and Delivery Schedule automatically.</p>
+                        <div className="space-y-6">
+                            {/* Manual Entry Section */}
+                            <div className="space-y-2.5">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    Consignment Number
+                                </label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Enter Consignment Number..."
+                                        value={consignmentNumber}
+                                        onChange={(e) => setConsignmentNumber(e.target.value)}
+                                        disabled={isUploading}
+                                        className="flex-1 px-4 py-3 text-sm border-2 border-gray-150 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
+                                    />
+                                    <button
+                                        onClick={handleManualSubmit}
+                                        disabled={isUploading || !consignmentNumber.trim()}
+                                        className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-2xl shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center min-w-[100px]"
+                                    >
+                                        {isUploading && !fileInputRef.current?.files?.length ? (
+                                            <RefreshIcon className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                            'Link Now'
+                                        )}
+                                    </button>
+                                </div>
                             </div>
 
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept=".pdf"
-                                onChange={handleFileUpload}
-                            />
+                            {/* Divider */}
+                            <div className="relative flex py-2 items-center">
+                                <div className="flex-grow border-t border-gray-200"></div>
+                                <span className="flex-shrink mx-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest">or upload pdf</span>
+                                <div className="flex-grow border-t border-gray-200"></div>
+                            </div>
 
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={isUploading}
-                                className="w-full py-6 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-3 group disabled:opacity-50"
-                            >
-                                {isUploading ? (
-                                    <RefreshIcon className="h-10 w-10 animate-spin text-blue-500" />
-                                ) : (
-                                    <UploadIcon className="h-10 w-10 text-gray-300 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
-                                )}
-                                <div className="text-center">
-                                    <span className="text-sm block">{isUploading ? 'Extracting Data...' : 'Select Consignment PDF'}</span>
-                                    {!isUploading && <span className="text-[10px] uppercase tracking-widest opacity-50">Click or Drag File Here</span>}
-                                </div>
-                            </button>
+                            {/* PDF Upload Section */}
+                            <div className="space-y-4">
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept=".pdf"
+                                    onChange={handleFileUpload}
+                                />
+
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isUploading}
+                                    className="w-full py-5 bg-white border-4 border-dashed border-gray-200 text-gray-400 font-bold rounded-3xl hover:bg-blue-50 hover:border-blue-400 hover:text-blue-600 transition-all flex flex-col items-center gap-2 group disabled:opacity-50"
+                                >
+                                    {isUploading && fileInputRef.current?.files?.length ? (
+                                        <RefreshIcon className="h-8 w-8 animate-spin text-blue-500" />
+                                    ) : (
+                                        <UploadIcon className="h-8 w-8 text-gray-300 group-hover:text-blue-400 group-hover:scale-110 transition-transform" />
+                                    )}
+                                    <div className="text-center">
+                                        <span className="text-sm block">{isUploading && fileInputRef.current?.files?.length ? 'Extracting Data...' : 'Select Consignment PDF'}</span>
+                                        {!isUploading && <span className="text-[10px] uppercase tracking-widest opacity-50">Click to Browse</span>}
+                                    </div>
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <div className="text-center py-6 animate-in fade-in slide-in-from-bottom-2">
@@ -990,8 +1053,8 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
     const isZepto = so.channel.toLowerCase().includes('zepto');
     const isBlinkit = so.channel.toLowerCase().includes('blinkit');
     const isFlipkart = so.channel.toLowerCase().includes('flipkart');
-    const portalName = isZepto ? 'Zepto Brands' : isBlinkit ? 'Blinkit Partners' : 'Flipkart Seller';
-    const portalUrl = isZepto ? 'https://brands.zepto.co.in/' : isBlinkit ? 'https://partnersbiz.com' : 'https://seller.flipkart.com/';
+    const portalName = isZepto ? 'Zepto Brands' : isBlinkit ? 'Blinkit Partners' : 'Flipkart Vendor Hub';
+    const portalUrl = isZepto ? 'https://brands.zepto.co.in/' : isBlinkit ? 'https://partnersbiz.com' : 'https://vendorhub.flipkart.com/';
     const brandColor = isZepto ? 'bg-purple-600' : isBlinkit ? 'bg-yellow-400' : 'bg-blue-600';
     const logoText = isZepto ? 'z' : isBlinkit ? 'b' : 'f';
     const shadowColor = isZepto ? 'shadow-purple-100' : isBlinkit ? 'shadow-yellow-100' : 'shadow-blue-100';
@@ -3278,13 +3341,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
-            if (isAmazonFba || isFlipkart || isFlipkartMinutes) {
+            if (isAmazonFba || isFlipkart) {
                 return {
                     label: isAmazonFba ? 'FBA Handled' : 'Flipkart Handled',
                     color: isAmazonFba 
                         ? 'bg-amber-900 text-white border border-amber-800 cursor-default shadow-sm' 
                         : 'bg-indigo-950 text-white border border-indigo-900 cursor-default shadow-sm',
-                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : (isFlipkartMinutes ? 'Flipkart Minutes' : 'Flipkart')} orders are handled by the portal, not our shipping partners.`, 'info'),
+                    onClick: () => addNotification(`${isAmazonFba ? 'Amazon FBA' : 'Flipkart'} orders are handled by the portal, not our shipping partners.`, 'info'),
                     disabled: false
                 };
             }
@@ -3616,8 +3679,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const showFlipkartDownload = (isFlipkart || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
-                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
+                                const showBlinkitAppointmentBtn = isBlinkit && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartTakeApptBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
@@ -3724,14 +3788,24 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <button
                                                                     onClick={(e: any) => {
                                                                         e.stopPropagation();
-                                                                        if (isFlipkartMinutes) setFlipkartConsignmentModal({ isOpen: true, so });
-                                                                        else if (hasAppointmentId) setActiveAppointmentPass(so);
+                                                                        if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                         else setPortalHelper({ isOpen: true, so });
                                                                     }}
-                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkartMinutes ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
+                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
                                                                 >
-                                                                    {isFlipkartMinutes ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
-                                                                    {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
+                                                                    {hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />}
+                                                                    {hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment'}
+                                                                </button>
+                                                            )}
+                                                            {showFlipkartTakeApptBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => {
+                                                                        e.stopPropagation();
+                                                                        setPortalHelper({ isOpen: true, so });
+                                                                    }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
+                                                                >
+                                                                    <PlusIcon className="h-3.5 w-3.5" /> Take Appointment
                                                                 </button>
                                                             )}
                                                             {showFlipkartAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
@@ -4113,6 +4187,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             {hasAppointmentId ? 'Print Appointment Pass' : 'Take Appointment'}
                                                                         </button>
                                                                     )}
+                                                                    {showFlipkartTakeApptBtn && so.status !== 'Ready to Dispatch' && (
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setPortalHelper({ isOpen: true, so });
+                                                                            }}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
+                                                                        >
+                                                                            <PlusIcon className="h-4 w-4" /> Take Appointment
+                                                                        </button>
+                                                                    )}
                                                                     {showFlipkartAppointmentBtn && so.status !== 'Ready to Dispatch' && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); setFlipkartConsignmentModal({ isOpen: true, so }); }}
@@ -4143,7 +4228,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={(e: any) => {
-                                                                                    if (isAmazonFBA || isFlipkart || isFlipkartMinutes) return;
+                                                                                    if (isAmazonFBA || isFlipkart) return;
                                                                                     if (so.boxCount === 0) { 
                                                                                         e.stopPropagation();
                                                                                         handleFetchEasyEcomBoxData(so);
@@ -4155,13 +4240,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
-                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : (isFlipkart || isFlipkartMinutes) ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
+                                                                                className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
-                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart || isFlipkartMinutes) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : (isFlipkart || isFlipkartMinutes) ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
+                                                                                {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
+                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
                                                                             </button>
-                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart && !isFlipkartMinutes) && (
+                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
