@@ -3679,7 +3679,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const showFlipkartDownload = (isFlipkart || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
                                 const showZeptoDownload = false;
 
-                                const showBlinkitAppointmentBtn = (isBlinkit || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
+                                const showBlinkitAppointmentBtn = isBlinkit && hasLabel && !isFinalStatus && !isRTD;
                                 const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
