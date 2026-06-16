@@ -3680,7 +3680,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const showZeptoDownload = false;
 
                                 const showBlinkitAppointmentBtn = isBlinkit && hasLabel && !isFinalStatus && !isRTD;
-                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
+                                const showFlipkartAppointmentBtn = isFlipkartMinutes && hasLabel && !isFinalStatus && !isRTD;
+                                const showFlipkartTakeApptBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
@@ -3787,14 +3788,24 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <button
                                                                     onClick={(e: any) => {
                                                                         e.stopPropagation();
-                                                                        if (isFlipkartMinutes) setFlipkartConsignmentModal({ isOpen: true, so });
-                                                                        else if (hasAppointmentId) setActiveAppointmentPass(so);
+                                                                        if (hasAppointmentId) setActiveAppointmentPass(so);
                                                                         else setPortalHelper({ isOpen: true, so });
                                                                     }}
-                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${isFlipkartMinutes ? 'bg-blue-600 text-white hover:bg-blue-700' : (hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100')}`}
+                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${hasAppointmentId ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100' : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
                                                                 >
-                                                                    {isFlipkartMinutes ? <GlobeIcon className="h-3.5 w-3.5" /> : (hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />)}
-                                                                    {isFlipkartMinutes ? 'Link Consignment' : (hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment')}
+                                                                    {hasAppointmentId ? <PrinterIcon className="h-3.5 w-3.5" /> : <PlusIcon className="h-3.5 w-3.5" />}
+                                                                    {hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment'}
+                                                                </button>
+                                                            )}
+                                                            {showFlipkartTakeApptBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                                <button
+                                                                    onClick={(e: any) => {
+                                                                        e.stopPropagation();
+                                                                        setPortalHelper({ isOpen: true, so });
+                                                                    }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1.5"
+                                                                >
+                                                                    <PlusIcon className="h-3.5 w-3.5" /> Take Appointment
                                                                 </button>
                                                             )}
                                                             {showFlipkartAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
@@ -4174,6 +4185,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         >
                                                                             {hasAppointmentId ? <PrinterIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
                                                                             {hasAppointmentId ? 'Print Appointment Pass' : 'Take Appointment'}
+                                                                        </button>
+                                                                    )}
+                                                                    {showFlipkartTakeApptBtn && so.status !== 'Ready to Dispatch' && (
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setPortalHelper({ isOpen: true, so });
+                                                                            }}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-indigo-700 transition-all active:scale-95"
+                                                                        >
+                                                                            <PlusIcon className="h-4 w-4" /> Take Appointment
                                                                         </button>
                                                                     )}
                                                                     {showFlipkartAppointmentBtn && so.status !== 'Ready to Dispatch' && (
