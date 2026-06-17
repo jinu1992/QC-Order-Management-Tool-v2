@@ -450,7 +450,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 channel: row['Channel Name'] || 'Unknown',
                 storeCode: row['Store Code'] || '',
                 locationKey: row['Location_Key'] || row['Location Key'] || '',
-                location: row['Location'] || '',
+                location: row['Location'] || row['location'] || row['LOCATION'] || '',
                 qty, amount: itemAmount,
                 orderDate: formatSheetDate(row['PO Date']),
                 poEdd: formatSheetDate(row['PO EDD']),
