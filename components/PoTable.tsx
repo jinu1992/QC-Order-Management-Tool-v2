@@ -237,7 +237,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                 <td className="px-6 py-4"><StatusBadge status={poStatus} /></td>
                 <td className="px-6 py-4 font-medium text-gray-700">{po.channel}</td>
                 <td className="px-6 py-4 text-gray-500">{po.storeCode}</td>
-                <td className="px-6 py-4 text-gray-500">{po.locationKey || '-'}</td>
+                <td className="px-6 py-4 text-gray-500">{po.location || '-'}</td>
                 <td className="px-6 py-4">
                     <div className="flex flex-col">
                         <div className="flex items-center gap-1 font-bold">
