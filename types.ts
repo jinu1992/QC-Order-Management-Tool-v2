@@ -161,6 +161,7 @@ export interface PurchaseOrder {
     orderNotes?: string;
     poDbStatus?: string; 
     locationKey?: string;    
+    location?: string;
     // Raw DB Status value (e.g. 'RTD') preserved for frontend override logic
 }
 
@@ -316,5 +317,6 @@ export interface GroupedSalesOrder {
     grnNumber?: string;
     grnDate?: string;
     locationKey?: string;
+    location?: string;
 }
 
