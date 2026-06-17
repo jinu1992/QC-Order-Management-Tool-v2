@@ -3841,9 +3841,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     rel="noopener noreferrer"
                                                                     onClick={(e: any) => e.stopPropagation()}
                                                                     className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-                                                                    title="Print Shipping Label"
+                                                                    title="Print AWB Shipping Label"
                                                                 >
-                                                                    <PrinterIcon className="h-3.5 w-3.5" /> Print Label
+                                                                    <PrinterIcon className="h-3.5 w-3.5" /> AWB Label
                                                                 </a>
                                                             )}
                                                         </>
