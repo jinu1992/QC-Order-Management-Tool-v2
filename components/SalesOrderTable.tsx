@@ -2049,6 +2049,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         status: displayStatus,
                         originalEeStatus: eeStatus,
                         channel: po.channel,
+                        location: po.location,
                         storeCode: po.storeCode,
                         orderDate: effectiveOrderDate,
                         poEdd: po.poEdd,
@@ -3744,9 +3745,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         {so.channel}
     </div>
 
-    {so.locationKey && (
+    {so.location && (
         <div className="text-xs text-gray-500 mt-1">
-            {so.locationKey}
+            {so.location}
         </div>
     )}
 </td>
