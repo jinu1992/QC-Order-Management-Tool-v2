@@ -2985,7 +2985,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         // Find the order to check its channel
         const so = allSalesOrders.find(o => o.id === eeRef);
         const channel = so?.channel.toLowerCase() || '';
-        const b2bChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'blinkit'];
+        const b2bChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
 
         // If it's a B2B channel and no courierId is provided, show the selection modal
         if (b2bChannels.includes(channel) && !courierId) {

@@ -215,7 +215,11 @@ function processFlipkartConsignment(data) {
     if (!extractedPo) {
       return { status: 'error', message: 'Could not find PO Number in PDF content.' };
     }
-    if (extractedPo !== poNumber) {
+    // Clean PO numbers of trailing version suffixes (like -1, _1) for matching
+    const cleanPoForMatch = function(po) {
+      return String(po).replace(/[-_]\d+$/, '').trim().toUpperCase();
+    };
+    if (cleanPoForMatch(extractedPo) !== cleanPoForMatch(poNumber)) {
       return { status: 'error', message: `PO Mismatch! PDF belongs to ${extractedPo}, but you are uploading for ${poNumber}.` };
     }
     if (!consignmentId) {
