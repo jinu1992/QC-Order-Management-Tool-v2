@@ -479,6 +479,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 shippingCharge: row['Shipping Charge'] ? Number(row['Shipping Charge']) : undefined,
                 pickupDate: formatSheetDate(row['Pickup Date']),
                 labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
+                inboundPlanId: row['Inbound Plan ID'] ? String(row['Inbound Plan ID']) : undefined,
                 orderNotes: row['Order Notes'] ? String(row['Order Notes']) : undefined,
             });
         }
