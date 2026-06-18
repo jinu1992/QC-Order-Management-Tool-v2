@@ -1615,7 +1615,7 @@ const AmazonBoxDetailsModal: FC<{
 
                 <div className="p-6 bg-gray-50 border-t flex justify-between items-center">
 
-    {true && (
+    {so.channel === 'Amazon_FBA' && so.inboundPlanId && (
         <a
             href={`https://sellercentral.amazon.in/fba/sendtoamazon/confirm_shipping_step?wf=${so.inboundPlanId}`}
             target="_blank"
