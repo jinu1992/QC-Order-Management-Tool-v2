@@ -1579,7 +1579,7 @@ const AmazonBoxDetailsModal: FC<{
                                         </div>
                                         <div>
                                             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Order Ref</p>
-                                            <p className="text-4xl font-black text-[#FF9900]">{so.id}</p>
+                                            <p className="text-xl font-bold text-[#FF9900] truncate max-w-[150px]" title={so.id}>{so.id}</p>
                                         </div>
                                     </div>
                                     <div className="p-4 bg-orange-50 rounded-2xl">
