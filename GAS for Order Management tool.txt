@@ -4750,58 +4750,9 @@ function pushToEasyEcom(data)
     const shippingCharge = Number(data.shippingCharge || 0);
 
     // ==========================================================
-    // WORKFLOW B — EasyEcom (runs for ALL channels incl. amazon_fba)
+    // WORKFLOW A — Amazon FBA (only if channel = amazon_fba and pushTarget is 'AMZ' or not specified)
     // ==========================================================
-    Logger.log(
-      `Pushing PO to EasyEcom for channel '${channel}', PO: ${poRef}`
-    );
-
-    const formattedItems = data.items.map(item => ({
-      Sku: item.masterSku || item.articleCode,
-      Quantity: Number(item.qty),
-      Price: Number(item.unitCost || 0.01)
-    }));
-
-
-    easyEcomResult = createEasyEcomB2BOrder(
-      poRef,
-      data.eeCustomerId,
-      formattedItems,
-      shippingCharge   // ✅ added shipping charge
-    );
-
-
-    const eeMessage = (easyEcomResult.message || "").toLowerCase();
-
-    const isAlreadyExists =
-      eeMessage.includes("already exists") ||
-      eeMessage.includes("order number") && eeMessage.includes("exists");
-
-
-    if (easyEcomResult.status === 'success' || isAlreadyExists) {
-
-      Logger.log(
-        isAlreadyExists
-          ? `EasyEcom order already exists for PO ${poRef}. Treating as success.`
-          : `EasyEcom order created successfully for PO ${poRef}`
-      );
-
-      // Update PO flag
-      updatePoDatabaseFlag(data.poNumber, poRef, data.items);
-
-    } else {
-
-      throw new Error(
-        `EasyEcom order creation failed: ${easyEcomResult.message}`
-      );
-
-    }
-
-    // ==========================================================
-    // WORKFLOW A — Amazon FBA (only if channel = amazon_fba)
-    // ==========================================================
-    if (channel === 'amazon_fba') {
-
+    if (channel === 'amazon_fba' && (!data.pushTarget || data.pushTarget === 'AMZ')) {
       Logger.log(
         `Channel is 'amazon_fba'. Creating Amazon FBA inbound shipment for PO: ${data.poNumber}`
       );
@@ -4809,13 +4760,65 @@ function pushToEasyEcom(data)
       amazonResult = createAmazonFbaInboundPlan(data, poRef);
 
       if (amazonResult?.status !== 'success') {
-
         throw new Error(
           `Amazon FBA workflow failed: ${amazonResult?.message || 'Unknown error'}`
         );
-
       }
 
+      // If we only wanted to push to Amazon, return early now
+      if (data.pushTarget === 'AMZ') {
+        return responseJSON({
+          status: 'success',
+          message: 'Amazon FBA workflow completed successfully',
+          data: {
+            amazon: amazonResult,
+            easyecom: null
+          }
+        });
+      }
+    }
+
+    // ==========================================================
+    // WORKFLOW B — EasyEcom (runs for ALL channels if pushTarget is 'EE' or not specified)
+    // ==========================================================
+    if (!data.pushTarget || data.pushTarget === 'EE') {
+      Logger.log(
+        `Pushing PO to EasyEcom for channel '${channel}', PO: ${poRef}`
+      );
+
+      const formattedItems = data.items.map(item => ({
+        Sku: item.masterSku || item.articleCode,
+        Quantity: Number(item.qty),
+        Price: Number(item.unitCost || 0.01)
+      }));
+
+      easyEcomResult = createEasyEcomB2BOrder(
+        poRef,
+        data.eeCustomerId,
+        formattedItems,
+        shippingCharge   // ✅ added shipping charge
+      );
+
+      const eeMessage = (easyEcomResult.message || "").toLowerCase();
+
+      const isAlreadyExists =
+        eeMessage.includes("already exists") ||
+        eeMessage.includes("order number") && eeMessage.includes("exists");
+
+      if (easyEcomResult.status === 'success' || isAlreadyExists) {
+        Logger.log(
+          isAlreadyExists
+            ? `EasyEcom order already exists for PO ${poRef}. Treating as success.`
+            : `EasyEcom order created successfully for PO ${poRef}`
+        );
+
+        // Update PO flag
+        updatePoDatabaseFlag(data.poNumber, poRef, data.items);
+      } else {
+        throw new Error(
+          `EasyEcom order creation failed: ${easyEcomResult.message}`
+        );
+      }
     }
 
     // ==========================================================
@@ -4823,7 +4826,7 @@ function pushToEasyEcom(data)
     // ==========================================================
     return responseJSON({
       status: 'success',
-      message: 'Amazon (if applicable) and EasyEcom workflows completed successfully',
+      message: 'Workflows completed successfully',
       data: {
         amazon: amazonResult,
         easyecom: easyEcomResult

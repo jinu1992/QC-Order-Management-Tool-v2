@@ -111,6 +111,8 @@ const OrderRow: React.FC<OrderRowProps> = ({
 }: OrderRowProps) => {
     const poStatus = getCalculatedStatus(po);
     const items = po.items || [];
+    const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
+    const fbaMissing = isAmazonFba && !po.inboundPlanId;
 
     // Filter active items (not cancelled)
     const activeItems = useMemo(() => items.filter(i => (i.itemStatus || '').toLowerCase() !== 'cancelled'), [items]);
@@ -204,8 +206,19 @@ const OrderRow: React.FC<OrderRowProps> = ({
             onActionClick = () => onUpdateStatus('Confirmed');
             isDisabled = isUpdatingStatus;
         } else {
-            actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
-            actionColor = 'bg-partners-green text-white hover:bg-green-700';
+            const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
+            if (isAmazonFba) {
+                if (!po.inboundPlanId) {
+                    actionLabel = isPushing ? 'Pushing...' : 'Push to AMZ';
+                    actionColor = 'bg-[#FF9900] text-gray-900 hover:bg-[#FF8C00] font-black';
+                } else {
+                    actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
+                    actionColor = 'bg-partners-green text-white hover:bg-green-700';
+                }
+            } else {
+                actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
+                actionColor = 'bg-partners-green text-white hover:bg-green-700';
+            }
             onActionClick = onToggle;
             isDisabled = isPushing;
         }
@@ -368,13 +381,26 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         {isRefreshing ? 'Refreshing...' : 'Refresh This Order Only'}
                                     </button>
                                 </div>
-                                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                                <div className={`grid grid-cols-2 ${po.inboundPlanId ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100`}>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Ref</p><p className="text-xs font-bold text-partners-green truncate">{po.poNumber}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO Date</p><p className="text-xs font-bold text-gray-700">{po.orderDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof po.shippingCharge === 'number' ? `₹${po.shippingCharge}` : '₹0'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${po.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{po.eeCustomerId || 'Not Mapped'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{po.poExpiryDate || 'N/A'}</p></div>
                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">PO PDF</p>{po.poPdfUrl ? <a href={po.poPdfUrl} target="_blank" rel="noopener noreferrer" className="text-partners-green hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"><PaperclipIcon className="h-3 w-3" /> View PO PDF</a> : <p className="text-xs text-gray-300 font-bold italic mt-0.5">Not Uploaded</p>}</div>
+                                    {po.inboundPlanId && (
+                                        <div>
+                                            <p className="text-[10px] uppercase font-bold text-gray-400">AMZ Shipment</p>
+                                            <a 
+                                                href={`https://sellercentral.amazon.in/fba/sendtoamazon/confirm_shipping_step?wf=${po.inboundPlanId}`} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer" 
+                                                className="text-orange-500 hover:underline flex items-center gap-1 text-xs font-bold mt-0.5"
+                                            >
+                                                View Shipment
+                                            </a>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex justify-between items-center border-b border-gray-100 pb-4">
@@ -487,10 +513,10 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                         type="button"
                                         onClick={onPush}
                                         disabled={selectedCount === 0 || isPushing || poStatus === POStatus.BelowThreshold || poStatus === POStatus.Cancelled}
-                                        className={`flex items-center gap-2 px-6 py-3 text-sm font-bold text-white rounded-xl shadow-sm transition-all active:scale-95 ${selectedCount > 0 && !isPushing ? 'bg-partners-green hover:bg-green-700' : 'bg-gray-300 cursor-not-allowed grayscale'}`}
+                                        className={`flex items-center gap-2 px-6 py-3 text-sm font-bold text-white rounded-xl shadow-sm transition-all active:scale-95 ${selectedCount > 0 && !isPushing ? (fbaMissing ? 'bg-[#FF9900] hover:bg-[#FF8C00] text-gray-900 font-black' : 'bg-partners-green hover:bg-green-700') : 'bg-gray-300 cursor-not-allowed grayscale'}`}
                                     >
                                         <UploadIcon className="h-4 w-4" />
-                                        {isPushing ? 'Processing...' : `Push ${selectedCount > 0 ? selectedCount : ''} Items`}
+                                        {isPushing ? 'Processing...' : (fbaMissing ? `Push to AMZ (${selectedCount > 0 ? selectedCount : ''} Items)` : `Push to EE (${selectedCount > 0 ? selectedCount : ''} Items)`)}
                                     </button>
                                 ) : po.zohoContactId ? (
                                     <button
@@ -678,27 +704,47 @@ const PoTable: React.FC<PoTableProps> = ({
     const handlePushAction = async (po: PurchaseOrder) => {
         const selected = selectedPoItems[po.id] || [];
         if (selected.length === 0) return;
+
+        const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
+        const pushTarget = isAmazonFba ? (po.inboundPlanId ? 'EE' : 'AMZ') : undefined;
+
         setPushingToEasyEcom(prev => ({ ...prev, [po.id]: true }));
         try {
-            const res = await pushToEasyEcom(po, selected);
+            const res = await pushToEasyEcom(po, selected, pushTarget);
             if (res.status === 'success') {
+                const inboundPlanId = res.data?.amazon?.data?.inboundPlanId || res.data?.amazon?.inboundPlanId;
+
                 setPurchaseOrders(prev => prev.map(p => {
                     if (p.poNumber === po.poNumber) {
                         return {
                             ...p,
-                            items: p.items?.map(item =>
-                                selected.includes(item.articleCode)
-                                    ? { ...item, eeOrderRefId: 'PATCHED' }
-                                    : item
-                            )
+                            inboundPlanId: inboundPlanId || p.inboundPlanId,
+                            fbaShipmentId: inboundPlanId || p.fbaShipmentId,
+                            items: p.items?.map(item => {
+                                const isItemPushed = pushTarget === 'EE' || !isAmazonFba;
+                                return selected.includes(item.articleCode)
+                                    ? {
+                                        ...item,
+                                        eeOrderRefId: isItemPushed ? 'PATCHED' : item.eeOrderRefId,
+                                        inboundPlanId: inboundPlanId || item.inboundPlanId,
+                                        fbaShipmentId: inboundPlanId || item.fbaShipmentId
+                                      }
+                                    : item;
+                            })
                         };
                     }
                     return p;
                 }));
 
-                addNotification(res.message || 'Pushed to EasyEcom successfully.', 'success');
-                addLog('EasyEcom Sync', `Pushed ${selected.length} items from PO ${po.poNumber}`);
-                setSelectedPoItems(prev => ({ ...prev, [po.id]: [] }));
+                const successMessage = pushTarget === 'AMZ'
+                    ? 'Pushed to Amazon FBA successfully (Inbound Plan Created).'
+                    : 'Pushed to EasyEcom successfully.';
+                addNotification(res.message || successMessage, 'success');
+                addLog('EasyEcom Sync', `${pushTarget === 'AMZ' ? 'Pushed FBA plan' : 'Pushed items'} for PO ${po.poNumber}`);
+
+                if (pushTarget !== 'AMZ') {
+                    setSelectedPoItems(prev => ({ ...prev, [po.id]: [] }));
+                }
                 refreshSinglePOState(po.poNumber);
             } else { addNotification('Failed: ' + res.message, 'error'); }
         } catch (e) { addNotification('Network error.', 'error'); }
