@@ -1613,14 +1613,27 @@ const AmazonBoxDetailsModal: FC<{
                     )}
                 </div>
 
-                <div className="p-6 bg-gray-50 border-t flex justify-end">
-                    <button
-                        onClick={onClose}
-                        className="px-8 py-3 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm"
-                    >
-                        Close
-                    </button>
-                </div>
+                <div className="p-6 bg-gray-50 border-t flex justify-between items-center">
+
+    {so.channel === 'Amazon_FBA' && so.inboundPlanId && (
+        <a
+            href={`https://sellercentral.amazon.in/fba/sendtoamazon/confirm_shipping_step?wf=${so.inboundPlanId}`}
+            target="_blank"
+            rel=""
+            className="px-5 py-3 bg-orange-500 text-white font-bold rounded-2xl shadow-xl hover:bg-orange-600 transition-all"
+        >
+            Open Amazon Shipment
+        </a>
+    )}
+
+    <button
+        onClick={onClose}
+        className="px-8 py-3 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm"
+    >
+        Close
+    </button>
+
+</div>
             </div>
         </div>
     );
@@ -2067,6 +2080,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         invoiceTotal: item.invoiceTotal,
                         invoiceUrl: item.invoiceUrl,
                         invoicePdfUrl: item.invoicePdfUrl,
+                        inboundPlanId: po.inboundPlanId,
                         carrier: carrier,
                         awb: awb,
                         trackingStatus: trackingStatus,

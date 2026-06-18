@@ -318,5 +318,6 @@ export interface GroupedSalesOrder {
     grnDate?: string;
     locationKey?: string;
     location?: string;
+    inboundPlanId?: string;
 }
 
