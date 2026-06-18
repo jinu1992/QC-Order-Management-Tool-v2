@@ -614,7 +614,7 @@ export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ s
     }
 };
 
-export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[]) => {
+export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[], pushTarget?: 'AMZ' | 'EE') => {
     const itemsToSend = (po.items || [])
         .filter(item => selectedArticleCodes.includes(item.articleCode))
         .map(item => ({ ...item, unitCost: Number(((item.unitCost || 0) * 1.05).toFixed(2)) }));
@@ -623,7 +623,8 @@ export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: st
         ...po,
         items: itemsToSend,
         isPartial: po.items?.length !== itemsToSend.length,
-        shippingCharge: po.shippingCharge
+        shippingCharge: po.shippingCharge,
+        pushTarget
     });
 };
 

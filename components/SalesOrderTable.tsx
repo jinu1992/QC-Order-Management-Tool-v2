@@ -1468,10 +1468,17 @@ const AmazonBoxDetailsModal: FC<{
     so: GroupedSalesOrder,
     onClose: () => void,
     addNotification: any,
-    data?: any[]
-}> = ({ so, onClose, addNotification, data = [] }) => {
+    data?: any[],
+    onLinkFbaShipment?: (fbaId: string) => Promise<void>
+}> = ({ so, onClose, addNotification, data = [], onLinkFbaShipment }) => {
     const [boxDetails, setBoxDetails] = useState<any[]>(data);
     const [isLoading, setIsLoading] = useState(data.length === 0);
+    const [fbaId, setFbaId] = useState(so.fbaShipmentId || '');
+    const [isLinking, setIsLinking] = useState(false);
+
+    useEffect(() => {
+        setFbaId(so.fbaShipmentId || '');
+    }, [so.fbaShipmentId]);
 
     useEffect(() => {
         if (data && data.length > 0) {
@@ -1563,28 +1570,66 @@ const AmazonBoxDetailsModal: FC<{
                     ) : (
                         <div className="space-y-6">
                             {/* Total Boxes Summary Card */}
-                            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex items-center justify-between">
-                                <div className="flex gap-12">
-                                    <div>
-                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Shipment Boxes</p>
-                                        <p className="text-4xl font-black text-gray-900">{boxDetails.length}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex items-center justify-between">
+                                    <div className="flex gap-12">
+                                        <div>
+                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Shipment Boxes</p>
+                                            <p className="text-4xl font-black text-gray-900">{boxDetails.length}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Order Ref</p>
+                                            <p className="text-xl font-bold text-[#FF9900] truncate max-w-[150px]" title={so.id}>{so.id}</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Order Ref</p>
-                                        <p className="text-4xl font-black text-[#FF9900]">{so.id}</p>
+                                    <div className="p-4 bg-orange-50 rounded-2xl">
+                                        <CubeIcon className="h-8 w-8 text-[#FF9900]" />
                                     </div>
                                 </div>
-                                <div className="p-4 bg-orange-50 rounded-2xl">
-                                    <CubeIcon className="h-8 w-8 text-[#FF9900]" />
+
+                                {/* FBA Shipment ID Linking Section */}
+                                <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">FBA Shipment ID</p>
+                                        {so.fbaShipmentId ? (
+                                            <p className="text-[11px] text-green-600 font-bold flex items-center gap-1 mt-1">
+                                                <CheckCircleIcon className="h-3.5 w-3.5" /> Linked: <span className="font-mono bg-green-50 px-1.5 py-0.5 rounded border border-green-200">{so.fbaShipmentId}</span>
+                                            </p>
+                                        ) : (
+                                            <p className="text-[11px] text-amber-600 font-bold flex items-center gap-1 mt-1">
+                                                <AlertIcon className="h-3.5 w-3.5" /> Shipment ID Required before invoicing
+                                            </p>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={fbaId}
+                                            onChange={(e) => setFbaId(e.target.value)}
+                                            placeholder="Enter FBA Shipment ID"
+                                            className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#FF9900] focus:border-[#FF9900] transition-all outline-none font-mono font-bold text-xs"
+                                        />
+                                        <button
+                                            onClick={async () => {
+                                                if (!fbaId.trim() || !onLinkFbaShipment) return;
+                                                setIsLinking(true);
+                                                await onLinkFbaShipment(fbaId.trim());
+                                                setIsLinking(false);
+                                            }}
+                                            disabled={isLinking || !fbaId.trim() || fbaId.trim() === so.fbaShipmentId}
+                                            className="px-4 py-2 bg-[#FF9900] text-gray-900 font-black rounded-xl hover:bg-[#FF8C00] transition-all active:scale-[0.98] text-[10px] uppercase flex items-center gap-1.5 disabled:opacity-50"
+                                        >
+                                            {isLinking ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CheckCircleIcon className="h-3.5 w-3.5" />}
+                                            {so.fbaShipmentId ? 'Update' : 'Link'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-
 
                             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
                                 <table className="w-full text-sm text-left">
                                     <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b">
                                         <tr>
-
                                             <th className="px-6 py-4">Box Qty</th>
                                             <th className="px-6 py-4">Weight (kg)</th>
                                             <th className="px-6 py-4">Dimensions  (L×B×H) in cms</th>
@@ -2878,7 +2923,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     };
 
     const handleCreateZohoInvoiceAction = async (eeRef: string, poRef: string, soObj?: GroupedSalesOrder) => {
-        if (soObj && (soObj.channel.toLowerCase().includes('amazon_fba') || soObj.channel.toLowerCase().includes('amazon fba'))) {
+        if (soObj && (soObj.channel.toLowerCase().includes('amazon_fba') || soObj.channel.toLowerCase().includes('amazon fba')) && !soObj.fbaShipmentId) {
             setFbaShipmentModal({ isOpen: true, so: soObj });
             return;
         }
@@ -3260,8 +3305,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             return { label: 'Details', color: 'bg-gray-50 text-gray-700 border border-gray-200 hover:bg-gray-100', onClick: () => setExpandedRowId(so.id), disabled: isExecuting };
         }
 
-        const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
-            (so.storeCode.toUpperCase() === 'YEIO');
+        const isAmazonFba = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
+        const isAmazonFbaYeio = isAmazonFba && (so.storeCode.toUpperCase() === 'YEIO');
+        const fbaMissing = isAmazonFba && !isAmazonFbaYeio && !so.fbaShipmentId;
 
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
@@ -3269,15 +3315,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minutes');
             return {
                 label: isCreatingInvoice === so.id ? 'Creating...' : (isFlipkart ? 'Upload E-Invoice' : 'Create Invoice'),
-                color: isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : 'bg-purple-600 text-white hover:bg-purple-700',
+                color: isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : (fbaMissing ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'),
                 onClick: () => {
+                    if (fbaMissing) {
+                        addNotification("Please link FBA Shipment ID in Box Details first.", "warning");
+                        return;
+                    }
                     if (isFlipkart) {
                         setFlipkartEInvoiceModal({ isOpen: true, so });
                     } else {
                         handleCreateZohoInvoiceAction(so.id, so.poReference, so);
                     }
                 },
-                disabled: isExecuting
+                disabled: isExecuting || fbaMissing
             };
         }
 
@@ -3508,6 +3558,32 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onClose={() => setAmazonBoxModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     data={amazonBoxModal.data}
+                    onLinkFbaShipment={async (fbaId) => {
+                        try {
+                            const res = await updateFBAShipmentId(amazonBoxModal.so!.poReference, fbaId);
+                            if (res.status === 'success') {
+                                addNotification("FBA Shipment ID linked successfully!", "success");
+                                const parentPoNumbers = amazonBoxModal.so!.poReference.split(',').map(s => s.trim());
+                                setPurchaseOrders(prev => prev.map(po => {
+                                    if (parentPoNumbers.includes(po.poNumber)) {
+                                        return {
+                                            ...po,
+                                            fbaShipmentId: fbaId,
+                                            items: po.items?.map(item =>
+                                                item.eeReferenceCode === amazonBoxModal.so!.id ? { ...item, fbaShipmentId: fbaId } : item
+                                            )
+                                        };
+                                    }
+                                    return po;
+                                }));
+                                setAmazonBoxModal(prev => prev.so ? { ...prev, so: { ...prev.so, fbaShipmentId: fbaId } } : prev);
+                            } else {
+                                addNotification(res.message || "Failed to link FBA Shipment ID", "error");
+                            }
+                        } catch (err) {
+                            addNotification("Error linking FBA Shipment ID", "error");
+                        }
+                    }}
                 />
             )}
             {shippingConfirm.isOpen && shippingConfirm.so && (
@@ -3699,9 +3775,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const showFlipkartTakeApptBtn = isFlipkartMinutes && hasLabel && !hasAppointmentId && !isFinalStatus && !isRTD;
                                 const isAmazon = so.channel.toLowerCase().includes('amazon');
                                 const eeStatusLower = so.originalEeStatus.toLowerCase().trim();
-                                const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
-                                    (so.storeCode.toUpperCase() === 'YEIO');
-                                const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
+                                 const isAmazonFbaYeio = (so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba')) &&
+                                     (so.storeCode.toUpperCase() === 'YEIO');
+                                 const fbaMissing = isAmazonFBA && !isAmazonFbaYeio && !so.fbaShipmentId;
+                                 const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
                                 const showAmazonBoxDetails = isAmazon && !isFinalStatus && (
                                     (so.status === 'Invoiced' || so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered') ||
@@ -4088,10 +4165,27 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                             </button>
                                                                                         </>
                                                                                     ) : (
-                                                                                        <button onClick={() => handleCreateZohoInvoiceAction(so.id, so.poReference, so)} disabled={!!isCreatingInvoice} className="px-4 py-2 bg-purple-600 text-white text-[11px] font-bold rounded-lg shadow-sm hover:bg-purple-700 flex items-center gap-2 transition-all active:scale-95">
-                                                                                            {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
-                                                                                            {isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}
-                                                                                        </button>
+                                                                                        <div className="flex flex-col gap-1.5 w-full">
+                                                                                            <button
+                                                                                                onClick={() => {
+                                                                                                    if (fbaMissing) {
+                                                                                                        addNotification("Please link FBA Shipment ID in Box Details first.", "warning");
+                                                                                                        return;
+                                                                                                    }
+                                                                                                    handleCreateZohoInvoiceAction(so.id, so.poReference, so);
+                                                                                                }}
+                                                                                                disabled={!!isCreatingInvoice || fbaMissing}
+                                                                                                className={`px-4 py-2 text-white text-[11px] font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95 ${fbaMissing ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}
+                                                                                            >
+                                                                                                {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
+                                                                                                {isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}
+                                                                                            </button>
+                                                                                            {fbaMissing && (
+                                                                                                <p className="text-[10px] text-amber-600 font-bold text-center">
+                                                                                                    * Link FBA Shipment ID in Box Details first
+                                                                                                </p>
+                                                                                            )}
+                                                                                        </div>
                                                                                     )}
                                                                                 </div>
                                                                             ) : (<p className="mt-3 text-[10px] text-gray-400 italic bg-gray-100 px-3 py-1 rounded-full border border-gray-200">
