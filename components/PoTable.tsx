@@ -279,6 +279,17 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                 {isMarkingThreshold ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <SortIcon className="h-4 w-4 rotate-90" />}
                             </button>
                         )}
+                        {isAmazonFba && po.inboundPlanId && (
+                            <a
+                                href="https://sellercentral.amazon.in/send-to-amazon/v2/shipments"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="px-3 py-2 text-[10px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all shadow-sm whitespace-nowrap active:scale-95"
+                            >
+                                View Shipment
+                            </a>
+                        )}
                         <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onActionClick(); }}
@@ -507,7 +518,17 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                     </tbody>
                                 </table>
                             </div>
-                            <div className="flex justify-end pt-4 border-t border-gray-100">
+                            <div className="flex justify-end items-center gap-3 pt-4 border-t border-gray-100">
+                                {isAmazonFba && po.inboundPlanId && (
+                                    <a
+                                        href="https://sellercentral.amazon.in/send-to-amazon/v2/shipments"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all active:scale-95"
+                                    >
+                                        View Shipment
+                                    </a>
+                                )}
                                 {po.eeCustomerId ? (
                                     <button
                                         type="button"
@@ -707,6 +728,18 @@ const PoTable: React.FC<PoTableProps> = ({
 
         const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
         const pushTarget = isAmazonFba ? (po.inboundPlanId ? 'EE' : 'AMZ') : undefined;
+
+        if (pushTarget === 'EE') {
+            const confirmed = window.confirm(
+                `Before pushing FBA PO ${po.poNumber} to EasyEcom, please verify:\n\n` +
+                `1. Have you checked the shipment details via the "View Shipment" page?\n` +
+                `2. Is the Location Key (${po.locationKey || 'MISSING'}) correct and present?\n\n` +
+                `Click OK if you have verified these details and wish to proceed.`
+            );
+            if (!confirmed) {
+                return;
+            }
+        }
 
         setPushingToEasyEcom(prev => ({ ...prev, [po.id]: true }));
         try {
