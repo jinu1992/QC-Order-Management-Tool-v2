@@ -281,7 +281,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                         )}
                         {isAmazonFba && po.inboundPlanId && (
                             <a
-                                href="https://sellercentral.amazon.in/send-to-amazon/v2/shipments"
+                                href={`https://sellercentral.amazon.in/fba/sendtoamazon/confirm_shipping_step?wf=${po.inboundPlanId}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
@@ -521,7 +521,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             <div className="flex justify-end items-center gap-3 pt-4 border-t border-gray-100">
                                 {isAmazonFba && po.inboundPlanId && (
                                     <a
-                                        href="https://sellercentral.amazon.in/send-to-amazon/v2/shipments"
+                                        href={`https://sellercentral.amazon.in/fba/sendtoamazon/confirm_shipping_step?wf=${po.inboundPlanId}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all active:scale-95"
