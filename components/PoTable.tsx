@@ -215,11 +215,12 @@ const OrderRow: React.FC<OrderRowProps> = ({
                     actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
                     actionColor = 'bg-partners-green text-white hover:bg-green-700';
                 }
+                onActionClick = onPush;
             } else {
                 actionLabel = isPushing ? 'Pushing...' : 'Push to EE';
                 actionColor = 'bg-partners-green text-white hover:bg-green-700';
+                onActionClick = onToggle;
             }
-            onActionClick = onToggle;
             isDisabled = isPushing;
         }
     }
@@ -723,8 +724,16 @@ const PoTable: React.FC<PoTableProps> = ({
     };
 
     const handlePushAction = async (po: PurchaseOrder) => {
-        const selected = selectedPoItems[po.id] || [];
-        if (selected.length === 0) return;
+        let selected = selectedPoItems[po.id] || [];
+        if (selected.length === 0) {
+            const selectable = po.items?.filter(i => !i.eeOrderRefId && (i.itemStatus || '').toLowerCase() !== 'cancelled' && (i.fulfillableQty ?? 0) >= i.qty).map(i => i.articleCode) || [];
+            if (selectable.length === 0) {
+                addNotification("No selectable items found to push.", "error");
+                return;
+            }
+            selected = selectable;
+            setSelectedPoItems(prev => ({ ...prev, [po.id]: selectable }));
+        }
 
         const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
         const pushTarget = isAmazonFba ? (po.inboundPlanId ? 'EE' : 'AMZ') : undefined;
