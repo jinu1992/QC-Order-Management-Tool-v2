@@ -79,6 +79,7 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
     const isBB = channelLower.includes('bb');
     const isRBL = channelLower.includes('rbl');
     const isBlinkit = channelLower.includes('blinkit');
+    const isFlipkartMinutes = channelLower.includes('minute');
     
     // Most quick commerce channels don't need a manually entered ID as they use portal logic
     const hideIdField = isZepto || isInstamart || isBB || isRBL || isBlinkit;
@@ -93,6 +94,16 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
             shadow: 'shadow-purple-100',
             ring: 'focus:ring-purple-500',
             label: 'Zepto'
+        };
+        if (isFlipkartMinutes) return {
+            color: 'bg-blue-600',
+            text: 'text-blue-800',
+            bg: 'bg-blue-50',
+            border: 'border-blue-100',
+            hover: 'hover:bg-blue-100',
+            shadow: 'shadow-blue-100',
+            ring: 'focus:ring-blue-500',
+            label: 'Flipkart Minutes'
         };
         if (isBB) return {
             color: 'bg-partners-green',
@@ -238,10 +249,10 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
                     </div>
 
                     <div className={`${brand.bg} border ${brand.border} p-4 rounded-2xl flex gap-3`}>
-                        <div className={`${isZepto ? 'bg-purple-200' : isBB ? 'bg-green-200' : isBlinkit ? 'bg-yellow-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}>
-                            <QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : isBB ? 'text-green-700' : isBlinkit ? 'text-yellow-700' : 'text-orange-700'}`} />
+                        <div className={`${isZepto ? 'bg-purple-200' : isBB ? 'bg-green-200' : isBlinkit ? 'bg-yellow-200' : isFlipkartMinutes ? 'bg-blue-200' : 'bg-orange-200'} p-1.5 rounded-lg h-fit`}>
+                            <QuestionMarkCircleIcon className={`h-4 w-4 ${isZepto ? 'text-purple-700' : isBB ? 'text-green-700' : isBlinkit ? 'text-yellow-700' : isFlipkartMinutes ? 'text-blue-700' : 'text-orange-700'}`} />
                         </div>
-                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : isBB ? 'text-green-800' : isBlinkit ? 'text-yellow-800' : 'text-orange-800'} font-medium leading-relaxed`}>
+                        <p className={`text-[11px] ${isZepto ? 'text-purple-800' : isBB ? 'text-green-800' : isBlinkit ? 'text-yellow-800' : isFlipkartMinutes ? 'text-blue-800' : 'text-orange-800'} font-medium leading-relaxed`}>
                             Once updated, the order will be ready for <span className="font-bold text-blue-800">Shipping Partner</span> handover or final processing.
                         </p>
                     </div>

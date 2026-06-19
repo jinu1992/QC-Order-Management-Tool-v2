@@ -3791,7 +3791,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const hasAppt = !!so.appointmentId || !!so.appointmentDate;
                                 const isApptPending = apptRequired && !hasAppt && !so.awb;
                                 const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || (so.status === 'Invoiced' && !isBlinkit) || so.status === 'Label Generated');
-                                const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
+                                const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL || isFlipkartMinutes) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
                                 return (
                                     <Fragment key={so.id}>
