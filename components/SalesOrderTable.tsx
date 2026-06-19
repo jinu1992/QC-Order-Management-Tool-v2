@@ -2005,6 +2005,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const hasInvoice = !!invNum && invNum !== 'GENERATING...';
 
                 const isAmazon = po.channel.toLowerCase().includes('amazon');
+                const isFlipkartMinutes = po.channel.toLowerCase().includes('minute');
+                const isFlipkartB2B = po.channel.toLowerCase().includes('flipkart') && !isFlipkartMinutes;
                 const isAmazonFbaYeio = (po.channel.toLowerCase().includes('amazon_fba') || po.channel.toLowerCase().includes('amazon fba')) &&
                     (po.storeCode.toUpperCase() === 'YEIO');
                 const statusHasInvoice = hasInvoice || isAmazonFbaYeio;
@@ -2035,19 +2037,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 } else if (po.poDbStatus === 'Delivered') {
                     displayStatus = 'Delivered';
                 } else if (po.poDbStatus === 'Dispatched') {
-                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    const isAmazonOrFlipkart = isAmazon || isFlipkartB2B;
                     displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 }
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Processing';
                 else if (eeStatusLower === 'shipped' || eeStatusLower === 'dispatched' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
-                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    const isAmazonOrFlipkart = isAmazon || isFlipkartB2B;
                     displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 }
                 else if (eeStatusLower === 'rtd' || eeStatusLower === 'ready to dispatch') displayStatus = 'Ready to Dispatch';
                 else if (awb) displayStatus = statusHasInvoice ? 'Label Generated' : 'Processing';
                 else if (statusHasInvoice) {
-                    const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
+                    const isAmazonOrFlipkart = isAmazon || isFlipkartB2B;
                     displayStatus = (isAmazonFbaYeio && (eeStatusLower === 'shipped' || maniDate)) ? 'Delivered' : (isAmazonOrFlipkart ? 'Label Generated' : 'Invoiced');
                 }
                 else if (batchDate || eeStatusLower === 'picking' || eeStatusLower === 'batched') displayStatus = 'Processing';
@@ -3168,7 +3170,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const handleMarkAsDispatched = async (so: GroupedSalesOrder) => {
         const isAmazon = so.channel.toLowerCase().includes('amazon');
-        const isFlipkart = so.channel.toLowerCase().includes('flipkart');
+        const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minute');
         const targetStatus = isAmazon || isFlipkart ? 'Delivered' : 'Dispatched';
 
         setActionModal({
@@ -3312,7 +3314,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
         if (canInvoice) {
-            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minutes');
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minute');
             return {
                 label: isCreatingInvoice === so.id ? 'Creating...' : (isFlipkart ? 'Upload E-Invoice' : 'Create Invoice'),
                 color: isFlipkart ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md' : (fbaMissing ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'),
@@ -3402,8 +3404,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
             const isInstamart = so.channel.toLowerCase().includes('instamart');
             const isAmazonFba = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
-            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minutes');
-            const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
+            const isFlipkartMinutes = so.channel.toLowerCase().includes('minute');
+            const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !isFlipkartMinutes;
             const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
 
             if (isAmazonFba || isFlipkart) {
@@ -3745,7 +3747,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const isRefreshing = isRefreshingSo === so.poReference;
 
                                 const isInstamart = so.channel.toLowerCase().includes('instamart');
-                                const isFlipkartMinutes = so.channel.toLowerCase().includes('flipkart minutes') || so.channel.toLowerCase().includes('flipkartminutes');
+                                const isFlipkartMinutes = so.channel.toLowerCase().includes('minute');
                                 const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !isFlipkartMinutes;
                                 const isAmazonFBA = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
                                 const isBlinkit = so.channel.toLowerCase().includes('blinkit');
@@ -4406,20 +4408,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     <div className={`p-4 rounded-xl border ${so.status === 'Returned' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}><p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Return Status (RTO)</p>{so.status === 'Returned' ? <div className="space-y-2"><p className="text-xs font-bold text-red-600">{so.rtoStatus || 'Returned'}</p><div><p className="text-[9px] font-bold text-gray-400">Return AWB</p><p className="text-xs font-mono font-bold text-red-600">{so.rtoAwb || 'N/A'}</p></div></div> : <div className="flex flex-col items-center justify-center py-2"><CheckCircleIcon className="h-6 w-6 text-gray-200" /><p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">No Returns</p></div>}</div>
                                                                 </> : <div className="md:col-span-3 p-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-center">{(!so.invoiceNumber && !(isAmazon && canInvoice)) ? <><LockClosedIcon className="h-8 w-8 text-gray-200 mb-3" /><p className="text-sm font-bold text-gray-400 uppercase">Logistics Pending Invoice Generation</p></> : (so.boxCount === 0 && !isFlipkart) ? <><div className="p-4 bg-red-50 rounded-xl border border-red-100 mb-3"><CubeIcon className="h-8 w-8 text-red-500 mx-auto mb-2" /><p className="text-sm font-bold text-red-600 uppercase">Missing Physical Box Data</p></div><p className="text-xs text-red-400 mb-2">Update box count in the backend to enable shipping.</p><button onClick={(e: any) => { e.stopPropagation(); handleFetchEasyEcomBoxData(so); }} disabled={isFetchingEasyEcomBoxData === so.id} className="mt-2 py-2 px-6 bg-red-600 text-white font-bold rounded-lg shadow-md hover:bg-red-700 transition-all flex items-center justify-center gap-2 text-xs">{isFetchingEasyEcomBoxData === so.id ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CloudDownloadIcon className="h-4 w-4" />}{isFetchingEasyEcomBoxData === so.id ? 'Fetching...' : 'Fetch Box Data via AI'}</button><p className="text-[10px] text-red-400 mt-2">Pull packing details from EasyEcom portal automatically.</p></> : <><TruckIcon className="h-8 w-8 text-blue-200 mb-3" /><p className="text-sm font-bold text-blue-400 uppercase">{so.invoiceNumber ? 'Invoice Ready for Shipment' : 'Box Data Ready - Pending Invoice'}</p><p className="text-xs text-blue-300 mt-1">{so.invoiceNumber ? "Generate AWB by clicking the 'Ship with Partner' button above." : "Invoice generation is pending. Box details are confirmed."}</p></>}</div>}
                                                             </div>
-                                                            {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || so.channel.toLowerCase().includes('flipkart')) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
-                                                                <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
+                                                            {so.awb && (so.channel.toLowerCase().includes('blinkit') || so.channel.toLowerCase().includes('zepto') || isFlipkartMinutes) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned' && (
+                                                                <div className={`mt-4 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-partners-light-purple border-partners-purple/30' : isFlipkartMinutes ? 'bg-blue-50 border-blue-200/30' : 'bg-partners-light-yellow border-partners-yellow/30'}`}>
                                                                     <div className="flex items-center gap-3">
-                                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600' : so.channel.toLowerCase().includes('flipkart') ? 'bg-blue-600' : 'bg-yellow-400'}`}>
-                                                                            <span className="font-black italic text-xl">{so.channel.toLowerCase().includes('zepto') ? 'z' : so.channel.toLowerCase().includes('flipkart') ? 'f' : 'b'}</span>
+                                                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600' : isFlipkartMinutes ? 'bg-blue-600' : 'bg-yellow-400'}`}>
+                                                                            <span className="font-black italic text-xl">{so.channel.toLowerCase().includes('zepto') ? 'z' : isFlipkartMinutes ? 'f' : 'b'}</span>
                                                                         </div>
                                                                         <div>
-                                                                            <p className={`text-xs font-bold uppercase ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-800' : so.channel.toLowerCase().includes('flipkart') ? 'text-blue-800' : 'text-yellow-800'}`}>{so.channel.toLowerCase().includes('zepto') ? 'Zepto Brands' : so.channel.toLowerCase().includes('flipkart') ? 'Flipkart Minutes' : 'Blinkit'} Portal Action Required</p>
-                                                                            <p className={`text-[10px] font-medium ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-600' : so.channel.toLowerCase().includes('flipkart') ? 'text-blue-600' : 'text-yellow-600'}`}>AWB assigned. Generate appointment pass before dispatching.</p>
+                                                                            <p className={`text-xs font-bold uppercase ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-800' : isFlipkartMinutes ? 'text-blue-800' : 'text-yellow-800'}`}>{so.channel.toLowerCase().includes('zepto') ? 'Zepto Brands' : isFlipkartMinutes ? 'Flipkart Minutes' : 'Blinkit'} Portal Action Required</p>
+                                                                            <p className={`text-[10px] font-medium ${so.channel.toLowerCase().includes('zepto') ? 'text-purple-600' : isFlipkartMinutes ? 'text-blue-600' : 'text-yellow-600'}`}>AWB assigned. Generate appointment pass before dispatching.</p>
                                                                         </div>
                                                                     </div>
                                                                     <button
                                                                         onClick={(e: any) => { e.stopPropagation(); setPortalHelper({ isOpen: true, so }); }}
-                                                                        className={`px-6 py-2.5 text-white text-[11px] font-bold rounded-xl shadow-md transition-all flex items-center gap-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600 hover:bg-purple-700' : 'bg-yellow-50 hover:bg-yellow-600'}`}
+                                                                        className={`px-6 py-2.5 text-white text-[11px] font-bold rounded-xl shadow-md transition-all flex items-center gap-2 ${so.channel.toLowerCase().includes('zepto') ? 'bg-purple-600 hover:bg-purple-700' : isFlipkartMinutes ? 'bg-blue-600 hover:bg-blue-700' : 'bg-yellow-50 hover:bg-yellow-600'}`}
                                                                     >
                                                                         <CalendarIcon className="h-4 w-4" />Get Appointment Details
                                                                     </button>
