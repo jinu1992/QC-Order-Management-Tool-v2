@@ -1530,6 +1530,13 @@ function buildHtmlEmailTemplate(shipments) {
       <div style="padding: 20px; border: 1px solid #E5E7EB; border-top: none; border-radius: 0 0 8px 8px; overflow-x: auto; background-color: #FAFAFA;">
         <p>Hello,</p>
         <p>Please find the latest tracking statuses for pending shipments handled via the Nimbus Courier partner.</p>
+        <p>
+          📄 
+          <a href="https://docs.google.com/spreadsheets/d/1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk/edit?gid=1014733683#gid=1014733683"
+             style="color:#2563EB;font-weight:bold;text-decoration:none;">
+            View NimbusPost B2B Tracker Sheet
+          </a>
+        </p>
         
         <!-- MISSED DELIVERIES SECTION -->
         <div style="margin-top: 25px; margin-bottom: 30px; border-left: 4px solid #EF4444; padding-left: 15px;">
