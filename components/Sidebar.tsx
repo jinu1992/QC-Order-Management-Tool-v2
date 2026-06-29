@@ -16,7 +16,8 @@ import {
     XCircleIcon,
     CalendarIcon,
     CloudDownloadIcon as FileIcon,
-    LogoutIcon
+    LogoutIcon,
+    BellIcon
 } from './icons/Icons';
 
 interface SidebarProps {
@@ -45,6 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
     { name: 'Reports', icon: <ReportIcon /> },
     { name: 'Admin', icon: <AdminIcon /> },
     { name: 'Knowledge Base', icon: <XCircleIcon /> }, // Using XCircleIcon as placeholder or QuestionMark if available
+    { name: 'Notifications', icon: <BellIcon /> },
   ];
   
   const allowedViews = permissions[currentUser.role] || [];

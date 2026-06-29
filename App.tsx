@@ -15,6 +15,7 @@ import ShipmentManager from './components/ShipmentManager';
 import DispatchManager from './components/DispatchManager';
 import FileUploader from './components/FileUploader';
 import KnowledgeBase from './components/KnowledgeBase';
+import NotificationsManager from './components/NotificationsManager';
 import ToastContainer from './components/ToastContainer';
 import Login from './components/Login';
 import LoadingCube from './components/LoadingCube';
@@ -385,6 +386,7 @@ const App: React.FC = () => {
         <AdminPanel logs={logs} users={users} setUsers={setUsers} rolePermissions={rolePermissions} setRolePermissions={() => { }} addLog={addLog} currentUser={currentUser} channelConfigs={channelConfigs} onSync={() => refreshData(true)} activeTab={adminTab} setActiveTab={setAdminTab} addNotification={addNotification} />
       );
       case 'Knowledge Base': return <KnowledgeBase />;
+      case 'Notifications': return <NotificationsManager />;
       default: return <div className="p-8 text-center text-gray-500">Section Under Construction</div>;
     }
   };
