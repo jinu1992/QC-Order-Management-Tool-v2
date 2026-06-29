@@ -114,7 +114,7 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
         case 'Finance': return 'Track PO values, payments received, and customer accounts';
         case 'Reports': return 'Visual analytics and performance reporting';
         case 'Admin': return 'System configuration, role permissions, and activity logs';
-        case 'Notifications': return 'Real-time log of network requests, processes, payloads and errors';
+        case 'Logs': return 'Real-time log of network requests, processes, payloads and errors';
         default: return 'Cubelelo Purchase Order Management Portal';
     }
   };

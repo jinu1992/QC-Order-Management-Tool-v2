@@ -25,11 +25,11 @@ export const initialCustomers: Customer[] = [];
 export const initialUsers: User[] = [];
 
 export const initialRolePermissions: RolePermissions = {
-    'Admin': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Finance', 'Inventory', 'Admin', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Notifications'],
-    'Key Account Manager': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Notifications'],
-    'Finance Manager': ['Dashboard', 'Finance', 'Reports', 'Knowledge Base', 'Notifications'],
-    'Supply Chain Manager': ['Dashboard', 'Purchase Orders', 'Sales Orders', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Notifications'],
-    'Limited Access': ['Dashboard', 'Purchase Orders', 'Knowledge Base', 'Notifications'],
+    'Admin': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Finance', 'Inventory', 'Admin', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Logs'],
+    'Key Account Manager': ['Dashboard', 'Quotations', 'Purchase Orders', 'File Uploader', 'POC Verification', 'Appointments', 'Sales Orders', 'GRN / POD', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Logs'],
+    'Finance Manager': ['Dashboard', 'Finance', 'Reports', 'Knowledge Base', 'Logs'],
+    'Supply Chain Manager': ['Dashboard', 'Purchase Orders', 'Sales Orders', 'Reports', 'Inventory', 'Shipment Tracking', 'Dispatch Manager', 'Knowledge Base', 'Logs'],
+    'Limited Access': ['Dashboard', 'Purchase Orders', 'Knowledge Base', 'Logs'],
 };
 
 export const initialInventory: InventoryItem[] = [];
