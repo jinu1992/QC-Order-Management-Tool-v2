@@ -19,6 +19,7 @@ import NotificationsManager from './components/NotificationsManager';
 import ToastContainer from './components/ToastContainer';
 import Login from './components/Login';
 import LoadingCube from './components/LoadingCube';
+import { networkInterceptor } from './services/networkInterceptor';
 import { XIcon, QuestionMarkCircleIcon, RefreshIcon } from './components/icons/Icons';
 import { initialRolePermissions } from './data/mockData';
 import { type PurchaseOrder, POStatus, ActivityLog, NotificationItem, ViewType, User, RolePermissions, InventoryItem, ChannelConfig, Quotation } from './types';
@@ -102,16 +103,31 @@ const App: React.FC = () => {
     setLogs(prev => [newLog, ...prev]);
   }, [currentUser]);
 
-  const addNotification = useCallback((message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+  const addNotification = useCallback((
+    message: string, 
+    type: 'info' | 'success' | 'warning' | 'error' = 'info',
+    actionLabel?: string,
+    actionView?: ViewType
+  ) => {
     const newNotification: NotificationItem = {
       id: Date.now().toString(),
       message,
       timestamp: new Date().toLocaleTimeString(),
       read: false,
-      type
+      type,
+      actionLabel,
+      actionView
     };
     setNotifications(prev => [newNotification, ...prev]);
     setToasts(prev => [...prev, newNotification]);
+  }, []);
+
+  const markNotificationRead = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  }, []);
+
+  const clearAllNotifications = useCallback(() => {
+    setNotifications([]);
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -235,6 +251,53 @@ const App: React.FC = () => {
       setActiveFilter('All POs');
     }
   }, [activeView]);
+
+  // Subscription to network interceptor logs for real-time popup toasts
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const previousStates = new Map<string, 'pending' | 'success' | 'failed'>();
+    const mountTime = Date.now();
+
+    const unsubscribe = networkInterceptor.subscribe((currentLogs) => {
+      currentLogs.forEach(log => {
+        // Only process logs triggered after component mount
+        if (log.timestamp.getTime() < mountTime) {
+          previousStates.set(log.id, log.status);
+          return;
+        }
+
+        const prevState = previousStates.get(log.id);
+
+        if (prevState !== log.status) {
+          previousStates.set(log.id, log.status);
+
+          if (log.status === 'failed') {
+            addNotification(
+              `Process Failed: ${log.displayName || 'Network operation failed'}`, 
+              'error', 
+              'See All Logs', 
+              'Logs'
+            );
+          } else if (log.status === 'success') {
+            const isSyncAction = log.displayName?.toLowerCase().includes('sync') || log.displayName?.toLowerCase().includes('fetch');
+            const isMutation = log.method === 'POST' || log.method === 'PUT';
+            
+            if (isMutation || isSyncAction) {
+              addNotification(
+                `Process Completed: ${log.displayName}`, 
+                'success', 
+                'See All Logs', 
+                'Logs'
+              );
+            }
+          }
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, addNotification]);
 
   const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     const items = po.items || [];
@@ -408,7 +471,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-partners-gray-bg font-sans overflow-hidden">
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <ToastContainer toasts={toasts} onRemove={removeToast} onActionClick={(view) => setActiveView(view)} />
 
       {/* Sidebar Container */}
       <div
@@ -424,9 +487,9 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto transition-all duration-300 ease-in-out">
         <Header
           notifications={notifications}
-          onMarkRead={() => { }}
-          onClearAll={() => { }}
-          onViewLogs={() => { setActiveView('Admin'); setAdminTab('logs'); }}
+          onMarkRead={markNotificationRead}
+          onClearAll={clearAllNotifications}
+          onViewLogs={() => { setActiveView('Logs'); }}
           activeView={activeView}
           onToggleSidebar={toggleSidebar}
           onLogout={handleLogout}

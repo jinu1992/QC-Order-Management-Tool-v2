@@ -220,10 +220,10 @@ const Header: React.FC<HeaderProps> = ({ notifications, onMarkRead, onClearAll, 
                     <div className="p-3 bg-gray-50 border-t border-gray-100 text-center">
                         <button 
                             onClick={() => { setIsNotificationsOpen(false); onViewLogs(); }} 
-                            className="text-[10px] font-bold text-partners-green hover:text-green-700 flex items-center justify-center w-full py-1.5 gap-2 uppercase tracking-widest transition-colors"
+                            className="text-[10px] font-bold text-partners-green hover:text-green-700 flex items-center justify-center w-full py-1.5 gap-2 uppercase tracking-widest transition-colors focus:outline-none"
                         >
-                            <AdminIcon className="h-4 w-4" />
-                            Admin Activity Logs
+                            <BellIcon className="h-4 w-4" />
+                            See All Logs
                         </button>
                     </div>
                 </div>

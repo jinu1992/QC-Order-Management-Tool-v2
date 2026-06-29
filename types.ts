@@ -243,7 +243,7 @@ export interface UploadMetadata {
 export type Role = 'Admin' | 'Key Account Manager' | 'Finance Manager' | 'Supply Chain Manager' | 'Limited Access';
 export interface RolePermissions { [key: string]: ViewType[]; }
 export interface ActivityLog { id: string; user: string; action: string; details: string; timestamp: string; }
-export interface NotificationItem { id: string; message: string; timestamp: string; read: boolean; type: 'info' | 'success' | 'warning' | 'error'; }
+export interface NotificationItem { id: string; message: string; timestamp: string; read: boolean; type: 'info' | 'success' | 'warning' | 'error'; actionLabel?: string; actionView?: ViewType; }
 export interface InventoryItem { id: string; channel: string; articleCode: string; sku: string; ean: string; itemName: string; mrp: number; basicPrice: number; spIncTax: number; stock: number; size: string; }
 export interface ChannelConfig {
     id: string;
