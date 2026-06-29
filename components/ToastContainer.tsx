@@ -97,7 +97,7 @@ interface ToastContainerProps {
 
 const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove, onActionClick }) => {
     return (
-        <div className="fixed bottom-6 right-6 z-[999] flex flex-col items-end pointer-events-none">
+        <div className="fixed top-24 right-6 z-[999] flex flex-col items-end pointer-events-none">
             <div className="pointer-events-auto">
                 {toasts.map(toast => (
                     <ToastCard key={toast.id} notification={toast} onClose={onRemove} onActionClick={onActionClick} />
