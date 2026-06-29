@@ -1,14 +1,14 @@
-
 import React, { useEffect, useState } from 'react';
 import { CheckCircleIcon, XCircleIcon, InfoIcon, XIcon } from './icons/Icons';
-import { NotificationItem } from '../types';
+import { NotificationItem, ViewType } from '../types';
 
 interface ToastProps {
     notification: NotificationItem;
     onClose: (id: string) => void;
+    onActionClick?: (view: ViewType) => void;
 }
 
-const ToastCard: React.FC<ToastProps> = ({ notification, onClose }) => {
+const ToastCard: React.FC<ToastProps> = ({ notification, onClose, onActionClick }) => {
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
@@ -47,23 +47,41 @@ const ToastCard: React.FC<ToastProps> = ({ notification, onClose }) => {
 
     return (
         <div 
-            className={`flex items-center w-80 p-4 mb-4 text-gray-800 bg-white rounded-xl shadow-2xl border-l-4 ${getBorderColor()} transform transition-all duration-300 ease-in-out ${
+            className={`flex items-start w-80 p-4 mb-4 text-gray-800 bg-white rounded-xl shadow-2xl border-l-4 ${getBorderColor()} transform transition-all duration-300 ease-in-out ${
                 isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
             }`}
         >
-            <div className="flex-shrink-0">
+            <div className="flex-shrink-0 mt-0.5">
                 {getIcon()}
             </div>
             <div className="ml-3 text-sm font-semibold flex-1">
-                {notification.message}
-                <div className="text-[10px] font-normal text-gray-400 mt-0.5">Auto-closing in 5s</div>
+                <p className="leading-tight text-gray-800">{notification.message}</p>
+                
+                {/* Action button redirects user */}
+                {notification.actionLabel && notification.actionView && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (onActionClick) {
+                                onActionClick(notification.actionView!);
+                            }
+                            setIsVisible(false);
+                            setTimeout(() => onClose(notification.id), 300);
+                        }}
+                        className="mt-2 text-xs font-bold text-partners-green hover:underline focus:outline-none flex items-center gap-1 cursor-pointer"
+                    >
+                        {notification.actionLabel} &rarr;
+                    </button>
+                )}
+                
+                <div className="text-[9px] font-medium text-gray-400 mt-1">Auto-closing in 5s</div>
             </div>
             <button 
                 onClick={() => {
                     setIsVisible(false);
                     setTimeout(() => onClose(notification.id), 300);
                 }}
-                className="ml-auto -mx-1.5 -my-1.5 bg-white text-gray-400 hover:text-gray-900 rounded-lg p-1.5 inline-flex h-8 w-8 transition-colors"
+                className="ml-auto -mx-1.5 -my-1.5 bg-white text-gray-400 hover:text-gray-900 rounded-lg p-1.5 inline-flex h-8 w-8 transition-colors focus:outline-none"
             >
                 <XIcon className="h-4 w-4" />
             </button>
@@ -74,14 +92,15 @@ const ToastCard: React.FC<ToastProps> = ({ notification, onClose }) => {
 interface ToastContainerProps {
     toasts: NotificationItem[];
     onRemove: (id: string) => void;
+    onActionClick?: (view: ViewType) => void;
 }
 
-const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove }) => {
+const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove, onActionClick }) => {
     return (
         <div className="fixed bottom-6 right-6 z-[999] flex flex-col items-end pointer-events-none">
             <div className="pointer-events-auto">
                 {toasts.map(toast => (
-                    <ToastCard key={toast.id} notification={toast} onClose={onRemove} />
+                    <ToastCard key={toast.id} notification={toast} onClose={onRemove} onActionClick={onActionClick} />
                 ))}
             </div>
         </div>
