@@ -103,24 +103,50 @@ const App: React.FC = () => {
     setLogs(prev => [newLog, ...prev]);
   }, [currentUser]);
 
+  const upsertNotification = useCallback((
+    id: string,
+    message: string, 
+    type: 'info' | 'success' | 'warning' | 'error' = 'info',
+    actionLabel?: string,
+    actionView?: ViewType,
+    autoClose?: boolean
+  ) => {
+    const newNotification: NotificationItem = {
+      id,
+      message,
+      timestamp: new Date().toLocaleTimeString(),
+      read: false,
+      type,
+      actionLabel,
+      actionView,
+      autoClose
+    };
+
+    setNotifications(prev => {
+      const exists = prev.some(n => n.id === id);
+      if (exists) {
+        return prev.map(n => n.id === id ? newNotification : n);
+      }
+      return [newNotification, ...prev];
+    });
+
+    setToasts(prev => {
+      const exists = prev.some(t => t.id === id);
+      if (exists) {
+        return prev.map(t => t.id === id ? newNotification : t);
+      }
+      return [...prev, newNotification];
+    });
+  }, []);
+
   const addNotification = useCallback((
     message: string, 
     type: 'info' | 'success' | 'warning' | 'error' = 'info',
     actionLabel?: string,
     actionView?: ViewType
   ) => {
-    const newNotification: NotificationItem = {
-      id: Date.now().toString(),
-      message,
-      timestamp: new Date().toLocaleTimeString(),
-      read: false,
-      type,
-      actionLabel,
-      actionView
-    };
-    setNotifications(prev => [newNotification, ...prev]);
-    setToasts(prev => [...prev, newNotification]);
-  }, []);
+    upsertNotification(Date.now().toString(), message, type, actionLabel, actionView, true);
+  }, [upsertNotification]);
 
   const markNotificationRead = useCallback((id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -272,23 +298,37 @@ const App: React.FC = () => {
         if (prevState !== log.status) {
           previousStates.set(log.id, log.status);
 
-          if (log.status === 'failed') {
-            addNotification(
-              `Process Failed: ${log.displayName || 'Network operation failed'}`, 
-              'error', 
-              'See All Logs', 
-              'Logs'
-            );
-          } else if (log.status === 'success') {
-            const isSyncAction = log.displayName?.toLowerCase().includes('sync') || log.displayName?.toLowerCase().includes('fetch');
-            const isMutation = log.method === 'POST' || log.method === 'PUT';
-            
-            if (isMutation || isSyncAction) {
-              addNotification(
-                `Process Completed: ${log.displayName}`, 
-                'success', 
-                'See All Logs', 
-                'Logs'
+          const isSyncAction = log.displayName?.toLowerCase().includes('sync') || log.displayName?.toLowerCase().includes('fetch');
+          const isMutation = log.method === 'POST' || log.method === 'PUT' || log.method === 'DELETE';
+          const isDemo = log.displayName?.toLowerCase().includes('demo') || log.displayName?.toLowerCase().includes('simulate');
+
+          if (isMutation || isSyncAction || isDemo) {
+            if (log.status === 'pending') {
+              upsertNotification(
+                log.id,
+                `Running: ${log.displayName || 'Processing operation'}...`,
+                'info',
+                'See All Logs',
+                'Logs',
+                false // Do not auto-close while running
+              );
+            } else if (log.status === 'success') {
+              upsertNotification(
+                log.id,
+                `Completed: ${log.displayName}`,
+                'success',
+                'See All Logs',
+                'Logs',
+                true // Auto-close in 5s upon completion
+              );
+            } else if (log.status === 'failed') {
+              upsertNotification(
+                log.id,
+                `Failed: ${log.displayName || 'Operation failed'}`,
+                'error',
+                'See All Logs',
+                'Logs',
+                true // Auto-close in 5s on failure
               );
             }
           }
@@ -297,7 +337,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [currentUser, addNotification]);
+  }, [currentUser, upsertNotification]);
 
   const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     const items = po.items || [];
