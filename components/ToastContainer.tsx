@@ -15,15 +15,18 @@ const ToastCard: React.FC<ToastProps> = ({ notification, onClose, onActionClick 
         // Trigger enter animation
         const timer = setTimeout(() => setIsVisible(true), 10);
         
-        // Auto close after 5 seconds
-        const closeTimer = setTimeout(() => {
-            setIsVisible(false);
-            setTimeout(() => onClose(notification.id), 300); // Wait for exit animation
-        }, 5000);
+        // Auto close after 5 seconds only if autoClose is not explicitly false
+        let closeTimer: any;
+        if (notification.autoClose !== false) {
+            closeTimer = setTimeout(() => {
+                setIsVisible(false);
+                setTimeout(() => onClose(notification.id), 300); // Wait for exit animation
+            }, 5000);
+        }
 
         return () => {
             clearTimeout(timer);
-            clearTimeout(closeTimer);
+            if (closeTimer) clearTimeout(closeTimer);
         };
     }, [notification, onClose]);
 
