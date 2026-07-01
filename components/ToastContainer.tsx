@@ -99,10 +99,12 @@ interface ToastContainerProps {
 }
 
 const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove, onActionClick }) => {
+    // Only show the last 3 toasts on the screen to avoid clutter
+    const visibleToasts = toasts.slice(-3);
     return (
         <div className="fixed top-24 right-6 z-[999] flex flex-col items-end pointer-events-none">
             <div className="pointer-events-auto">
-                {toasts.map(toast => (
+                {visibleToasts.map(toast => (
                     <ToastCard key={toast.id} notification={toast} onClose={onRemove} onActionClick={onActionClick} />
                 ))}
             </div>
