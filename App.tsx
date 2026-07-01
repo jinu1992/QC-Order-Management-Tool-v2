@@ -80,6 +80,7 @@ const App: React.FC = () => {
   const [activeShipmentTab, setActiveShipmentTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
   const [activeDispatchTab, setActiveDispatchTab] = useState<'Missed' | 'Today' | 'Upcoming' | 'All'>('Missed');
   const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'logs'>('users');
+  const [isManualSyncRunning, setIsManualSyncRunning] = useState(false);
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -234,9 +235,22 @@ const App: React.FC = () => {
     }
   }, [googleTokens]);
 
-  const refreshData = useCallback(async (force = false) => {
+  const refreshData = useCallback(async (force = false, isSilent = false) => {
     if (!currentUser) return;
     if (!force && purchaseOrders.length > 0 && Date.now() - lastSynced < 1800000) return;
+
+    const showToast = force && !isSilent;
+    if (showToast) {
+      setIsManualSyncRunning(true);
+      upsertNotification(
+        'manual-sync-popup',
+        'Running: Syncing portal data...',
+        'info',
+        'See All Logs',
+        'Logs',
+        false // Persistent while executing
+      );
+    }
 
     setIsLoading(true);
     try {
@@ -255,17 +269,42 @@ const App: React.FC = () => {
       setQuotations(quotationData);
 
       setLastSynced(Date.now());
+
+      if (showToast) {
+        upsertNotification(
+          'manual-sync-popup',
+          'Completed: Portal data synced',
+          'success',
+          'See All Logs',
+          'Logs',
+          true
+        );
+      }
     } catch (e) {
-      addNotification('Failed to sync data.', 'error');
+      if (showToast) {
+        upsertNotification(
+          'manual-sync-popup',
+          'Failed: Syncing portal data',
+          'error',
+          'See All Logs',
+          'Logs',
+          true
+        );
+      } else {
+        addNotification('Failed to sync data.', 'error');
+      }
     } finally {
       setIsLoading(false);
+      if (showToast) {
+        setIsManualSyncRunning(false);
+      }
     }
-  }, [lastSynced, purchaseOrders.length, addNotification, currentUser]);
+  }, [lastSynced, purchaseOrders.length, addNotification, upsertNotification, currentUser]);
 
   useEffect(() => {
     if (currentUser) {
       refreshData();
-      const intervalId = setInterval(() => refreshData(true), 5 * 60 * 1000);
+      const intervalId = setInterval(() => refreshData(true, true), 5 * 60 * 1000);
       return () => clearInterval(intervalId);
     }
   }, [refreshData, currentUser]);
@@ -298,11 +337,12 @@ const App: React.FC = () => {
         if (prevState !== log.status) {
           previousStates.set(log.id, log.status);
 
-          const isSyncAction = log.displayName?.toLowerCase().includes('sync') || log.displayName?.toLowerCase().includes('fetch');
+          // Only display toast notifications for active mutations (POST/PUT/DELETE) and simulations
+          // Trivial GET requests (data fetching/syncing) are kept silent but logged in the Logs tab
           const isMutation = log.method === 'POST' || log.method === 'PUT' || log.method === 'DELETE';
           const isDemo = log.displayName?.toLowerCase().includes('demo') || log.displayName?.toLowerCase().includes('simulate');
 
-          if (isMutation || isSyncAction || isDemo) {
+          if (isMutation || isDemo) {
             if (log.status === 'pending') {
               upsertNotification(
                 log.id,
