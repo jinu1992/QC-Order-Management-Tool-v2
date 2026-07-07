@@ -100,14 +100,17 @@ interface OrderRowProps {
     isSendingBBConfirmation: boolean;
     currentUser: User | null;
     onLocalNoteUpdate: (updatedNotes: string) => void;
+    isPoSelected: boolean;
+    onPoSelectToggle: () => void;
 }
+
 
 const OrderRow: React.FC<OrderRowProps> = ({
     po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll,
     isPushing, onPush, isSyncingZoho, onSyncZoho, isSyncingEE, onSyncEE, onTrackNotify, onCancel, isCancelling,
     onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
     onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation, currentUser,
-    onLocalNoteUpdate
+    onLocalNoteUpdate, isPoSelected, onPoSelectToggle
 }: OrderRowProps) => {
     const poStatus = getCalculatedStatus(po);
     const items = po.items || [];
@@ -236,8 +239,23 @@ const OrderRow: React.FC<OrderRowProps> = ({
         <Fragment>
             <tr className={`hover:bg-gray-50/80 cursor-pointer transition-colors ${isExpanded ? 'bg-partners-light-green/30' : 'bg-white'}`} onClick={onToggle}>
                 <td className="p-4 text-center sticky left-0 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">
-                    <div className="text-gray-400">
-                        {isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
+                    <div className="flex items-center justify-center gap-2">
+                        {canConfirm ? (
+                            <input
+                                type="checkbox"
+                                checked={isPoSelected}
+                                onChange={(e) => {
+                                    e.stopPropagation();
+                                    onPoSelectToggle();
+                                }}
+                                className="h-4 w-4 text-partners-green border-gray-300 rounded focus:ring-partners-green cursor-pointer flex-shrink-0"
+                            />
+                        ) : (
+                            <div className="w-4 h-4 flex-shrink-0" />
+                        )}
+                        <div className="text-gray-400 flex-shrink-0">
+                            {isExpanded ? <ChevronDownIcon className="h-4 w-4" /> : <ChevronRightIcon className="h-4 w-4" />}
+                        </div>
                     </div>
                 </td>
                 <td className="px-6 py-4 font-bold text-partners-green whitespace-nowrap sticky left-12 z-10 bg-inherit border-r border-gray-100 shadow-[2px_0_4px_rgba(0,0,0,0.02)]">
@@ -616,6 +634,8 @@ const PoTable: React.FC<PoTableProps> = ({
     const [isAllocating, setIsAllocating] = useState(false);
     const [isSendingBBConfirmation, setIsSendingBBConfirmation] = useState(false);
     const [isBulkConfirming, setIsBulkConfirming] = useState<string | null>(null);
+    const [selectedPoNumbers, setSelectedPoNumbers] = useState<string[]>([]);
+    const [isBulkConfirmingSelected, setIsBulkConfirmingSelected] = useState(false);
 
     const [skuSearch, setSkuSearch] = useState('');
     const [debouncedSkuSearch, setDebouncedSkuSearch] = useState('');
@@ -992,6 +1012,76 @@ const PoTable: React.FC<PoTableProps> = ({
         }
     };
 
+    const confirmablePOs = useMemo(() => {
+        return processedOrders.filter(po => {
+            const status = getCalculatedStatus(po);
+            return status === POStatus.NewPO || status === POStatus.WaitingForConfirmation;
+        });
+    }, [processedOrders]);
+
+    const isAllSelected = useMemo(() => {
+        if (confirmablePOs.length === 0) return false;
+        return confirmablePOs.every(po => selectedPoNumbers.includes(po.poNumber));
+    }, [confirmablePOs, selectedPoNumbers]);
+
+    const handleSelectAllPos = () => {
+        if (isAllSelected) {
+            const confirmablePoNumbers = confirmablePOs.map(po => po.poNumber);
+            setSelectedPoNumbers(prev => prev.filter(num => !confirmablePoNumbers.includes(num)));
+        } else {
+            const confirmablePoNumbers = confirmablePOs.map(po => po.poNumber);
+            setSelectedPoNumbers(prev => {
+                const combined = [...prev, ...confirmablePoNumbers];
+                return Array.from(new Set(combined));
+            });
+        }
+    };
+
+    const handleBulkConfirmSelected = async () => {
+        if (selectedPoNumbers.length === 0) return;
+
+        const isConfirmed = window.confirm(`Are you sure you want to mark the ${selectedPoNumbers.length} selected POs as Confirmed?`);
+        if (!isConfirmed) return;
+
+        setIsBulkConfirmingSelected(true);
+        addNotification(`Confirming ${selectedPoNumbers.length} selected orders...`, 'info');
+
+        let successCount = 0;
+        let failCount = 0;
+
+        try {
+            await Promise.all(selectedPoNumbers.map(async (poNumber) => {
+                try {
+                    const res = await updatePOStatus(poNumber, 'Confirmed');
+                    if (res.status === 'success') {
+                        successCount++;
+                        setPurchaseOrders((prev: PurchaseOrder[]) => prev.map(p =>
+                            p.poNumber === poNumber ? { ...p, status: 'Confirmed' as any } : p
+                        ));
+                        addLog('Status Update', `Manually updated PO ${poNumber} to Confirmed via Bulk Confirm`);
+                    } else {
+                        failCount++;
+                    }
+                } catch (err) {
+                    failCount++;
+                }
+            }));
+
+            if (successCount > 0) {
+                addNotification(`Successfully confirmed ${successCount} POs.`, 'success');
+                setSelectedPoNumbers([]);
+                onSync();
+            }
+            if (failCount > 0) {
+                addNotification(`Failed to confirm ${failCount} POs.`, 'error');
+            }
+        } catch (error) {
+            addNotification(`Error during bulk confirmation.`, 'error');
+        } finally {
+            setIsBulkConfirmingSelected(false);
+        }
+    };
+
     const handleManualAllocation = async () => {
         setIsAllocating(true);
         addNotification('Triggering manual inventory allocation...', 'info');
@@ -1036,6 +1126,17 @@ const PoTable: React.FC<PoTableProps> = ({
                                 onChange={(e) => setSkuSearch(e.target.value)}
                             />
                         </div>
+                    )}
+                    {selectedPoNumbers.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleBulkConfirmSelected}
+                            disabled={isBulkConfirmingSelected || isSyncing}
+                            className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-white bg-emerald-600 border border-emerald-700 rounded-lg shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
+                        >
+                            <CheckCircleIcon className={`h-4 w-4 ${isBulkConfirmingSelected ? 'animate-spin' : ''}`} />
+                            Confirm Selected PO ({selectedPoNumbers.length})
+                        </button>
                     )}
                     {activeFilter === 'New POs' && (
                         <button
@@ -1084,7 +1185,18 @@ const PoTable: React.FC<PoTableProps> = ({
                 <table className="w-full text-sm text-left text-gray-600 border-collapse">
                     <thead className="text-[11px] text-gray-500 uppercase bg-gray-50/95 border-b border-gray-100 sticky top-0 z-20">
                         <tr>
-                            <th className="p-4 w-4 sticky left-0 bg-gray-50 z-30 border-r border-gray-100"></th>
+                            <th className="p-4 sticky left-0 bg-gray-50 z-30 border-r border-gray-100">
+                                <div className="flex items-center justify-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={isAllSelected}
+                                        disabled={confirmablePOs.length === 0}
+                                        onChange={handleSelectAllPos}
+                                        className="h-4 w-4 text-partners-green border-gray-300 rounded focus:ring-partners-green cursor-pointer flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    />
+                                    <div className="w-4 flex-shrink-0" />
+                                </div>
+                            </th>
                             <th className="px-6 py-4 sticky left-12 bg-gray-50 z-30 border-r border-gray-100 min-w-[150px]">
                                 <div className="flex items-center gap-2">
                                     PO Number
@@ -1127,6 +1239,14 @@ const PoTable: React.FC<PoTableProps> = ({
                                     onToggle={() => setExpandedRowId(expandedRowId === po.id ? null : po.id)}
                                     isSelected={(code) => (selectedPoItems[po.id] || []).includes(code)}
                                     onItemToggle={(code) => handleItemToggle(po.id, code)}
+                                    isPoSelected={selectedPoNumbers.includes(po.poNumber)}
+                                    onPoSelectToggle={() => {
+                                        setSelectedPoNumbers(prev =>
+                                            prev.includes(po.poNumber)
+                                                ? prev.filter(num => num !== po.poNumber)
+                                                : [...prev, po.poNumber]
+                                        );
+                                    }}
                                     onSelectAll={() => handleSelectAll(po)}
                                     isPushing={!!pushingToEasyEcom[po.id]}
                                     onPush={() => handlePushAction(po)}
