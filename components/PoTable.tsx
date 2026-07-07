@@ -244,8 +244,10 @@ const OrderRow: React.FC<OrderRowProps> = ({
                             <input
                                 type="checkbox"
                                 checked={isPoSelected}
-                                onChange={(e) => {
+                                onClick={(e) => {
                                     e.stopPropagation();
+                                }}
+                                onChange={(e) => {
                                     onPoSelectToggle();
                                 }}
                                 className="h-4 w-4 text-partners-green border-gray-300 rounded focus:ring-partners-green cursor-pointer flex-shrink-0"
