@@ -11429,16 +11429,7 @@ function processChannelAppointments(channelName, manualSaleOrderList = null, mod
 
     const channelConfig = fetchChannelConfig(channel.NAME);
 
-    // ================= BB =================
-    if(channel.NAME==="BB"){
-      return sendBigBasketEmails(
-        eligibleOrders,
-        sheet,
-        rows.length,
-        IDX,
-        channelConfig.cc
-      );
-    }
+    // sendBigBasketEmails bypassed
 
     if(!channelConfig?.to) throw new Error("Channel email config missing");
 
@@ -11604,77 +11595,7 @@ function processChannelAppointments(channelName, manualSaleOrderList = null, mod
  */
 
 
-function sendBigBasketEmails(orders,sheet,rowCount,IDX,ccmails){
-
-  const storeEmailMap = getBBStoreEmailMap();
-
-  const grouped = {};
-
-  orders.forEach(o=>{
-    if(!grouped[o.storeCode]) grouped[o.storeCode]=[];
-    grouped[o.storeCode].push(o);
-  });
-
-  const results = [];
-
-  Object.keys(grouped).forEach(storeCode=>{
-
-    const requestId = generateRequestId();   // NEW ID PER EMAIL
-
-    const email = storeEmailMap[storeCode];
-    if(!email) return;
-
-    const storeOrders = grouped[storeCode];
-
-    const htmlTable = buildAppointmentEmailTable(storeOrders);
-
-    const htmlBody = `
-    <div style="font-family:Roboto,Arial;font-size:14px">
-    <p>Dear Team,</p>
-
-    ${htmlTable}
-
-    <p>Kindly confirm the appointment date.</p>
-
-    <p>Request ID: <b>${requestId}</b></p>
-
-    <p>Regards<br>Team Cubelelo</p>
-    </div>`;
-
-    Logger.log(email);
-    Logger.log(ccmails);
-    Logger.log(requestId);
-    Logger.log(htmlBody);
-
-    GmailApp.sendEmail(email, `BigBasket Appointment Request | ${storeCode} | ${requestId}`, "", {
-      cc: ccmails || "",
-      htmlBody: htmlBody
-    });
-
-    // update tracking per store
-    updateRequestTracking(sheet,rowCount,IDX,storeOrders,requestId);
-
-    results.push({
-      storeCode,
-      requestId
-    });
-
-  });
-
-  writeToLog(
-    "BB_BATCH",
-    "Success",
-    orders.map(o=>o.saleOrderNo).join(", "),
-    "BB Store POCs",
-    "BB appointment emails sent"
-  );
-
-  return {
-    status:"success",
-    results
-  };
-
-}
+// sendBigBasketEmails deprecated
 
 
 /**
@@ -11928,30 +11849,7 @@ ${orders.map(o=>`
  * ==========================================================
  */
 
-function getBBStoreEmailMap()
-{
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
-
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-
-  const colName = headers.indexOf("Contact Name");
-  const colEmail = headers.indexOf("Email");
-
-  const map={};
-
-  for(let i=1;i<data.length;i++)
-  {
-    const name=data[i][colName];
-    const email=data[i][colEmail];
-    if(!name || !email) continue;
-    if(!name.startsWith("BB_")) continue;
-    const store = name.replace("BB_","").trim();
-    map[store]=email;
-  }
-  return map;
-}
+// getBBStoreEmailMap deprecated
 
 /**
  * ==========================================================

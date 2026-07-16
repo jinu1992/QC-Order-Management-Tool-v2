@@ -719,34 +719,53 @@ function sendBBAppointmentRequestEmail(data) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const poSheet = ss.getSheetByName(SHEET_PO_DB);
-    const zohoSheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
+    const configSheet = ss.getSheetByName(SHEET_CHANNEL_CONFIG);
 
-    if (!poSheet || !zohoSheet) return { status: 'error', message: 'Required sheets not found' };
+    if (!poSheet || !configSheet) return { status: 'error', message: 'Required sheets not found' };
 
     const poData = poSheet.getDataRange().getValues();
     const poHeaders = poData[0];
     const refCol = poHeaders.indexOf('EE_reference_code');
     const statusCol = poHeaders.indexOf('Status');
-    const companyCol = poHeaders.indexOf('Company Name');
 
-    const zohoData = zohoSheet.getDataRange().getValues();
-    const zohoHeaders = zohoData[0];
-    const contactNameCol = zohoHeaders.indexOf('Contact Name');
-    const emailCol = zohoHeaders.indexOf('Email');
-    const firstNameCol = zohoHeaders.indexOf('First Name');
+    // --- Get POC Email and CC Email from Channel_Config ---
+    let pocEmail = '';
+    let ccEmail = '';
+    const configData = configSheet.getDataRange().getValues();
+    const configHeaders = configData[0].map(h => String(h).toLowerCase().trim());
+    const channelCol = configHeaders.indexOf('channel name');
+    const appointmentToCol = configHeaders.indexOf('appointment to');
+    const ccEmailAddrCol = configHeaders.indexOf('appointment cc');
+
+    if (channelCol !== -1) {
+      for (let c = 1; c < configData.length; c++) {
+        if (String(configData[c][channelCol]).toLowerCase().includes('bb')) {
+          if (appointmentToCol !== -1) pocEmail = String(configData[c][appointmentToCol]).trim();
+          if (ccEmailAddrCol !== -1) ccEmail = String(configData[c][ccEmailAddrCol]).trim();
+          break;
+        }
+      }
+    }
+
+    if (!pocEmail) pocEmail = 'brainlytic.logistic@gmail.com'; // Fallback
 
     let successCount = 0;
     let errors = [];
 
+    // Aggregated list of PO numbers for the email body
+    let poNumbers = [];
+
     orders.forEach(order => {
       const eeReferenceCode = order.poReference; // Frontend sends poReference as the reference code
       let orderRow = -1;
-      let companyName = "";
 
       for (let i = 1; i < poData.length; i++) {
         if (String(poData[i][refCol]).trim() === String(eeReferenceCode).trim()) {
           orderRow = i + 1;
-          companyName = String(poData[i][companyCol]).trim();
+          const poNo = String(poData[i][poHeaders.indexOf('PO Number')]).trim();
+          if (poNo && !poNumbers.includes(poNo)) {
+            poNumbers.push(poNo);
+          }
           break;
         }
       }
@@ -756,36 +775,45 @@ function sendBBAppointmentRequestEmail(data) {
         return;
       }
 
-      let pocEmail = "";
-      let pocName = "";
-
-      for (let j = 1; j < zohoData.length; j++) {
-        if (String(zohoData[j][contactNameCol]).trim() === companyName) {
-          pocEmail = String(zohoData[j][emailCol]).trim();
-          pocName = String(zohoData[j][firstNameCol]).trim();
-          break;
-        }
-      }
-
-      if (!pocEmail) {
-        errors.push(`POC email not found for ${companyName}`);
-        return;
-      }
-
-      // Send Email
-      const subject = "Appointment Request for Order: " + eeReferenceCode;
-      const body = "Dear " + (pocName || "Team") + ",\n\n" +
-        "This is a request for an appointment for our order " + eeReferenceCode + ".\n" +
-        "Please provide the appointment slot at the earliest.\n\n" +
-        "Best regards,\n" +
-        "QC Team";
-
-      GmailApp.sendEmail(pocEmail, subject, body);
-
       // Update Status to 'Awaiting Appointment Details'
       poSheet.getRange(orderRow, statusCol + 1).setValue('Awaiting Appointment Details');
       successCount++;
     });
+
+    if (successCount > 0) {
+      // Send single consolidated Email to the single POC
+      const subject = "BigBasket Appointment Request | " + poNumbers.join(', ');
+      
+      const table = `
+        <table style="border-collapse:collapse;width:400px;font-size:14px;">
+          <thead>
+            <tr style="background:#f1f3f4;">
+              <th style="padding:10px;border:1px solid #dadce0;text-align:left;">PO Number</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${poNumbers.map(po => `
+              <tr>
+                <td style="padding:10px;border:1px solid #dadce0;">${po}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`;
+
+      const htmlBody = `
+        <div style="font-family:Roboto,Arial;font-size:14px;color:#202124;">
+          <p>Dear Team,</p>
+          <p>This is a request for an appointment for the following Purchase Orders:</p>
+          ${table}
+          <p>Please provide the appointment slot at the earliest.</p>
+          <p>Best regards,<br>QC Team</p>
+        </div>`;
+
+      GmailApp.sendEmail(pocEmail, subject, "", {
+        cc: ccEmail || "",
+        htmlBody: htmlBody
+      });
+    }
 
     return {
       status: successCount > 0 ? 'success' : 'error',
