@@ -233,7 +233,7 @@ const OrderRow: React.FC<OrderRowProps> = ({
     const canMarkThreshold = poStatus === POStatus.NewPO && actualBelowThreshold;
 
     const canCancel = (poStatus === POStatus.NewPO || poStatus === POStatus.BelowThreshold || poStatus === POStatus.WaitingForConfirmation) && selectedCount === 0;
-    const canConfirm = poStatus === POStatus.NewPO || poStatus === POStatus.WaitingForConfirmation;
+    const canConfirm = poStatus === POStatus.NewPO || poStatus === POStatus.WaitingForConfirmation || poStatus === POStatus.ConfirmedToSend;
 
     return (
         <Fragment>
@@ -638,6 +638,7 @@ const PoTable: React.FC<PoTableProps> = ({
     const [isBulkConfirming, setIsBulkConfirming] = useState<string | null>(null);
     const [selectedPoNumbers, setSelectedPoNumbers] = useState<string[]>([]);
     const [isBulkConfirmingSelected, setIsBulkConfirmingSelected] = useState(false);
+    const [isBulkPushingSelected, setIsBulkPushingSelected] = useState(false);
 
     const [skuSearch, setSkuSearch] = useState('');
     const [debouncedSkuSearch, setDebouncedSkuSearch] = useState('');
@@ -1017,9 +1018,25 @@ const PoTable: React.FC<PoTableProps> = ({
     const confirmablePOs = useMemo(() => {
         return processedOrders.filter(po => {
             const status = getCalculatedStatus(po);
-            return status === POStatus.NewPO || status === POStatus.WaitingForConfirmation;
+            return status === POStatus.NewPO || status === POStatus.WaitingForConfirmation || status === POStatus.ConfirmedToSend;
         });
     }, [processedOrders]);
+
+    const selectedUnconfirmedCount = useMemo(() => {
+        return processedOrders.filter(po => {
+            if (!selectedPoNumbers.includes(po.poNumber)) return false;
+            const status = getCalculatedStatus(po);
+            return status === POStatus.NewPO || status === POStatus.WaitingForConfirmation;
+        }).length;
+    }, [processedOrders, selectedPoNumbers]);
+
+    const selectedConfirmedCount = useMemo(() => {
+        return processedOrders.filter(po => {
+            if (!selectedPoNumbers.includes(po.poNumber)) return false;
+            const status = getCalculatedStatus(po);
+            return status === POStatus.ConfirmedToSend;
+        }).length;
+    }, [processedOrders, selectedPoNumbers]);
 
     const isAllSelected = useMemo(() => {
         if (confirmablePOs.length === 0) return false;
@@ -1084,6 +1101,85 @@ const PoTable: React.FC<PoTableProps> = ({
         }
     };
 
+    const handleBulkPushSelected = async () => {
+        const confirmedSelected = processedOrders.filter(po => 
+            selectedPoNumbers.includes(po.poNumber) && 
+            getCalculatedStatus(po) === POStatus.ConfirmedToSend
+        );
+        if (confirmedSelected.length === 0) return;
+
+        const isConfirmed = window.confirm(`Are you sure you want to push the ${confirmedSelected.length} selected POs to EasyEcom/Amazon?`);
+        if (!isConfirmed) return;
+
+        setIsBulkPushingSelected(true);
+        addNotification(`Pushing ${confirmedSelected.length} selected orders...`, 'info');
+
+        let successCount = 0;
+        let failCount = 0;
+
+        try {
+            await Promise.all(confirmedSelected.map(async (po) => {
+                const items = po.items || [];
+                const selectable = items.filter(i => !i.eeOrderRefId && (i.itemStatus || '').toLowerCase() !== 'cancelled' && (i.fulfillableQty ?? 0) >= i.qty);
+                if (selectable.length === 0) {
+                    failCount++;
+                    return;
+                }
+
+                const isAmazonFba = po.channel.trim().toLowerCase() === 'amazon_fba' || po.channel.trim().toLowerCase() === 'amazon fba';
+                const pushTarget = isAmazonFba ? (po.inboundPlanId ? 'EE' : 'AMZ') : undefined;
+
+                setPushingToEasyEcom(prev => ({ ...prev, [po.id]: true }));
+                try {
+                    const selected = selectable.map(i => i.articleCode);
+                    const res = await pushToEasyEcom(po, selected, pushTarget);
+                    if (res.status === 'success') {
+                        successCount++;
+                        setPurchaseOrders((prev: PurchaseOrder[]) => prev.map(p => {
+                            if (p.id === po.id) {
+                                const isItemPushed = pushTarget === 'EE' || !isAmazonFba;
+                                return {
+                                    ...p,
+                                    items: p.items?.map(item => selected.includes(item.articleCode) ? {
+                                        ...item,
+                                        eeOrderRefId: isItemPushed ? 'PATCHED' : item.eeOrderRefId,
+                                        eeReferenceCode: res.eeReferenceCode || item.eeReferenceCode,
+                                        eeOrderDate: res.eeOrderDate || item.eeOrderDate
+                                    } : item)
+                                };
+                            }
+                            return p;
+                        }));
+                        addLog('EasyEcom Sync', `${pushTarget === 'AMZ' ? 'Pushed FBA plan' : 'Pushed items'} for PO ${po.poNumber} via Bulk Push`);
+                        if (pushTarget !== 'AMZ') {
+                            refreshSinglePOState(po.poNumber);
+                        }
+                    } else {
+                        failCount++;
+                    }
+                } catch (err) {
+                    failCount++;
+                } finally {
+                    setPushingToEasyEcom(prev => ({ ...prev, [po.id]: false }));
+                }
+            }));
+
+            if (successCount > 0) {
+                addNotification(`Successfully pushed ${successCount} POs.`, 'success');
+                const pushedPoNumbers = confirmedSelected.map(p => p.poNumber);
+                setSelectedPoNumbers(prev => prev.filter(num => !pushedPoNumbers.includes(num)));
+                onSync();
+            }
+            if (failCount > 0) {
+                addNotification(`Failed to push ${failCount} POs. Check if they have fulfillable inventory.`, 'error');
+            }
+        } catch (error) {
+            addNotification(`Error during bulk push.`, 'error');
+        } finally {
+            setIsBulkPushingSelected(false);
+        }
+    };
+
     const handleManualAllocation = async () => {
         setIsAllocating(true);
         addNotification('Triggering manual inventory allocation...', 'info');
@@ -1129,7 +1225,7 @@ const PoTable: React.FC<PoTableProps> = ({
                             />
                         </div>
                     )}
-                    {selectedPoNumbers.length > 0 && (
+                    {selectedUnconfirmedCount > 0 && (
                         <button
                             type="button"
                             onClick={handleBulkConfirmSelected}
@@ -1137,7 +1233,18 @@ const PoTable: React.FC<PoTableProps> = ({
                             className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-white bg-emerald-600 border border-emerald-700 rounded-lg shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
                         >
                             <CheckCircleIcon className={`h-4 w-4 ${isBulkConfirmingSelected ? 'animate-spin' : ''}`} />
-                            Confirm Selected PO ({selectedPoNumbers.length})
+                            Confirm Selected PO ({selectedUnconfirmedCount})
+                        </button>
+                    )}
+                    {selectedConfirmedCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={handleBulkPushSelected}
+                            disabled={isBulkPushingSelected || isSyncing}
+                            className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-white bg-indigo-600 border border-indigo-700 rounded-lg shadow-sm hover:bg-indigo-700 active:scale-95 transition-all"
+                        >
+                            <CloudDownloadIcon className={`h-4 w-4 ${isBulkPushingSelected ? 'animate-spin' : ''}`} />
+                            Push Selected PO ({selectedConfirmedCount})
                         </button>
                     )}
                     {activeFilter === 'New POs' && (
