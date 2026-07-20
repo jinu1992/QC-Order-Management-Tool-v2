@@ -124,9 +124,24 @@ function processNimbusAndSendEmail() {
       const trackingStatus = String(row[trackingStatusIdx] || "").trim();
       const trackingStatusLower = trackingStatus.toLowerCase();
       
-      // Skip if delivered or cancelled
-      if (trackingStatusLower === "delivered" || trackingStatusLower === "successfully delivered" || 
-          trackingStatusLower.includes("cancelled") || trackingStatusLower.includes("return")) {
+      const latestStatus = latestStatusIdx !== -1 ? String(row[latestStatusIdx] || "").trim() : "";
+      const latestStatusLower = latestStatus.toLowerCase();
+
+      // Skip if delivered, cancelled, returned, or RTO
+      const isDelivered = 
+        trackingStatusLower === "delivered" || 
+        trackingStatusLower === "successfully delivered" || 
+        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered"));
+
+      const isRtoOrCancelled = 
+        trackingStatusLower.includes("cancelled") || 
+        trackingStatusLower.includes("return") || 
+        trackingStatusLower.includes("rto") || 
+        latestStatusLower.includes("cancelled") || 
+        latestStatusLower.includes("return") || 
+        latestStatusLower.includes("rto");
+
+      if (isDelivered || isRtoOrCancelled) {
         continue;
       }
       
@@ -227,25 +242,16 @@ function buildHtmlEmailTemplate(shipments) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
-
     if (s.isNew) {
       newCount++;
-      return;
     }
 
+    const apptDateObj = parseApptDateTime(s.apptDateTime);
     if (!apptDateObj) return;
 
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const appt = new Date(
-      apptDateObj.getFullYear(),
-      apptDateObj.getMonth(),
-      apptDateObj.getDate()
-    );
-
-    if (appt < todayDate) {
+    if (apptDateObj < now) {
       missedCount++;
-    } else if (appt.getTime() === todayDate.getTime()) {
+    } else if (isSameDay(apptDateObj, now)) {
       todayCount++;
     } else {
       upcomingCount++;
@@ -272,27 +278,20 @@ function buildHtmlEmailTemplate(shipments) {
     let rowColor = "";
     let leftBorder = "#E5E7EB";
 
-    if (s.isNew) {
-      rowColor = "#E0F2FE";   // NEW
-      leftBorder = "#0284C7";
-    } else if (apptDateObj) {
-      const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const appt = new Date(
-        apptDateObj.getFullYear(),
-        apptDateObj.getMonth(),
-        apptDateObj.getDate()
-      );
-
-      if (appt < todayDate) {
+    if (apptDateObj) {
+      if (apptDateObj < now) {
         rowColor = "#FEF2F2"; // MISSED
         leftBorder = "#DC2626";
-      } else if (appt.getTime() === todayDate.getTime()) {
+      } else if (isSameDay(apptDateObj, now)) {
         rowColor = "#ECFDF5"; // TODAY
         leftBorder = "#16A34A";
       } else {
         rowColor = "#EFF6FF"; // UPCOMING
         leftBorder = "#3B82F6";
       }
+    } else if (s.isNew) {
+      rowColor = "#E0F2FE";   // NEW
+      leftBorder = "#0284C7";
     }
 
     // ---------------- TRACKING STATUS BADGE ----------------
@@ -476,33 +475,37 @@ function getApptTag(date, isNew) {
     "></span>
   `;
 
+  if (date) {
+    const now = new Date();
+    if (date < now) {
+      return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
+        ${dot('#DC2626')} MISSED
+      </span>`;
+    }
+    if (isSameDay(date, now)) {
+      return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
+        ${dot('#16A34A')} TODAY
+      </span>`;
+    }
+    return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
+      ${dot('#3B82F6')} UPCOMING
+    </span>`;
+  }
+
   if (isNew) {
     return `<span style="font-size:11px;font-weight:700;color:#1D4ED8;">
       ${dot('#0284C7')} NEW
     </span>`;
   }
 
-  if (!date) return "";
+  return "";
+}
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const appt = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  if (appt < today) {
-    return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
-      ${dot('#DC2626')} MISSED
-    </span>`;
-  }
-
-  if (appt.getTime() === today.getTime()) {
-    return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
-      ${dot('#16A34A')} TODAY
-    </span>`;
-  }
-
-  return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
-    ${dot('#3B82F6')} UPCOMING
-  </span>`;
+function isSameDay(d1, d2) {
+  if (!d1 || !d2) return false;
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
 }
 
 function formatDate(val) {

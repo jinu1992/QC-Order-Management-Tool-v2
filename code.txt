@@ -12045,6 +12045,10 @@ bb_confirmation.gs
 
 function sendBBOrderConfirmationEmail(poNumbers) 
 {
+  if (!poNumbers || !poNumbers.length) {
+    return { status: "error", message: "No PO numbers provided." };
+  }
+
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_PO_DB);
 
@@ -12068,8 +12072,15 @@ function sendBBOrderConfirmationEmail(poNumbers)
   const rowMap = {};             // po → [rowIndexes]
 
   // ================================
-  // STEP 1: Filter + Map ALL rows
+  // STEP 1: Filter + Map ALL rows and Group items by PO Number
   // ================================
+  const colStore = col("Store Code") !== -1 ? col("Store Code") : 4;
+  const colSku   = col("Item Code") !== -1 ? col("Item Code") : 7;
+  const colQty   = col("Qty") !== -1 ? col("Qty") : 10;
+  const colCost  = col("Basic Cost") !== -1 ? col("Basic Cost") : 12;
+
+  const itemsByPO = {}; // po -> { city, totalValue, items: [ { sku, qty, cost } ] }
+
   for (let i = 1; i < data.length; i++) {
 
     const po = String(data[i][IDX.PO]).trim();
@@ -12083,6 +12094,29 @@ function sendBBOrderConfirmationEmail(poNumbers)
     // ✅ store multiple rows per PO
     if (!rowMap[po]) rowMap[po] = [];
     rowMap[po].push(i + 1);
+
+    // Gather details for table
+    const store = String(data[i][colStore] || "Unknown City").trim();
+    const sku   = String(data[i][colSku] || "").trim();
+    const qty   = parseFloat(data[i][colQty]) || 0;
+    const cost  = parseFloat(data[i][colCost]) || 0;
+
+    if (!sku) continue;
+
+    if (!itemsByPO[po]) {
+      itemsByPO[po] = {
+        city: store,
+        totalValue: 0,
+        items: []
+      };
+    }
+
+    itemsByPO[po].items.push({
+      sku: sku,
+      qty: qty,
+      cost: cost
+    });
+    itemsByPO[po].totalValue += (qty * cost);
   }
 
   const validPOs = Array.from(validPOSet);
@@ -12098,34 +12132,75 @@ function sendBBOrderConfirmationEmail(poNumbers)
   }
 
   // ================================
-  // STEP 2: Clean Table (fixed width)
+  // STEP 2: HTML Table Generation with Rowspan (PO-wise, City-wise, SKU-wise, Qty, Value)
   // ================================
+  let tableRowsHtml = "";
+  let grandTotalQty = 0;
+  let grandTotalValue = 0;
+
+  validPOs.forEach(po => {
+    const poData = itemsByPO[po];
+    if (!poData || !poData.items.length) return;
+
+    const n = poData.items.length;
+    grandTotalValue += poData.totalValue;
+
+    poData.items.forEach((item, index) => {
+      grandTotalQty += item.qty;
+
+      if (index === 0) {
+        // First item row contains the spanned columns
+        tableRowsHtml += `
+          <tr>
+            <td rowspan="${n}" style="padding:8px;border:1px solid #dadce0;font-weight:bold;vertical-align:middle;text-align:left;">${po}</td>
+            <td rowspan="${n}" style="padding:8px;border:1px solid #dadce0;vertical-align:middle;text-align:left;">${poData.city}</td>
+            <td style="padding:8px;border:1px solid #dadce0;text-align:center;">${item.sku}</td>
+            <td style="padding:8px;border:1px solid #dadce0;text-align:right;">${item.qty}</td>
+            <td rowspan="${n}" style="padding:8px;border:1px solid #dadce0;text-align:right;vertical-align:middle;font-weight:bold;">₹${poData.totalValue.toFixed(2)}</td>
+          </tr>`;
+      } else {
+        // Subsequent rows only contain SKU and Qty
+        tableRowsHtml += `
+          <tr>
+            <td style="padding:8px;border:1px solid #dadce0;text-align:center;">${item.sku}</td>
+            <td style="padding:8px;border:1px solid #dadce0;text-align:right;">${item.qty}</td>
+          </tr>`;
+      }
+    });
+  });
+
   const table = `
-    <table style="border-collapse:collapse;width:400px;font-size:14px;">
+    <table style="border-collapse:collapse;width:100%;font-size:13px;font-family:Arial,sans-serif;margin-bottom:20px;">
       <thead>
-        <tr style="background:#f1f3f4;">
-          <th style="padding:10px;border:1px solid #dadce0;text-align:left;">PO Number</th>
+        <tr style="background:#f1f3f4;font-weight:bold;">
+          <th style="padding:8px;border:1px solid #dadce0;text-align:left;width:150px;">PO No</th>
+          <th style="padding:8px;border:1px solid #dadce0;text-align:left;width:180px;">City</th>
+          <th style="padding:8px;border:1px solid #dadce0;text-align:center;width:120px;">SKU ID</th>
+          <th style="padding:8px;border:1px solid #dadce0;text-align:right;width:80px;">Qty</th>
+          <th style="padding:8px;border:1px solid #dadce0;text-align:right;width:120px;">Value</th>
         </tr>
       </thead>
       <tbody>
-        ${validPOs.map(po => `
-          <tr>
-            <td style="padding:10px;border:1px solid #dadce0;">${po}</td>
-          </tr>
-        `).join("")}
+        ${tableRowsHtml}
+        <tr style="background:#fafafa;font-weight:bold;">
+          <td colspan="2" style="padding:8px;border:1px solid #dadce0;text-align:left;">Grand Total</td>
+          <td style="padding:8px;border:1px solid #dadce0;"></td>
+          <td style="padding:8px;border:1px solid #dadce0;text-align:right;">${grandTotalQty}</td>
+          <td style="padding:8px;border:1px solid #dadce0;text-align:right;">₹${grandTotalValue.toFixed(2)}</td>
+        </tr>
       </tbody>
     </table>`;
 
   const htmlBody = `
-    <div style="font-family:Roboto,Arial;font-size:14px;color:#202124;">
+    <div style="font-family:Roboto,Arial,sans-serif;font-size:14px;color:#202124;line-height:1.5;">
 
       <p>Dear Team,</p>
 
       <p>Kindly confirm the following Purchase Orders:</p>
-
+      
       ${table}
 
-      <p>Awaiting your confirmation.</p>
+      <p style="margin-top:25px;">Awaiting your confirmation.</p>
 
       <p>
       Regards,<br>
@@ -12682,9 +12757,24 @@ function processNimbusAndSendEmail() {
       const trackingStatus = String(row[trackingStatusIdx] || "").trim();
       const trackingStatusLower = trackingStatus.toLowerCase();
       
-      // Skip if delivered or cancelled
-      if (trackingStatusLower === "delivered" || trackingStatusLower === "successfully delivered" || 
-          trackingStatusLower.includes("cancelled") || trackingStatusLower.includes("return")) {
+      const latestStatus = latestStatusIdx !== -1 ? String(row[latestStatusIdx] || "").trim() : "";
+      const latestStatusLower = latestStatus.toLowerCase();
+
+      // Skip if delivered, cancelled, returned, or RTO
+      const isDelivered = 
+        trackingStatusLower === "delivered" || 
+        trackingStatusLower === "successfully delivered" || 
+        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered"));
+
+      const isRtoOrCancelled = 
+        trackingStatusLower.includes("cancelled") || 
+        trackingStatusLower.includes("return") || 
+        trackingStatusLower.includes("rto") || 
+        latestStatusLower.includes("cancelled") || 
+        latestStatusLower.includes("return") || 
+        latestStatusLower.includes("rto");
+
+      if (isDelivered || isRtoOrCancelled) {
         continue;
       }
       
@@ -12785,25 +12875,16 @@ function buildHtmlEmailTemplate(shipments) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
-
     if (s.isNew) {
       newCount++;
-      return;
     }
 
+    const apptDateObj = parseApptDateTime(s.apptDateTime);
     if (!apptDateObj) return;
 
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const appt = new Date(
-      apptDateObj.getFullYear(),
-      apptDateObj.getMonth(),
-      apptDateObj.getDate()
-    );
-
-    if (appt < todayDate) {
+    if (apptDateObj < now) {
       missedCount++;
-    } else if (appt.getTime() === todayDate.getTime()) {
+    } else if (isSameDay(apptDateObj, now)) {
       todayCount++;
     } else {
       upcomingCount++;
@@ -12830,27 +12911,20 @@ function buildHtmlEmailTemplate(shipments) {
     let rowColor = "";
     let leftBorder = "#E5E7EB";
 
-    if (s.isNew) {
-      rowColor = "#E0F2FE";   // NEW
-      leftBorder = "#0284C7";
-    } else if (apptDateObj) {
-      const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const appt = new Date(
-        apptDateObj.getFullYear(),
-        apptDateObj.getMonth(),
-        apptDateObj.getDate()
-      );
-
-      if (appt < todayDate) {
+    if (apptDateObj) {
+      if (apptDateObj < now) {
         rowColor = "#FEF2F2"; // MISSED
         leftBorder = "#DC2626";
-      } else if (appt.getTime() === todayDate.getTime()) {
+      } else if (isSameDay(apptDateObj, now)) {
         rowColor = "#ECFDF5"; // TODAY
         leftBorder = "#16A34A";
       } else {
         rowColor = "#EFF6FF"; // UPCOMING
         leftBorder = "#3B82F6";
       }
+    } else if (s.isNew) {
+      rowColor = "#E0F2FE";   // NEW
+      leftBorder = "#0284C7";
     }
 
     // ---------------- TRACKING STATUS BADGE ----------------
@@ -13034,33 +13108,37 @@ function getApptTag(date, isNew) {
     "></span>
   `;
 
+  if (date) {
+    const now = new Date();
+    if (date < now) {
+      return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
+        ${dot('#DC2626')} MISSED
+      </span>`;
+    }
+    if (isSameDay(date, now)) {
+      return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
+        ${dot('#16A34A')} TODAY
+      </span>`;
+    }
+    return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
+      ${dot('#3B82F6')} UPCOMING
+    </span>`;
+  }
+
   if (isNew) {
     return `<span style="font-size:11px;font-weight:700;color:#1D4ED8;">
       ${dot('#0284C7')} NEW
     </span>`;
   }
 
-  if (!date) return "";
+  return "";
+}
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const appt = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  if (appt < today) {
-    return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
-      ${dot('#DC2626')} MISSED
-    </span>`;
-  }
-
-  if (appt.getTime() === today.getTime()) {
-    return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
-      ${dot('#16A34A')} TODAY
-    </span>`;
-  }
-
-  return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
-    ${dot('#3B82F6')} UPCOMING
-  </span>`;
+function isSameDay(d1, d2) {
+  if (!d1 || !d2) return false;
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
 }
 
 function formatDate(val) {
