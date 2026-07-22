@@ -680,7 +680,18 @@ const PoTable: React.FC<PoTableProps> = ({
         if (activeFilter !== 'All POs') {
             orders = orders.filter(po => {
                 const status = getCalculatedStatus(po);
-                if (activeFilter === 'New POs') return status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
+                if (activeFilter === 'New POs') {
+                    const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
+                    if (!isNewStatus) return false;
+
+                    // Hide stale unpushed POs (>30 days old) from the New POs tab
+                    const orderTime = parseDate(po.orderDate);
+                    if (orderTime > 0) {
+                        const daysOld = (Date.now() - orderTime) / (1000 * 60 * 60 * 24);
+                        if (daysOld > 30) return false;
+                    }
+                    return true;
+                }
                 if (activeFilter === 'Below Threshold POs') return status === POStatus.BelowThreshold;
                 if (activeFilter === 'Pushed POs') return status === POStatus.Pushed;
                 if (activeFilter === 'Partially Pushed POs') return status === POStatus.PartiallyProcessed;
