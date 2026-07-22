@@ -51,17 +51,59 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
         return d;
     }, []);
 
+    const safeParseDate = (dateStr: string | undefined): Date | null => {
+        if (!dateStr) return null;
+        
+        // Try standard parsing first
+        let d = new Date(dateStr);
+        if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+            return d;
+        }
+
+        // Try replacing slashes with hyphens
+        const cleanStr = dateStr.replace(/\//g, '-').trim();
+        const parts = cleanStr.split('-');
+        
+        if (parts.length === 3) {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+
+            if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+                // Case 1: YYYY-MM-DD
+                if (parts[0].length === 4) {
+                    return new Date(p0, p1 - 1, p2);
+                }
+                // Case 2: DD-MM-YYYY
+                if (parts[2].length === 4) {
+                    return new Date(p2, p1 - 1, p0);
+                }
+                // Case 3: DD-MM-YY (2-digit year)
+                if (parts[2].length === 2) {
+                    return new Date(p2 + 2000, p1 - 1, p0);
+                }
+            }
+        }
+
+        // Try parsing textual month names like "22 Jul 2026" or "22-Jul-2026"
+        const spaceStr = dateStr.replace(/-/g, ' ');
+        const dSpace = new Date(spaceStr);
+        if (!isNaN(dSpace.getTime()) && dSpace.getFullYear() >= 2000) {
+            return dSpace;
+        }
+
+        return null;
+    };
+
     const isSameDay = (d1Str?: string, compare: Date = todayDate) => {
-        if (!d1Str) return false;
-        const d1 = new Date(d1Str);
-        if (isNaN(d1.getTime())) return false;
+        const d1 = safeParseDate(d1Str);
+        if (!d1) return false;
         return d1.toDateString() === compare.toDateString();
     };
 
     const isUpcoming = (d1Str?: string, compare: Date = todayDate) => {
-        if (!d1Str) return false;
-        const d1 = new Date(d1Str);
-        if (isNaN(d1.getTime())) return false;
+        const d1 = safeParseDate(d1Str);
+        if (!d1) return false;
         
         // Compare only date parts
         const d1Date = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
@@ -70,9 +112,8 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
     };
 
     const isMissed = (d1Str?: string, compare: Date = todayDate) => {
-        if (!d1Str) return false;
-        const d1 = new Date(d1Str);
-        if (isNaN(d1.getTime())) return false;
+        const d1 = safeParseDate(d1Str);
+        if (!d1) return false;
         
         const d1Date = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
         const compareDate = new Date(compare.getFullYear(), compare.getMonth(), compare.getDate());

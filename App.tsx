@@ -25,6 +25,50 @@ import { initialRolePermissions } from './data/mockData';
 import { type PurchaseOrder, POStatus, ActivityLog, NotificationItem, ViewType, User, RolePermissions, InventoryItem, ChannelConfig, Quotation } from './types';
 import { fetchPurchaseOrders, fetchInventoryFromSheet, fetchChannelConfigs, fetchUsers, fetchQuotations } from './services/api';
 
+const safeParseDate = (dateStr: string | undefined): Date | null => {
+  if (!dateStr) return null;
+  
+  // Try standard parsing first
+  let d = new Date(dateStr);
+  if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+    return d;
+  }
+
+  // Try replacing slashes with hyphens
+  const cleanStr = dateStr.replace(/\//g, '-').trim();
+  const parts = cleanStr.split('-');
+  
+  if (parts.length === 3) {
+    const p0 = parseInt(parts[0], 10);
+    const p1 = parseInt(parts[1], 10);
+    const p2 = parseInt(parts[2], 10);
+
+    if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+      // Case 1: YYYY-MM-DD
+      if (parts[0].length === 4) {
+        return new Date(p0, p1 - 1, p2);
+      }
+      // Case 2: DD-MM-YYYY
+      if (parts[2].length === 4) {
+        return new Date(p2, p1 - 1, p0);
+      }
+      // Case 3: DD-MM-YY (2-digit year)
+      if (parts[2].length === 2) {
+        return new Date(p2 + 2000, p1 - 1, p0);
+      }
+    }
+  }
+
+  // Try parsing textual month names like "22 Jul 2026" or "22-Jul-2026"
+  const spaceStr = dateStr.replace(/-/g, ' ');
+  const dSpace = new Date(spaceStr);
+  if (!isNaN(dSpace.getTime()) && dSpace.getFullYear() >= 2000) {
+    return dSpace;
+  }
+
+  return null;
+};
+
 const App: React.FC = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -417,10 +461,9 @@ const App: React.FC = () => {
     const todayStr = new Date().toDateString();
     const todayPickupsCount = purchaseOrders.filter(po => {
       const pDate = po.pickupDate || po.items?.find(i => i.pickupDate)?.pickupDate;
-      if (!pDate) return false;
-      try {
-        return new Date(pDate).toDateString() === todayStr;
-      } catch { return false; }
+      const parsed = safeParseDate(pDate);
+      if (!parsed) return false;
+      return parsed.toDateString() === todayStr;
     }).length;
 
     // Pending Dispatches (Status is Shipped/Manifested but not Dispatched)
