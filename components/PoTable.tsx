@@ -651,7 +651,6 @@ const PoTable: React.FC<PoTableProps> = ({
     const [cancellingLineItemId, setCancellingLineItemId] = useState<string | null>(null);
     const [isAllocating, setIsAllocating] = useState(false);
     const [isSendingBBConfirmation, setIsSendingBBConfirmation] = useState(false);
-    const [isBulkConfirming, setIsBulkConfirming] = useState<string | null>(null);
     const [selectedPoNumbers, setSelectedPoNumbers] = useState<string[]>([]);
     const [isBulkConfirmingSelected, setIsBulkConfirmingSelected] = useState(false);
     const [isBulkPushingSelected, setIsBulkPushingSelected] = useState(false);
@@ -713,14 +712,6 @@ const PoTable: React.FC<PoTableProps> = ({
         });
         return orders;
     }, [activeFilter, purchaseOrders, columnFilters, debouncedSkuSearch]);
-
-    const channelsWithUnconfirmed = useMemo(() => {
-        const confirmable = processedOrders.filter(po => {
-            const status = getCalculatedStatus(po);
-            return status === POStatus.NewPO || status === POStatus.WaitingForConfirmation;
-        });
-        return Array.from(new Set(confirmable.map(po => po.channel)));
-    }, [processedOrders]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -982,55 +973,6 @@ const PoTable: React.FC<PoTableProps> = ({
         }
     };
 
-    const handleBulkConfirmChannel = async (channel: string) => {
-        const confirmablePOs = processedOrders.filter(po => {
-            const status = getCalculatedStatus(po);
-            return po.channel === channel && (status === POStatus.NewPO || status === POStatus.WaitingForConfirmation);
-        });
-
-        if (confirmablePOs.length === 0) return;
-
-        const isConfirmed = window.confirm(`Are you sure you want to mark all ${confirmablePOs.length} unconfirmed POs for ${channel} as Confirmed?`);
-        if (!isConfirmed) return;
-
-        setIsBulkConfirming(channel);
-        addNotification(`Confirming ${confirmablePOs.length} ${channel} orders...`, 'info');
-
-        let successCount = 0;
-        let failCount = 0;
-
-        try {
-            await Promise.all(confirmablePOs.map(async (po) => {
-                try {
-                    const res = await updatePOStatus(po.poNumber, 'Confirmed');
-                    if (res.status === 'success') {
-                        successCount++;
-                        setPurchaseOrders((prev: PurchaseOrder[]) => prev.map(p =>
-                            p.poNumber === po.poNumber ? { ...p, status: 'Confirmed' as any } : p
-                        ));
-                        addLog('Status Update', `Manually updated PO ${po.poNumber} to Confirmed via Bulk Confirm`);
-                    } else {
-                        failCount++;
-                    }
-                } catch (err) {
-                    failCount++;
-                }
-            }));
-
-            if (successCount > 0) {
-                addNotification(`Successfully confirmed ${successCount} ${channel} POs.`, 'success');
-                onSync();
-            }
-            if (failCount > 0) {
-                addNotification(`Failed to confirm ${failCount} ${channel} POs.`, 'error');
-            }
-        } catch (error) {
-            addNotification(`Error during bulk confirmation of ${channel} POs.`, 'error');
-        } finally {
-            setIsBulkConfirming(null);
-        }
-    };
-
     const confirmablePOs = useMemo(() => {
         return processedOrders.filter(po => {
             const status = getCalculatedStatus(po);
@@ -1288,18 +1230,6 @@ const PoTable: React.FC<PoTableProps> = ({
                             {isSendingBBConfirmation ? 'Sending Emails...' : 'Send All BB Confirmations'}
                         </button>
                     )}
-                    {activeFilter === 'New POs' && channelsWithUnconfirmed.map(channel => (
-                        <button
-                            key={channel}
-                            type="button"
-                            onClick={() => handleBulkConfirmChannel(channel)}
-                            disabled={isBulkConfirming === channel || isSyncing}
-                            className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg shadow-sm hover:bg-blue-100 active:scale-95 transition-all"
-                        >
-                            <CheckCircleIcon className={`h-4 w-4 ${isBulkConfirming === channel ? 'animate-spin' : ''}`} />
-                            {isBulkConfirming === channel ? `Confirming ${channel}...` : `Confirm All ${channel}`}
-                        </button>
-                    ))}
                     <button type="button" onClick={onSync} disabled={isSyncing} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 active:scale-95 transition-all">
                         <CloudDownloadIcon className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} /> Sync All Data
                     </button>
