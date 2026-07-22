@@ -30,16 +30,32 @@ import { User } from '../types';
 
 const parseDate = (dateStr: string | undefined): number => {
     try {
-        if (!dateStr || dateStr.trim() === "") return 0;
-        const parts = dateStr.match(/(\d+)\s+(\w+)\s+(\d+)/);
-        if (parts && parts.length === 4) {
-            const day = parts[1];
-            const month = parts[2];
-            let year = parts[3];
-            if (year.length === 2) year = '20' + year;
-            return new Date(`${day} ${month} ${year}`).getTime();
+        if (!dateStr || dateStr.trim() === "" || dateStr === 'N/A') return 0;
+        let d = new Date(dateStr);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d.getTime();
+
+        // Handle DD/MM/YYYY, DD-Mon-YYYY, DD-MM-YYYY, YYYY-MM-DD
+        const parts = dateStr.trim().split(/[\/\-\s]+/);
+        if (parts.length === 3) {
+            const monthMap: Record<string, number> = {
+                jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
+            };
+            let day = parseInt(parts[0], 10);
+            let month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+            let year = parseInt(parts[2], 10);
+            if (year < 100) year += 2000;
+
+            if (parts[0].length === 4) { // YYYY-MM-DD
+                year = parseInt(parts[0], 10);
+                month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+                day = parseInt(parts[2], 10);
+            }
+
+            if (!isNaN(day) && month !== undefined && !isNaN(month) && !isNaN(year) && year > 2000) {
+                return new Date(year, month, day).getTime();
+            }
         }
-        return new Date(dateStr).getTime() || 0;
+        return 0;
     } catch (e) { return 0; }
 };
 
@@ -665,7 +681,7 @@ const PoTable: React.FC<PoTableProps> = ({
         if (activeFilter !== 'All POs') {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+            const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
 
             orders = orders.filter(po => {
                 const status = getCalculatedStatus(po);
@@ -673,14 +689,20 @@ const PoTable: React.FC<PoTableProps> = ({
                     const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
                     if (!isNewStatus) return false;
 
-                    // Exclude POs that are expired or historic (>90 days old unfulfilled)
+                    // Hard exclusion: Exclude any PO with 2025 in ID or order date from 2025 or older
+                    const poIdStr = String(po.id || po.poNumber || '');
+                    if (poIdStr.includes('2025') || poIdStr.includes('Dec2025') || poIdStr.includes('Dec-2025')) return false;
+
+                    const orderTime = parseDate(po.orderDate);
+                    if (orderTime > 0) {
+                        const orderDateObj = new Date(orderTime);
+                        if (orderDateObj.getFullYear() < 2026) return false; // Exclude 2025 or older
+                        if (today.getTime() - orderTime > sixtyDaysMs) return false; // Exclude > 60 days old unfulfilled POs
+                    }
+
                     if (po.poExpiryDate && po.poExpiryDate !== 'N/A') {
                         const expTime = parseDate(po.poExpiryDate);
                         if (expTime > 0 && expTime < today.getTime()) return false;
-                    }
-                    if (po.orderDate && po.orderDate !== 'N/A') {
-                        const orderTime = parseDate(po.orderDate);
-                        if (orderTime > 0 && (today.getTime() - orderTime > ninetyDaysMs)) return false;
                     }
                     return true;
                 }
