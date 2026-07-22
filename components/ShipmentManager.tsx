@@ -454,28 +454,52 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         return d;
     }, []);
 
+    const parseAnyDate = (dateStr?: string): Date | null => {
+        if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return null;
+        let d = new Date(dateStr);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d;
+
+        // Try parsing DD/MM/YYYY or DD-Mon-YYYY or DD-MM-YYYY
+        const parts = dateStr.trim().split(/[\/\-\s]+/);
+        if (parts.length === 3) {
+            const monthMap: Record<string, number> = {
+                jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
+            };
+            let day = parseInt(parts[0], 10);
+            let month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+            let year = parseInt(parts[2], 10);
+
+            // Handle YYYY-MM-DD format if year comes first
+            if (parts[0].length === 4) {
+                year = parseInt(parts[0], 10);
+                month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+                day = parseInt(parts[2], 10);
+            }
+
+            if (!isNaN(day) && month !== undefined && !isNaN(month) && !isNaN(year) && year > 2000) {
+                return new Date(year, month, day);
+            }
+        }
+        return null;
+    };
+
     const isSameDay = (dateStr: string | undefined, targetDate: Date) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
+        const d = parseAnyDate(dateStr);
+        if (!d) return false;
         return d.toDateString() === targetDate.toDateString();
     };
 
     const getDaysAgo = (dateStr: string | undefined): number => {
-        if (!dateStr || dateStr === 'N/A') return 0;
-        try {
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return 0;
-            const today = new Date();
-            const diffMs = today.getTime() - d.getTime();
-            return Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        } catch { return 0; }
+        const d = parseAnyDate(dateStr);
+        if (!d) return 0;
+        const today = new Date();
+        const diffMs = today.getTime() - d.getTime();
+        return Math.floor(diffMs / (1000 * 60 * 60 * 24));
     };
 
     const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
+        const d = parseAnyDate(dateStr);
+        if (!d) return false;
         const d1 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const compare = new Date(compareDate.getFullYear(), compareDate.getMonth(), compareDate.getDate());
         return d1 < compare;

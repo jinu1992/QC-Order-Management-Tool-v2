@@ -663,9 +663,27 @@ const PoTable: React.FC<PoTableProps> = ({
     const processedOrders = useMemo(() => {
         let orders = [...purchaseOrders];
         if (activeFilter !== 'All POs') {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+
             orders = orders.filter(po => {
                 const status = getCalculatedStatus(po);
-                if (activeFilter === 'New POs') return status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
+                if (activeFilter === 'New POs') {
+                    const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
+                    if (!isNewStatus) return false;
+
+                    // Exclude POs that are expired or historic (>90 days old unfulfilled)
+                    if (po.poExpiryDate && po.poExpiryDate !== 'N/A') {
+                        const expTime = parseDate(po.poExpiryDate);
+                        if (expTime > 0 && expTime < today.getTime()) return false;
+                    }
+                    if (po.orderDate && po.orderDate !== 'N/A') {
+                        const orderTime = parseDate(po.orderDate);
+                        if (orderTime > 0 && (today.getTime() - orderTime > ninetyDaysMs)) return false;
+                    }
+                    return true;
+                }
                 if (activeFilter === 'Below Threshold POs') return status === POStatus.BelowThreshold;
                 if (activeFilter === 'Pushed POs') return status === POStatus.Pushed;
                 if (activeFilter === 'Partially Pushed POs') return status === POStatus.PartiallyProcessed;
