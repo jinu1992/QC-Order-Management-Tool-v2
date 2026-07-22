@@ -544,7 +544,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         if (!dateStr) return false;
 
         if (isActuallyDelivered) {
-            return !!so.deliveredDate && !isSameDay(so.deliveredDate, new Date(dateStr));
+            return false;
         } else {
             if (so.appointmentDate) {
                 const apptTimestamp = parseAppointmentDateTime(so.appointmentDate, so.appointmentTime);
