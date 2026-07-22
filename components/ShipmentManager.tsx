@@ -447,6 +447,50 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         }
     };
 
+    const safeParseDate = (dateStr: string | undefined): Date | null => {
+        if (!dateStr) return null;
+        
+        // Try standard parsing first
+        let d = new Date(dateStr);
+        if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+            return d;
+        }
+
+        // Try replacing slashes with hyphens
+        const cleanStr = dateStr.replace(/\//g, '-').trim();
+        const parts = cleanStr.split('-');
+        
+        if (parts.length === 3) {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+
+            if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+                // Case 1: YYYY-MM-DD
+                if (parts[0].length === 4) {
+                    return new Date(p0, p1 - 1, p2);
+                }
+                // Case 2: DD-MM-YYYY
+                if (parts[2].length === 4) {
+                    return new Date(p2, p1 - 1, p0);
+                }
+                // Case 3: DD-MM-YY (2-digit year)
+                if (parts[2].length === 2) {
+                    return new Date(p2 + 2000, p1 - 1, p0);
+                }
+            }
+        }
+
+        // Try parsing textual month names like "22 Jul 2026" or "22-Jul-2026"
+        const spaceStr = dateStr.replace(/-/g, ' ');
+        const dSpace = new Date(spaceStr);
+        if (!isNaN(dSpace.getTime()) && dSpace.getFullYear() >= 2000) {
+            return dSpace;
+        }
+
+        return null;
+    };
+
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
         const d = new Date();
@@ -455,17 +499,16 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     }, []);
 
     const isSameDay = (dateStr: string | undefined, targetDate: Date) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
+        const d = safeParseDate(dateStr);
+        if (!d) return false;
         return d.toDateString() === targetDate.toDateString();
     };
 
     const getDaysAgo = (dateStr: string | undefined): number => {
         if (!dateStr || dateStr === 'N/A') return 0;
         try {
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return 0;
+            const d = safeParseDate(dateStr);
+            if (!d) return 0;
             const today = new Date();
             const diffMs = today.getTime() - d.getTime();
             return Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -473,9 +516,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     };
 
     const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
-        if (!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
+        const d = safeParseDate(dateStr);
+        if (!d) return false;
         const d1 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const compare = new Date(compareDate.getFullYear(), compareDate.getMonth(), compareDate.getDate());
         return d1 < compare;
@@ -484,23 +526,12 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const parseAppointmentDateTime = (date?: string, time?: string) => {
         if (!date) return 0;
         try {
-            let d = new Date(date);
-            if (d.getFullYear() < 2000) {
-                // Excel epoch bug usually maps to 1899. Return 0 to put it at the end.
+            const d = safeParseDate(date);
+            if (!d || d.getFullYear() < 2000) {
                 return 0;
             }
-            if (isNaN(d.getTime())) {
-                const parts = date.split('-');
-                if (parts.length === 3) {
-                    if (parts[2].length === 4) {
-                        d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-                    } else {
-                        d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-                    }
-                }
-            }
 
-            if (time && !isNaN(d.getTime())) {
+            if (time) {
                 const timeStr = String(time).trim();
                 const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
                 if (ampmMatch) {
@@ -795,6 +826,12 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             // Identify actual shipments (including Returned/RTO/Delivered)
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered') {
                 isTargetStatus = true;
+            }
+            // Include active appointments for Today/Tomorrow/Missed tabs even if not shipped yet
+            if (activeTab === 'Today' || activeTab === 'Tomorrow' || activeTab === 'Missed') {
+                if (so.appointmentDate || so.appointmentId || so.appointmentRequestDate || so.appointmentRequestId) {
+                    isTargetStatus = true;
+                }
             }
 
             if (!isTargetStatus) return false;
