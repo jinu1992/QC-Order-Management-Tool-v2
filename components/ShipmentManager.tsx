@@ -742,8 +742,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             // If it's Actually Delivered, we still show it (previously hidden per user request, now restored)
 
             let isTargetStatus = false;
-            // Identify actual shipments (including Returned/RTO/Delivered)
-            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered') {
+            // Identify actual shipments (including Returned/RTO/Delivered) OR orders with appointment dates
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered' || !!so.appointmentDate || !!so.appointmentRequestDate) {
                 isTargetStatus = true;
             }
 
