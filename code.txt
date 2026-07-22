@@ -28,9 +28,8 @@ appscript.json
   ]
 }
 
-
-
 deployment.gs
+
 
 
 /**
@@ -5029,9 +5028,10 @@ function loadChannelThresholds(ss) {
 }
 
 
-
-
 get.gs
+
+
+
 
 function fetchEasyEcomCustomers() {
   var scriptProperties = PropertiesService.getScriptProperties();
@@ -6176,7 +6176,12 @@ function updateDatabaseWithInvoices(sheet, map) {
   console.log("Updated PO Database with Zoho Invoice details (including E-Way Bills).");
 }
 
+
+
+
 test.gs
+
+
 function update_data()
 {
   processPurchaseOrders();
@@ -6331,8 +6336,8 @@ function processPurchaseOrders_oneday() {
 
 
 
-zohotoeasyecom.gs
 
+zohotoeasyecom.gs
 
 
 // =================================================================================
@@ -7992,6 +7997,7 @@ function SEND_AND_ACCEPT_ESTIMATE(data) {
 
 nimbus post.gs
 
+
 function test_courier_allocation()
 {
   createShipment("P4651825","110");
@@ -9536,7 +9542,6 @@ function selfShipOrder(data) {
 
 
 
-
 ewb.gs
 
 
@@ -9646,6 +9651,8 @@ function pushToGovernmentPortal(ewayBillId,token) {
 
 
 amazon.gs
+
+
 // =================================================================================
 // AMAZON FBA - TWO-STAGE INBOUND SHIPMENT WORKFLOW
 // =================================================================================
@@ -10394,13 +10401,11 @@ function downloadFbaShipmentLabels(poRef) {
 
 
 
-
-
-
 function test_amazon()
 {
-  const data = {"action":"pushToEasyEcom","id":"AZ20260617-1","poNumber":"AZ20260617-1","status":"New","poDbStatus":"New","channel":"Amazon_FBA","storeCode":"ISK3","locationKey":"","location":"","qty":2002,"amount":183420,"orderDate":"17 Jun 2026","poEdd":"27 Jun 2026","poExpiryDate":"17 Jul 2026","grnDate":"","eeCustomerId":"204731","zohoContactId":"1975394000002061003","items":[{"articleCode":"1030400","masterSku":"1030400","itemName":"Cubelelo Drift Warrior 3x3 Black","qty":480,"fulfillableQty":480,"unitCost":44.1,"mrp":499,"priceCheckStatus":"Mismatch (PO:42 vs Exp:44)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060831","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1280100a","masterSku":"1280100","itemName":"Cubelelo Drift Pyraminx Stickerless","qty":420,"fulfillableQty":420,"unitCost":86.1,"mrp":999,"priceCheckStatus":"Mismatch (PO:82 vs Exp:86)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059068","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1120100","masterSku":"1120100","itemName":"Cubelelo Drift Mirror Cube","qty":240,"fulfillableQty":240,"unitCost":94.5,"mrp":599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060121","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1460501","masterSku":"1460501","itemName":"Drift 2x2 and 3x3 Stickerless Cube Gift Box","qty":210,"fulfillableQty":210,"unitCost":107.1,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059871","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1290300","masterSku":"1290300","itemName":"Cubelelo Drift Megaminx v2","qty":192,"fulfillableQty":192,"unitCost":220.5,"mrp":999,"priceCheckStatus":"Mismatch (PO:210 vs Exp:221)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061302","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1630207","masterSku":"1630207","itemName":"Cubelelo Drift Rainbow Ball","qty":180,"fulfillableQty":180,"unitCost":98.7,"mrp":799,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000057936","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1040400","masterSku":"1040200","itemName":"Cubelelo Drift 4x4 Stickerless","qty":160,"fulfillableQty":160,"unitCost":141.75,"mrp":999,"priceCheckStatus":"Price Not Found","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060431","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1020200","masterSku":"1020200","itemName":"Cubelelo Drift 2x2 Stickerless","qty":120,"fulfillableQty":120,"unitCost":60.9,"mrp":799,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061025","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""}],"appointmentDate":"","appointmentRequestDate":"","contactVerified":false,"pickupDate":"","isPartial":false,"pushTarget":"AMZ"}
-  createAmazonFbaInboundPlan(data,"AZ20260617-1");
+  const data = {"action":"pushToEasyEcom","id":"AZ20260718-1","poNumber":"AZ20260718-1","status":"New","poDbStatus":"New","channel":"Amazon_FBA","storeCode":"ISK3","locationKey":"","location":"","qty":2824,"amount":377566.5,"orderDate":"18 Jul 2026","poEdd":"28 Jul 2026","poExpiryDate":"17 Aug 2026","grnDate":"","eeCustomerId":"204731","zohoContactId":"1975394000002061003","items":[{"articleCode":"1630210","masterSku":"1630210","itemName":"Drift Number Sliding Puzzle _4x4","qty":540,"fulfillableQty":540,"unitCost":89.25,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001550348","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030604","masterSku":"1030604","itemName":"Drift 3M v3 3x3 Magnetic","qty":540,"fulfillableQty":540,"unitCost":165.9,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000129386389","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030400","masterSku":"1030400","itemName":"Cubelelo Drift Warrior 3x3 Black","qty":360,"fulfillableQty":360,"unitCost":44.1,"mrp":499,"priceCheckStatus":"Mismatch (PO:42 vs Exp:44)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060831","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1020200","masterSku":"1020200","itemName":"Cubelelo Drift 2x2 Stickerless","qty":240,"fulfillableQty":240,"unitCost":60.9,"mrp":799,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061025","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1460553","masterSku":"1460553c","itemName":"Cubelelo Drift 2x2, 3x3 & Pyraminx Gift Box","qty":200,"fulfillableQty":200,"unitCost":202.65,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001917944","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1630201","masterSku":"1630201","itemName":"Cubelelo Drift Infinity Cube Green","qty":168,"fulfillableQty":168,"unitCost":95.55,"mrp":499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059461","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1040400","masterSku":"1040200","itemName":"Cubelelo Drift 4x4 Stickerless","qty":160,"fulfillableQty":160,"unitCost":141.75,"mrp":999,"priceCheckStatus":"Price Not Found","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060431","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1630223","masterSku":"1630223a","itemName":"Drift Clang! Magnetic Game","qty":100,"fulfillableQty":100,"unitCost":152.25,"mrp":699,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000243643012","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1280100a","masterSku":"1280100","itemName":"Cubelelo Drift Pyraminx Stickerless","qty":60,"fulfillableQty":60,"unitCost":86.1,"mrp":999,"priceCheckStatus":"Mismatch (PO:82 vs Exp:86)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059068","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1120200","masterSku":"1120200","itemName":"Cubelelo Drift Mirror Cube _Golden","qty":42,"fulfillableQty":42,"unitCost":92.4,"mrp":599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060161","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB00004","masterSku":"TB00004a","itemName":"TinkerBox Stack & Balance Acrobat Human Tower","qty":40,"fulfillableQty":40,"unitCost":329.7,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250781069","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1040600","masterSku":"1040600ps","itemName":"Cubelelo Drift 4M 4x4 Stickerless","qty":30,"fulfillableQty":30,"unitCost":494.44,"mrp":1449,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001913120","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1960100","masterSku":"1960100","itemName":"Cubelelo Drift Mini 3x3 Keychain","qty":30,"fulfillableQty":30,"unitCost":94.5,"mrp":349,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000057903","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1060100","masterSku":"1060100","itemName":"Cubelelo Drift 6x6 Stickerless","qty":30,"fulfillableQty":30,"unitCost":535.5,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060233","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1280600_EAN","masterSku":"1280600ps","itemName":"Cubelelo Drift Pyraminx M _Magnetic","qty":30,"fulfillableQty":30,"unitCost":298.09,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918556","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1260100","masterSku":"1260100","itemName":"Drift Puppet Cube I","qty":25,"fulfillableQty":25,"unitCost":170.1,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001549718","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1460503","masterSku":"1460503b","itemName":"Drift 2x2, 3x3 & 4x4 Stickerless Gift Box","qty":24,"fulfillableQty":24,"unitCost":249.9,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001550087","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB00003","masterSku":"TB00003a","itemName":"TinkerBox Color and Pattern Sliding Puzzle Game","qty":20,"fulfillableQty":20,"unitCost":310.8,"mrp":999,"priceCheckStatus":"Mismatch (PO:296 vs Exp:0)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250449426","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1050600","masterSku":"1050600ps","itemName":"Cubelelo Drift 5M 5x5 Stickerless","qty":20,"fulfillableQty":20,"unitCost":562.27,"mrp":1599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918034","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1120400_EAN","masterSku":"1120400","itemName":"Cubelelo Drift Mirror 2x2 Silver","qty":20,"fulfillableQty":20,"unitCost":80.85,"mrp":599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060119","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030652","masterSku":"1030652","itemName":"Drift 3M PLUS v2 MagLev Speedcube","qty":20,"fulfillableQty":20,"unitCost":407.4,"mrp":1999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001549448","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1020300","masterSku":"1020300","itemName":"Cubelelo Drift 2x2 Black","qty":20,"fulfillableQty":20,"unitCost":55.65,"mrp":499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061023","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1160200","masterSku":"1160200","itemName":"Cubelelo Drift Fisher Cube Tiled","qty":20,"fulfillableQty":20,"unitCost":97.65,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000058218","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030322","masterSku":"1030322ps","itemName":"Cubelelo Drift 3x3 Carbon Fiber","qty":20,"fulfillableQty":20,"unitCost":85.68,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918673","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030800_EAN","masterSku":"1030652gp","itemName":"Drift 3M PLUS v2 MagLev Speedcube (Alternate)","qty":20,"fulfillableQty":20,"unitCost":407.4,"mrp":1999,"priceCheckStatus":"Mismatch (PO:388 vs Exp:391)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000134970531","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1060600","masterSku":"1060600","itemName":"Cubelelo Drift 6M 6x6 _Magnetic","qty":15,"fulfillableQty":15,"unitCost":755.06,"mrp":2199,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060231","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB02003","masterSku":"TB02003a","itemName":"Tinker Box Wobbler/ Rolly polly/ Roly poly","qty":10,"fulfillableQty":10,"unitCost":210,"mrp":699,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250782133","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"4001045","masterSku":"4001045","itemName":"Drift Honeycomb Weekday Calendar Puzzle","qty":5,"fulfillableQty":5,"unitCost":178.5,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000057780","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB06003","masterSku":"TB06003a","itemName":"TinkerBox Cylinder Puzzle","qty":5,"fulfillableQty":5,"unitCost":236.25,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250786161","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1150100","masterSku":"1150100","itemName":"Cubelelo Drift Square-1 Stickerless","qty":5,"fulfillableQty":5,"unitCost":246.33,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061438","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB08002","masterSku":"TB08002a","itemName":"TinkerBox Fabric Winder","qty":5,"fulfillableQty":5,"unitCost":327.6,"mrp":1199,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250781080","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""}],"appointmentDate":"","appointmentRequestDate":"","contactVerified":false,"pickupDate":"","orderNotes":"[2026-07-18 10:30] Jainendra Jain: Ship through Fakir Nayak Delhivery @14/kg","isPartial":false,"pushTarget":"AMZ"};
+
+  createAmazonFbaInboundPlan(data,"AZ20260718-1");
   //generateAndListAmazonPlacementDirect(poRef);
   //setPackingInformationAndConfirmPlacementDirect(poRef);
 
@@ -10545,6 +10550,7 @@ function fetchSigned_(token, req, okStatuses) {
 
   return body ? JSON.parse(body) : {};
 }
+
 
 
 
@@ -10939,7 +10945,9 @@ function _parseBlinkitAppointmentPass(message, folder) {
 }
 
 
+
 zepto appt.gs
+
 
 /**
  * ==========================================================
@@ -11390,6 +11398,17 @@ function processChannelAppointments(channelName, manualSaleOrderList = null, mod
 
     const channelConfig = fetchChannelConfig(channel.NAME);
 
+    // ================= BB =================
+    // if(channel.NAME==="BB"){
+    //   return sendBigBasketEmails(
+    //     eligibleOrders,
+    //     sheet,
+    //     rows.length,
+    //     IDX,
+    //     channelConfig.cc
+    //   );
+    // }
+
     if(!channelConfig?.to) throw new Error("Channel email config missing");
 
   if (channel.NAME === "Zepto") {
@@ -11560,7 +11579,79 @@ function processChannelAppointments(channelName, manualSaleOrderList = null, mod
  */
 
 
-// sendBigBasketEmails deprecated
+function sendBigBasketEmails(orders,sheet,rowCount,IDX,ccmails){
+
+  const storeEmailMap = getBBStoreEmailMap();
+
+  const grouped = {};
+
+  orders.forEach(o=>{
+    if(!grouped[o.storeCode]) grouped[o.storeCode]=[];
+    grouped[o.storeCode].push(o);
+  });
+
+  const results = [];
+
+  Object.keys(grouped).forEach(storeCode=>{
+
+    const requestId = generateRequestId();   // NEW ID PER EMAIL
+
+    const email = storeEmailMap[storeCode];
+    if(!email) return;
+
+    const storeOrders = grouped[storeCode];
+
+    const htmlTable = buildAppointmentEmailTable(storeOrders);
+
+    const htmlBody = `
+    <div style="font-family:Roboto,Arial;font-size:14px">
+    <p>Dear Team,</p>
+
+    ${htmlTable}
+
+    <p>Kindly confirm the appointment date.</p>
+
+    <p>Request ID: <b>${requestId}</b></p>
+
+    <p>Regards<br>Team Cubelelo</p>
+    </div>`;
+
+    Logger.log(email);
+    Logger.log(ccmails);
+    Logger.log(requestId);
+    Logger.log(htmlBody);
+
+    MailApp.sendEmail({
+      to:email,
+      cc:ccmails || "",
+      subject:`BigBasket Appointment Request | ${storeCode} | ${requestId}`,
+      htmlBody
+    });
+
+    // update tracking per store
+    updateRequestTracking(sheet,rowCount,IDX,storeOrders,requestId);
+
+    results.push({
+      storeCode,
+      requestId
+    });
+
+  });
+
+  writeToLog(
+    "BB_BATCH",
+    "Success",
+    orders.map(o=>o.saleOrderNo).join(", "),
+    "BB Store POCs",
+    "BB appointment emails sent"
+  );
+
+  return {
+    status:"success",
+    results
+  };
+
+}
 
 
 /**
@@ -11814,7 +11905,30 @@ ${orders.map(o=>`
  * ==========================================================
  */
 
-// getBBStoreEmailMap deprecated
+function getBBStoreEmailMap()
+{
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
+
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  const colName = headers.indexOf("Contact Name");
+  const colEmail = headers.indexOf("Email");
+
+  const map={};
+
+  for(let i=1;i<data.length;i++)
+  {
+    const name=data[i][colName];
+    const email=data[i][colEmail];
+    if(!name || !email) continue;
+    if(!name.startsWith("BB_")) continue;
+    const store = name.replace("BB_","").trim();
+    map[store]=email;
+  }
+  return map;
+}
 
 /**
  * ==========================================================
@@ -12031,24 +12145,11 @@ function buildZeptoAppointmentTable(orders){
 
 
 
-authorize.gs
-
-function forceDriveAuth() {
-  DriveApp.getFiles().hasNext();
-  Logger.log("Authorization successful!");
-}
-
 
 bb_confirmation.gs
 
-
-
 function sendBBOrderConfirmationEmail(poNumbers) 
 {
-  if (!poNumbers || !poNumbers.length) {
-    return { status: "error", message: "No PO numbers provided." };
-  }
-
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_PO_DB);
 
@@ -12216,7 +12317,7 @@ function sendBBOrderConfirmationEmail(poNumbers)
     to: channelConfig.to,
     cc: channelConfig.cc || "",
     subject: `BigBasket PO Confirmation Required | ${validPOs.length} POs`,
-    htmlBody
+    htmlBody: htmlBody
   });
 
   // ================================
@@ -12255,6 +12356,7 @@ function sendBBOrderConfirmationEmail(poNumbers)
 
 
 po_updation.gs
+
 
 // ✅ Detect Revised / Amendment Emails
 function isRevisedEmail(subject, body) {
@@ -12628,7 +12730,6 @@ function test() {
 
 
 
-
 nimbuspost.gs
 
 /**
@@ -12844,7 +12945,7 @@ function processNimbusAndSendEmail() {
     const todayStr = Utilities.formatDate(new Date(), "Asia/Kolkata", "dd-MMM-yyyy");
 
     // 3. Send Email
-    GmailApp.sendEmail(nimbus_to_Email, "Delivery Alignment Confirmation Report | Upcoming Appointments | Date : " + todayStr, "", {
+    GmailApp.sendEmail(nimbus_to_Email, "📦 Delivery Alignment Confirmation Report | Upcoming Appointments | Date : " + todayStr, "", {
       cc: nimbus_cc_Email,
       htmlBody: htmlEmail
     });
@@ -12875,25 +12976,16 @@ function buildHtmlEmailTemplate(shipments) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
-
     if (s.isNew) {
       newCount++;
-      return;
     }
 
+    const apptDateObj = parseApptDateTime(s.apptDateTime);
     if (!apptDateObj) return;
 
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const appt = new Date(
-      apptDateObj.getFullYear(),
-      apptDateObj.getMonth(),
-      apptDateObj.getDate()
-    );
-
-    if (appt < todayDate) {
+    if (apptDateObj < now) {
       missedCount++;
-    } else if (appt.getTime() === todayDate.getTime()) {
+    } else if (isSameDay(apptDateObj, now)) {
       todayCount++;
     } else {
       upcomingCount++;
@@ -12920,27 +13012,20 @@ function buildHtmlEmailTemplate(shipments) {
     let rowColor = "";
     let leftBorder = "#E5E7EB";
 
-    if (s.isNew) {
-      rowColor = "#E0F2FE";   // NEW
-      leftBorder = "#0284C7";
-    } else if (apptDateObj) {
-      const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const appt = new Date(
-        apptDateObj.getFullYear(),
-        apptDateObj.getMonth(),
-        apptDateObj.getDate()
-      );
-
-      if (appt < todayDate) {
+    if (apptDateObj) {
+      if (apptDateObj < now) {
         rowColor = "#FEF2F2"; // MISSED
         leftBorder = "#DC2626";
-      } else if (appt.getTime() === todayDate.getTime()) {
+      } else if (isSameDay(apptDateObj, now)) {
         rowColor = "#ECFDF5"; // TODAY
         leftBorder = "#16A34A";
       } else {
         rowColor = "#EFF6FF"; // UPCOMING
         leftBorder = "#3B82F6";
       }
+    } else if (s.isNew) {
+      rowColor = "#E0F2FE";   // NEW
+      leftBorder = "#0284C7";
     }
 
     // ---------------- TRACKING STATUS BADGE ----------------
@@ -13020,7 +13105,7 @@ function buildHtmlEmailTemplate(shipments) {
   return `
     <div style="font-family:Arial, sans-serif;max-width:1400px;margin:0 auto;">
       <div style="background:#059669;padding:20px;color:white;border-radius:8px 8px 0 0;">
-        <h2 style="margin:0;">&#128230; Delivery Alignment Confirmation Report</h2>
+        <h2 style="margin:0;">📦 Delivery Alignment Confirmation Report</h2>
         <p style="margin:5px 0 0 0;opacity:0.95;">
           Upcoming Appointments | Date : ${today}
         </p>
@@ -13031,7 +13116,7 @@ function buildHtmlEmailTemplate(shipments) {
         <p>Please find below the summary of shipments aligned for delivery as per their upcoming appointment dates.</p>
         <p>Kindly review and confirm that these deliveries are scheduled accordingly to avoid any misses.</p>
         <p>
-          &#128196;
+          📄
           <a href="https://docs.google.com/spreadsheets/d/1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk/edit?gid=1014733683#gid=1014733683"
              style="color:#2563EB;font-weight:bold;text-decoration:none;">
             View Full Logistics Summary Sheet
@@ -13124,33 +13209,37 @@ function getApptTag(date, isNew) {
     "></span>
   `;
 
+  if (date) {
+    const now = new Date();
+    if (date < now) {
+      return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
+        ${dot('#DC2626')} MISSED
+      </span>`;
+    }
+    if (isSameDay(date, now)) {
+      return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
+        ${dot('#16A34A')} TODAY
+      </span>`;
+    }
+    return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
+      ${dot('#3B82F6')} UPCOMING
+    </span>`;
+  }
+
   if (isNew) {
     return `<span style="font-size:11px;font-weight:700;color:#1D4ED8;">
       ${dot('#0284C7')} NEW
     </span>`;
   }
 
-  if (!date) return "";
+  return "";
+}
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const appt = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  if (appt < today) {
-    return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
-      ${dot('#DC2626')} MISSED
-    </span>`;
-  }
-
-  if (appt.getTime() === today.getTime()) {
-    return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
-      ${dot('#16A34A')} TODAY
-    </span>`;
-  }
-
-  return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
-    ${dot('#3B82F6')} UPCOMING
-  </span>`;
+function isSameDay(d1, d2) {
+  if (!d1 || !d2) return false;
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
 }
 
 function formatDate(val) {
@@ -13363,4 +13452,16 @@ function testRemoveInventory() {
 function testAddInventory() {
   adjustInventory("WH001", "SKU-ABC", 10, "add", "Found in stocktake");
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
