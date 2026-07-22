@@ -447,50 +447,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         }
     };
 
-    const safeParseDate = (dateStr: string | undefined): Date | null => {
-        if (!dateStr) return null;
-        
-        // Try standard parsing first
-        let d = new Date(dateStr);
-        if (!isNaN(d.getTime()) && d.getFullYear() >= 2000) {
-            return d;
-        }
-
-        // Try replacing slashes with hyphens
-        const cleanStr = dateStr.replace(/\//g, '-').trim();
-        const parts = cleanStr.split('-');
-        
-        if (parts.length === 3) {
-            const p0 = parseInt(parts[0], 10);
-            const p1 = parseInt(parts[1], 10);
-            const p2 = parseInt(parts[2], 10);
-
-            if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
-                // Case 1: YYYY-MM-DD
-                if (parts[0].length === 4) {
-                    return new Date(p0, p1 - 1, p2);
-                }
-                // Case 2: DD-MM-YYYY
-                if (parts[2].length === 4) {
-                    return new Date(p2, p1 - 1, p0);
-                }
-                // Case 3: DD-MM-YY (2-digit year)
-                if (parts[2].length === 2) {
-                    return new Date(p2 + 2000, p1 - 1, p0);
-                }
-            }
-        }
-
-        // Try parsing textual month names like "22 Jul 2026" or "22-Jul-2026"
-        const spaceStr = dateStr.replace(/-/g, ' ');
-        const dSpace = new Date(spaceStr);
-        if (!isNaN(dSpace.getTime()) && dSpace.getFullYear() >= 2000) {
-            return dSpace;
-        }
-
-        return null;
-    };
-
     const todayDate = useMemo(() => new Date(), []);
     const tomorrowDate = useMemo(() => {
         const d = new Date();
@@ -499,16 +455,17 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     }, []);
 
     const isSameDay = (dateStr: string | undefined, targetDate: Date) => {
-        const d = safeParseDate(dateStr);
-        if (!d) return false;
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
         return d.toDateString() === targetDate.toDateString();
     };
 
     const getDaysAgo = (dateStr: string | undefined): number => {
         if (!dateStr || dateStr === 'N/A') return 0;
         try {
-            const d = safeParseDate(dateStr);
-            if (!d) return 0;
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return 0;
             const today = new Date();
             const diffMs = today.getTime() - d.getTime();
             return Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -516,74 +473,12 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     };
 
     const isPastDate = (dateStr: string | undefined, compareDate: Date) => {
-        const d = safeParseDate(dateStr);
-        if (!d) return false;
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
         const d1 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
         const compare = new Date(compareDate.getFullYear(), compareDate.getMonth(), compareDate.getDate());
         return d1 < compare;
-    };
-
-    const parseAppointmentDateTime = (date?: string, time?: string) => {
-        if (!date) return 0;
-        try {
-            const d = safeParseDate(date);
-            if (!d || d.getFullYear() < 2000) {
-                return 0;
-            }
-
-            if (time) {
-                const timeStr = String(time).trim();
-                const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
-                if (ampmMatch) {
-                    let hours = parseInt(ampmMatch[1], 10);
-                    const minutes = parseInt(ampmMatch[2], 10);
-                    const ampm = ampmMatch[3].toUpperCase();
-                    if (ampm === 'PM' && hours < 12) hours += 12;
-                    if (ampm === 'AM' && hours === 12) hours = 0;
-                    d.setHours(hours, minutes, 0, 0);
-                } else if (timeStr.includes('T')) {
-                    const t = new Date(timeStr);
-                    d.setHours(t.getHours(), t.getMinutes(), t.getSeconds());
-                } else {
-                    const parts = timeStr.match(/(\d{1,2}):(\d{1,2})/);
-                    if (parts) {
-                        d.setHours(parseInt(parts[1]), parseInt(parts[2]), 0, 0);
-                    }
-                }
-            }
-            return d.getTime();
-        } catch (e) {
-            return 0;
-        }
-    };
-
-    const getIsMissed = (so: GroupedSalesOrder) => {
-        const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || (so.originalEeStatus || '').toLowerCase() === 'returned' || (so.originalEeStatus || '').toLowerCase() === 'rto';
-        if (isRTO) return false;
-
-        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-        const isActuallyDelivered = (
-            trackingStatusLower === 'delivered' || 
-            trackingStatusLower === 'successfully delivered' || 
-            !!so.deliveredDate || 
-            so.status === 'Delivered' ||
-            (so.originalEeStatus || '').toLowerCase() === 'delivered' ||
-            (so.originalEeStatus || '').toLowerCase() === 'closed'
-        );
-
-        const dateStr = so.appointmentDate || so.edd;
-        if (!dateStr) return false;
-
-        if (isActuallyDelivered) {
-            return false;
-        } else {
-            if (so.appointmentDate) {
-                const apptTimestamp = parseAppointmentDateTime(so.appointmentDate, so.appointmentTime);
-                return apptTimestamp > 0 && apptTimestamp < Date.now();
-            } else {
-                return isPastDate(so.edd, todayDate);
-            }
-        }
     };
 
     // 1. Group the raw purchaseOrders to match SalesOrderTable logic
@@ -827,12 +722,6 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered') {
                 isTargetStatus = true;
             }
-            // Include active appointments for Today/Tomorrow/Missed tabs even if not shipped yet
-            if (activeTab === 'Today' || activeTab === 'Tomorrow' || activeTab === 'Missed') {
-                if (so.appointmentDate || so.appointmentId || so.appointmentRequestDate || so.appointmentRequestId) {
-                    isTargetStatus = true;
-                }
-            }
 
             if (!isTargetStatus) return false;
 
@@ -864,11 +753,59 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             } else if (activeTab === 'Tomorrow') {
                 return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
             } else if (activeTab === 'Missed') {
-                return getIsMissed(so);
+                const missedAppt = isPastDate(so.appointmentDate, todayDate);
+                const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
+                const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
+                return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
             }
 
             return true;
         });
+
+        const parseAppointmentDateTime = (date?: string, time?: string) => {
+            if (!date) return 0;
+            try {
+                let d = new Date(date);
+                if (d.getFullYear() < 2000) {
+                    // Excel epoch bug usually maps to 1899. Return 0 to put it at the end.
+                    return 0;
+                }
+                if (isNaN(d.getTime())) {
+                    const parts = date.split('-');
+                    if (parts.length === 3) {
+                        if (parts[2].length === 4) {
+                            d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                        } else {
+                            d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+                        }
+                    }
+                }
+
+                if (time && !isNaN(d.getTime())) {
+                    const timeStr = String(time).trim();
+                    const ampmMatch = timeStr.match(/(\d{1,2}):(\d{1,2})\s*(AM|PM)/i);
+                    if (ampmMatch) {
+                        let hours = parseInt(ampmMatch[1], 10);
+                        const minutes = parseInt(ampmMatch[2], 10);
+                        const ampm = ampmMatch[3].toUpperCase();
+                        if (ampm === 'PM' && hours < 12) hours += 12;
+                        if (ampm === 'AM' && hours === 12) hours = 0;
+                        d.setHours(hours, minutes, 0, 0);
+                    } else if (timeStr.includes('T')) {
+                        const t = new Date(timeStr);
+                        d.setHours(t.getHours(), t.getMinutes(), t.getSeconds());
+                    } else {
+                        const parts = timeStr.match(/(\d{1,2}):(\d{1,2})/);
+                        if (parts) {
+                            d.setHours(parseInt(parts[1]), parseInt(parts[2]), 0, 0);
+                        }
+                    }
+                }
+                return d.getTime();
+            } catch (e) {
+                return 0;
+            }
+        };
 
         // ASCEND order of appointment date
         filtered.sort((a: GroupedSalesOrder, b: GroupedSalesOrder) => {
@@ -891,7 +828,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
         const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered' || so.originalEeStatus.toLowerCase() === 'delivered' || so.originalEeStatus.toLowerCase() === 'closed');
         const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
-        const isMissed = getIsMissed(so);
+        const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
         if (isRTO) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
@@ -923,8 +860,8 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             return so.status === 'Shipped';
         });
 
-        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => getIsMissed(so));
-        const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today) && !getIsMissed(so));
+        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => isPastDate(so.appointmentDate || so.edd, today));
+        const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today));
         const tomorrowOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, tomorrow));
 
         const formatLine = (so: GroupedSalesOrder) => {
@@ -1513,18 +1450,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
  
                                     const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
                                     const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+ 
                                     const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
-                                    const isMissed = getIsMissed(so);
-
+                                    const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
+ 
                                     let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
-                                    if (isActuallyDelivered) {
-                                        rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-pointer";
-                                    } else if (isMissed) {
-                                        rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer";
-                                    } else if (isToday && !isActuallyDelivered) {
+                                    if (isToday && !isActuallyDelivered) {
                                         rowClass = "bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500 cursor-pointer";
                                     } else if (isTomorrow && !isActuallyDelivered) {
                                         rowClass = "bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500 cursor-pointer";
+                                    } else if (isMissed && !isActuallyDelivered) {
+                                        rowClass = "bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer";
+                                    } else if (isActuallyDelivered) {
+                                        rowClass = "bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 opacity-80 cursor-pointer";
                                     }
  
                                     const isExpanded = expandedRowId === so.id;
