@@ -679,33 +679,9 @@ const PoTable: React.FC<PoTableProps> = ({
     const processedOrders = useMemo(() => {
         let orders = [...purchaseOrders];
         if (activeFilter !== 'All POs') {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
-
             orders = orders.filter(po => {
                 const status = getCalculatedStatus(po);
-                if (activeFilter === 'New POs') {
-                    const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
-                    if (!isNewStatus) return false;
-
-                    // Hard exclusion: Exclude any PO with 2025 in ID or order date from 2025 or older
-                    const poIdStr = String(po.id || po.poNumber || '');
-                    if (poIdStr.includes('2025') || poIdStr.includes('Dec2025') || poIdStr.includes('Dec-2025')) return false;
-
-                    const orderTime = parseDate(po.orderDate);
-                    if (orderTime > 0) {
-                        const orderDateObj = new Date(orderTime);
-                        if (orderDateObj.getFullYear() < 2026) return false; // Exclude 2025 or older
-                        if (today.getTime() - orderTime > sixtyDaysMs) return false; // Exclude > 60 days old unfulfilled POs
-                    }
-
-                    if (po.poExpiryDate && po.poExpiryDate !== 'N/A') {
-                        const expTime = parseDate(po.poExpiryDate);
-                        if (expTime > 0 && expTime < today.getTime()) return false;
-                    }
-                    return true;
-                }
+                if (activeFilter === 'New POs') return status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
                 if (activeFilter === 'Below Threshold POs') return status === POStatus.BelowThreshold;
                 if (activeFilter === 'Pushed POs') return status === POStatus.Pushed;
                 if (activeFilter === 'Partially Pushed POs') return status === POStatus.PartiallyProcessed;
