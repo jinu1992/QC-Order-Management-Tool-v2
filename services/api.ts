@@ -343,13 +343,23 @@ const formatSheetDate = (dateVal: any): string => {
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const getRowProp = (row: any, key: string): any => {
+    if (!row) return undefined;
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+    const trimmedKey = key.trim().toLowerCase();
+    for (const k of Object.keys(row)) {
+        if (k.trim().toLowerCase() === trimmedKey) return row[k];
+    }
+    return undefined;
+};
+
 const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
     const poMap = new Map<string, PurchaseOrder>();
     rows.forEach((row) => {
         const poNumber = row['PO Number'];
         if (!poNumber) return;
 
-        const rawStatus = row['Status'] || 'New';
+        const rawStatus = (getRowProp(row, 'Status') || 'New').toString().trim();
         let status = POStatus.NewPO;
         if (rawStatus === 'Below Threshold') status = POStatus.BelowThreshold;
         else if (Object.values(POStatus).includes(rawStatus as POStatus)) status = rawStatus as POStatus;
@@ -415,6 +425,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
         };
 
+        const overrideStatuses = ['RTD', 'Dispatched', 'Delivered', 'Shipped', 'Closed', 'Cancelled', 'Below Threshold'];
         if (poMap.has(poNumber)) {
             const po = poMap.get(poNumber)!;
             po.items?.push(item);
@@ -440,12 +451,14 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.podImageUrl && (row['POD Image'] || row['POD Image URL'])) po.podImageUrl = String(row['POD Image'] || row['POD Image URL']);
             if (!po.grnNumber && row['GRN Number']) po.grnNumber = String(row['GRN Number']);
             if (!po.grnDate && row['GRN Date']) po.grnDate = formatSheetDate(row['GRN Date']);
-            // Preserve RTD override: if ANY row for this PO has status RTD, keep it
-            if (rawStatus === 'RTD') po.poDbStatus = 'RTD';
+            // Preserve DB status override: if ANY row for this PO has a status override, keep/update it
+            if (rawStatus && overrideStatuses.includes(rawStatus)) {
+                po.poDbStatus = rawStatus;
+            }
         } else {
             poMap.set(poNumber, {
                 id: poNumber, poNumber, status,
-                poDbStatus: rawStatus, // Store raw DB Status for RTD override logic
+                poDbStatus: rawStatus, // Store raw DB Status for override logic
 
                 channel: row['Channel Name'] || 'Unknown',
                 storeCode: row['Store Code'] || '',
