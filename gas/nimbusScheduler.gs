@@ -131,7 +131,7 @@ function processNimbusAndSendEmail() {
       const isDelivered = 
         trackingStatusLower === "delivered" || 
         trackingStatusLower === "successfully delivered" || 
-        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered"));
+        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered") && !latestStatusLower.includes("rto") && !latestStatusLower.includes("return"));
 
       const isRtoOrCancelled = 
         trackingStatusLower.includes("cancelled") || 
@@ -201,8 +201,8 @@ function processNimbusAndSendEmail() {
 
     // Sort by Appointment Date/EDD ascending: oldest first, N/A at the end
     shipments.sort((a, b) => {
-      const d1 = parseApptDateTime(a.apptDateTime) || new Date(9999, 0, 1);
-      const d2 = parseApptDateTime(b.apptDateTime) || new Date(9999, 0, 1);
+      const d1 = parseApptDateTime(a.apptDateTime) || parseApptDateTime(a.edd) || new Date(9999, 0, 1);
+      const d2 = parseApptDateTime(b.apptDateTime) || parseApptDateTime(b.edd) || new Date(9999, 0, 1);
       return d1 - d2;
     });
 
@@ -242,7 +242,7 @@ function buildHtmlEmailTemplate(shipments) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
+    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
 
     if (s.isNew) {
       newCount++;
@@ -280,7 +280,7 @@ function buildHtmlEmailTemplate(shipments) {
       ? `<a href="${s.invoiceUrl}" style="color:#2563EB;text-decoration:none;"><b>${s.awb}_Invoice</b></a>`
       : "N/A";
 
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
+    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
     const tag = getApptTag(apptDateObj, s.isNew);
 
     // ---------------- ROW COLOR / BORDER ----------------

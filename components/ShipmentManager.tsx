@@ -505,6 +505,46 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         return d1 < compare;
     };
 
+    const checkIsActuallyDelivered = (so: GroupedSalesOrder): boolean => {
+        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+        const latestStatusLower = (so.latestStatus || '').toLowerCase();
+        const eeStatusLower = (so.originalEeStatus || '').toLowerCase();
+        const statusLower = (so.status || '').toLowerCase();
+
+        return (
+            trackingStatusLower === 'delivered' || 
+            trackingStatusLower === 'successfully delivered' || 
+            (latestStatusLower.includes('delivered') && !latestStatusLower.includes('rto') && !latestStatusLower.includes('return') && !latestStatusLower.includes('undelivered')) ||
+            !!so.deliveredDate || 
+            statusLower === 'delivered' ||
+            eeStatusLower === 'delivered' ||
+            eeStatusLower === 'closed'
+        );
+    };
+
+    const checkIsRTO = (so: GroupedSalesOrder): boolean => {
+        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+        const latestStatusLower = (so.latestStatus || '').toLowerCase();
+        const eeStatusLower = (so.originalEeStatus || '').toLowerCase();
+        const statusLower = (so.status || '').toLowerCase();
+
+        return (
+            statusLower === 'rto initiated' || 
+            statusLower === 'returned' || 
+            statusLower === 'rto' || 
+            eeStatusLower === 'returned' || 
+            eeStatusLower === 'rto' ||
+            trackingStatusLower.includes('rto') ||
+            trackingStatusLower.includes('return') ||
+            trackingStatusLower.includes('cancelled') ||
+            latestStatusLower.includes('rto') ||
+            latestStatusLower.includes('return') ||
+            latestStatusLower.includes('cancelled') ||
+            !!so.rtoStatus ||
+            !!so.rtoAwb
+        );
+    };
+
     // 1. Group the raw purchaseOrders to match SalesOrderTable logic
     const allSalesOrders = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
@@ -729,21 +769,14 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
             if (!isAllowedChannel) return false;
 
-            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (
-                trackingStatusLower === 'delivered' || 
-                trackingStatusLower === 'successfully delivered' || 
-                !!so.deliveredDate || 
-                so.status === 'Delivered' ||
-                (so.originalEeStatus || '').toLowerCase() === 'delivered' ||
-                (so.originalEeStatus || '').toLowerCase() === 'closed'
-            );
+            const isActuallyDelivered = checkIsActuallyDelivered(so);
+            const isRTO = checkIsRTO(so);
 
             // If it's Actually Delivered, we still show it (previously hidden per user request, now restored)
 
             let isTargetStatus = false;
             // Identify actual shipments (including Returned/RTO/Delivered) OR orders with appointment dates
-            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered' || !!so.appointmentDate || !!so.appointmentRequestDate) {
+            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'Delivered' || isRTO || isActuallyDelivered || !!so.appointmentDate || !!so.appointmentRequestDate) {
                 isTargetStatus = true;
             }
 
@@ -767,19 +800,18 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
             // Apply Tab filter
             if (activeTab === 'RTO') {
-                return so.status === 'RTO Initiated' || so.status === 'Returned';
+                return isRTO;
             } else if (activeTab === 'Delivered') {
                 return isActuallyDelivered;
             } else if (activeTab === 'GRN_PO_Upload') {
                 return isActuallyDelivered;
             } else if (activeTab === 'Today') {
-                return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+                return isSameDay(so.appointmentDate, todayDate) && !isActuallyDelivered && !isRTO;
             } else if (activeTab === 'Tomorrow') {
-                return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered && so.status !== 'RTO Initiated' && so.status !== 'Returned';
+                return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered && !isRTO;
             } else if (activeTab === 'Missed') {
                 const missedAppt = isPastDate(so.appointmentDate, todayDate);
                 const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
                 return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
             }
 
@@ -849,10 +881,11 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     }, [allSalesOrders, searchTerm, awbSearch, channelFilter, activeTab, todayDate, tomorrowDate]);
 
     const getStatusBadge = (so: GroupedSalesOrder) => {
-        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-        const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered' || so.originalEeStatus.toLowerCase() === 'delivered' || so.originalEeStatus.toLowerCase() === 'closed');
-        const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
-        const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
+        const isActuallyDelivered = checkIsActuallyDelivered(so);
+        const isRTO = checkIsRTO(so);
+        const missedAppt = isPastDate(so.appointmentDate, todayDate);
+        const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
+        const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
         if (isRTO) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
@@ -877,14 +910,21 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit'];
             const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
             if (!isAllowedChannel) return false;
-            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
+            
+            const isActuallyDelivered = checkIsActuallyDelivered(so);
             if (isActuallyDelivered) return false;
-            if (so.status === 'RTO Initiated' || so.status === 'Returned') return false;
-            return so.status === 'Shipped';
+
+            const isRTO = checkIsRTO(so);
+            if (isRTO) return false;
+
+            return so.status === 'Shipped' || !!so.appointmentDate;
         });
 
-        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => isPastDate(so.appointmentDate || so.edd, today));
+        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => {
+            const missedAppt = isPastDate(so.appointmentDate, today);
+            const missedEdd = !so.appointmentDate && isPastDate(so.edd, today);
+            return missedAppt || missedEdd;
+        });
         const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today));
         const tomorrowOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, tomorrow));
 
@@ -1470,13 +1510,11 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                 {trackingOrders.length > 0 ? trackingOrders.map((so: GroupedSalesOrder) => {
                                     const isToday = isSameDay(so.appointmentDate, todayDate);
                                     const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
-                                    // const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate); // Redundant declaration removed
- 
-                                    const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-                                    const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate || so.status === 'Delivered');
- 
-                                    const isRTO = so.status === 'RTO Initiated' || so.status === 'Returned' || so.status === 'RTO' || so.originalEeStatus.toLowerCase() === 'returned' || so.originalEeStatus.toLowerCase() === 'rto';
-                                    const isMissed = isPastDate(so.appointmentDate || so.edd, todayDate) && !isActuallyDelivered && !isRTO;
+                                    const isActuallyDelivered = checkIsActuallyDelivered(so);
+                                    const isRTO = checkIsRTO(so);
+                                    const missedAppt = isPastDate(so.appointmentDate, todayDate);
+                                    const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
+                                    const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
  
                                     let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
                                     if (isToday && !isActuallyDelivered) {
