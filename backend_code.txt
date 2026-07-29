@@ -10225,20 +10225,23 @@ function updatePoDatabase_(po, inboundPlanId, shipmentId, placementId, shipmentC
   const data = sh.getDataRange().getValues();
   const headers = data[0];
 
-  const poIdx     = headers.indexOf('PO Number');
+  const poNumIdx  = headers.indexOf('PO Number');
+  const eeRefIdx  = headers.indexOf('EE Order Ref ID');
   const planIdx   = headers.indexOf('Inbound Plan ID');
   const shipIdx   = headers.indexOf('Shipment ID');
   const placeIdx  = headers.indexOf('Placement ID');
   const fbashipIdx  = headers.indexOf('FBA Shipment IDs');
 
-  if (poIdx === -1) {
-    throw new Error('Column "EE Order Ref ID" missing in PO DB');
+  if (poNumIdx === -1 && eeRefIdx === -1) {
+    throw new Error('Column "PO Number" and "EE Order Ref ID" missing in PO DB');
   }
 
   let updatedCount = 0;
 
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][poIdx]).trim() !== String(po).trim()) continue;
+    const rowPoNum = poNumIdx !== -1 ? String(data[i][poNumIdx] || '').trim() : '';
+    const rowEeRef = eeRefIdx !== -1 ? String(data[i][eeRefIdx] || '').trim() : '';
+    if (rowPoNum !== String(po).trim() && rowEeRef !== String(po).trim()) continue;
 
     const rowNum = i + 1;
 
