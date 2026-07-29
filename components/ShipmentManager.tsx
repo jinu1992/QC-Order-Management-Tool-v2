@@ -15,14 +15,41 @@ interface ShipmentManagerProps {
     addNotification?: (message: string, type: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
+const parseDateHelper = (dateStr?: string): Date | null => {
+    if (!dateStr || dateStr === 'N/A' || dateStr.trim() === '') return null;
+    let d = new Date(dateStr);
+    if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d;
+
+    const parts = dateStr.trim().split(/[\/\-\s]+/);
+    if (parts.length === 3) {
+        const monthMap: Record<string, number> = {
+            jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
+        };
+        let day = parseInt(parts[0], 10);
+        let month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+        let year = parseInt(parts[2], 10);
+
+        if (parts[0].length === 4) {
+            year = parseInt(parts[0], 10);
+            month = isNaN(Number(parts[1])) ? monthMap[parts[1].toLowerCase().slice(0, 3)] : parseInt(parts[1], 10) - 1;
+            day = parseInt(parts[2], 10);
+        }
+
+        if (!isNaN(day) && month !== undefined && !isNaN(month) && !isNaN(year) && year > 2000) {
+            return new Date(year, month, day);
+        }
+    }
+    return null;
+};
+
 // Helper to safely format dates and suppress the 1899 Excel epoch bug
 const formatSafeDate = (dateStr?: string): string => {
     if (!dateStr) return '';
     try {
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+        const d = parseDateHelper(dateStr);
+        if (!d || isNaN(d.getTime()) || d.getFullYear() < 2000) return dateStr || '';
         return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    } catch { return ''; }
+    } catch { return dateStr || ''; }
 };
 
 const formatSafeTime = (timeStr?: string): string => {
@@ -812,7 +839,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             } else if (activeTab === 'Missed') {
                 const missedAppt = isPastDate(so.appointmentDate, todayDate);
                 const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
+                return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
             }
 
             return true;
@@ -821,20 +848,9 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         const parseAppointmentDateTime = (date?: string, time?: string) => {
             if (!date) return 0;
             try {
-                let d = new Date(date);
-                if (d.getFullYear() < 2000) {
-                    // Excel epoch bug usually maps to 1899. Return 0 to put it at the end.
+                let d = parseAnyDate(date) || parseDateHelper(date) || new Date(date);
+                if (!d || isNaN(d.getTime()) || d.getFullYear() < 2000) {
                     return 0;
-                }
-                if (isNaN(d.getTime())) {
-                    const parts = date.split('-');
-                    if (parts.length === 3) {
-                        if (parts[2].length === 4) {
-                            d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-                        } else {
-                            d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-                        }
-                    }
                 }
 
                 if (time && !isNaN(d.getTime())) {
@@ -885,7 +901,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         const isRTO = checkIsRTO(so);
         const missedAppt = isPastDate(so.appointmentDate, todayDate);
         const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-        const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
+        const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
         if (isRTO) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
@@ -923,7 +939,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => {
             const missedAppt = isPastDate(so.appointmentDate, today);
             const missedEdd = !so.appointmentDate && isPastDate(so.edd, today);
-            return missedAppt || missedEdd;
+            return (missedAppt || missedEdd) && so.status === 'Shipped';
         });
         const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today));
         const tomorrowOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, tomorrow));
@@ -1514,7 +1530,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                     const isRTO = checkIsRTO(so);
                                     const missedAppt = isPastDate(so.appointmentDate, todayDate);
                                     const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                                    const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO;
+                                    const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
  
                                     let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
                                     if (isToday && !isActuallyDelivered) {
