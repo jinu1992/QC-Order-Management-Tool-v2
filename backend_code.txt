@@ -832,15 +832,22 @@ function updatePOStatus(poNumber, status) {
 
     const poNumIndex = headers.indexOf("po number");
     const statusIndex = headers.indexOf("status");
+    const refCodeIndex = headers.indexOf("ee_reference_code");
+    const orderRefIdIndex = headers.indexOf("ee order ref id");
 
-    if (poNumIndex === -1 || statusIndex === -1) {
-      throw new Error("Required columns missing: PO Number or Status");
+    if (statusIndex === -1) {
+      throw new Error("Required column missing: Status");
     }
 
+    const target = String(poNumber).trim().toLowerCase();
     let updateCount = 0;
 
     for (let i = 1; i < data.length; i++) {
-      if (String(data[i][poNumIndex]).trim() === String(poNumber).trim()) {
+      const rowPoNum = poNumIndex !== -1 ? String(data[i][poNumIndex]).trim().toLowerCase() : "";
+      const rowRefCode = refCodeIndex !== -1 ? String(data[i][refCodeIndex]).trim().toLowerCase() : "";
+      const rowOrderRefId = orderRefIdIndex !== -1 ? String(data[i][orderRefIdIndex]).trim().toLowerCase() : "";
+
+      if (rowPoNum === target || rowRefCode === target || rowOrderRefId === target) {
 
         const currentStatus = String(data[i][statusIndex]).trim().toLowerCase();
 
