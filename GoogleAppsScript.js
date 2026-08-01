@@ -420,15 +420,24 @@ function updatePOStatus(poNumber, status) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName(SHEET_PO_DB);
   const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  const poCol = headers.indexOf('PO Number');
-  const statusCol = headers.indexOf('Status');
+  const headers = data[0].map(h => String(h).trim().toLowerCase());
+  const poCol = headers.indexOf('po number');
+  const statusCol = headers.indexOf('status');
+  const refCol = headers.indexOf('ee_reference_code');
+  const orderRefIdCol = headers.indexOf('ee order ref id');
 
+  const target = String(poNumber).trim().toLowerCase();
   let found = false;
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][poCol]) === poNumber) {
-      sheet.getRange(i + 1, statusCol + 1).setValue(status);
-      found = true;
+    const rowPo = poCol !== -1 ? String(data[i][poCol]).trim().toLowerCase() : '';
+    const rowRef = refCol !== -1 ? String(data[i][refCol]).trim().toLowerCase() : '';
+    const rowOrderRef = orderRefIdCol !== -1 ? String(data[i][orderRefIdCol]).trim().toLowerCase() : '';
+
+    if (rowPo === target || rowRef === target || rowOrderRef === target) {
+      if (statusCol !== -1) {
+        sheet.getRange(i + 1, statusCol + 1).setValue(status);
+        found = true;
+      }
     }
   }
   if (found) return { status: 'success' };

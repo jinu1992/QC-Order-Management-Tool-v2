@@ -114,7 +114,8 @@ const DispatchManager: React.FC<DispatchManagerProps> = ({ purchaseOrders, curre
                 const isAmazonOrFlipkart = isAmazon || po.channel.toLowerCase().includes('flipkart');
 
                 let displayStatus = 'Processing';
-                if (po.poDbStatus === 'RTD') {
+                const poDbStatusLower = (po.poDbStatus || '').trim().toLowerCase();
+                if (poDbStatusLower === 'rtd' || poDbStatusLower === 'ready to dispatch') {
                     displayStatus = 'Ready to Dispatch';
                 } else if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';

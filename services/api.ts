@@ -425,7 +425,11 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             labelUrl: row['Label URL'] ? String(row['Label URL']) : undefined,
         };
 
-        const overrideStatuses = ['RTD', 'Dispatched', 'Delivered', 'Shipped', 'Closed', 'Cancelled', 'Below Threshold'];
+        const isOverrideStatus = (s?: string): boolean => {
+            if (!s) return false;
+            const lower = s.trim().toLowerCase();
+            return ['rtd', 'ready to dispatch', 'dispatched', 'delivered', 'shipped', 'closed', 'cancelled', 'below threshold'].includes(lower);
+        };
         if (poMap.has(poNumber)) {
             const po = poMap.get(poNumber)!;
             po.items?.push(item);
@@ -452,7 +456,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.grnNumber && row['GRN Number']) po.grnNumber = String(row['GRN Number']);
             if (!po.grnDate && row['GRN Date']) po.grnDate = formatSheetDate(row['GRN Date']);
             // Preserve DB status override: if ANY row for this PO has a status override, keep/update it
-            if (rawStatus && overrideStatuses.includes(rawStatus)) {
+            if (rawStatus && isOverrideStatus(rawStatus)) {
                 po.poDbStatus = rawStatus;
             }
         } else {

@@ -2027,16 +2027,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const rtoStatus = item.rtoStatus || po.rtoStatus;
                 const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
 
+                const poDbStatusLower = (po.poDbStatus || '').trim().toLowerCase();
+
                 // Prioritize Returned/RTO statuses over DB overrides as per user requirement
                 if (eeStatusLower === 'returned' || eeStatusLower === 'rto' || rtoStatus) {
                     displayStatus = 'Returned';
                 } else if (isRTOInitiated) {
                     displayStatus = 'RTO Initiated';
-                } else if (po.poDbStatus === 'RTD') {
+                } else if (poDbStatusLower === 'rtd' || poDbStatusLower === 'ready to dispatch') {
                     displayStatus = 'Ready to Dispatch';
-                } else if (po.poDbStatus === 'Delivered') {
+                } else if (poDbStatusLower === 'delivered') {
                     displayStatus = 'Delivered';
-                } else if (po.poDbStatus === 'Dispatched') {
+                } else if (poDbStatusLower === 'dispatched') {
                     const isAmazonOrFlipkart = isAmazon || isFlipkartB2B;
                     displayStatus = statusHasInvoice ? (isAmazonOrFlipkart ? 'Delivered' : 'Shipped') : 'Processing';
                 }
@@ -3140,17 +3142,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 setIsUpdatingRTD(so.id);
                 try {
                     const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
-                    await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, 'RTD')));
+                    const itemRefCodes = (so.items || []).map((i: any) => i.eeReferenceCode).filter(Boolean);
+                    const allRefIds = Array.from(new Set([...parentPoNumbers, so.id, ...itemRefCodes]));
+
+                    await Promise.all(allRefIds.filter(Boolean).map((refId: string) => updatePOStatus(refId, 'RTD')));
                     addNotification(`${so.id} marked as RTD.`, 'success');
                     // Optimistic UI update
                     setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
-                        if (parentPoNumbers.includes(po.poNumber)) {
+                        const matchesPo = allRefIds.includes(po.poNumber) || (po.eeReferenceCode && allRefIds.includes(po.eeReferenceCode));
+                        const hasMatchingItem = po.items?.some((item: POItem) => item.eeReferenceCode && allRefIds.includes(item.eeReferenceCode));
+
+                        if (matchesPo || hasMatchingItem) {
                             return {
                                 ...po,
                                 status: 'RTD' as any,
                                 poDbStatus: 'RTD', // Ensure DB status is also updated optimistically
                                 items: po.items?.map((item: POItem) =>
-                                    item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: 'RTD' } : item
+                                    (item.eeReferenceCode && allRefIds.includes(item.eeReferenceCode)) || matchesPo
+                                        ? { ...item, eeOrderStatus: 'RTD' }
+                                        : item
                                 )
                             };
                         }
@@ -3185,16 +3195,24 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 setIsUpdatingDispatched(so.id);
                 try {
                     const parentPoNumbers = so.poReference.split(',').map((s: string) => s.trim());
-                    await Promise.all(parentPoNumbers.filter(Boolean).map((poNum: string) => updatePOStatus(poNum, targetStatus)));
+                    const itemRefCodes = (so.items || []).map((i: any) => i.eeReferenceCode).filter(Boolean);
+                    const allRefIds = Array.from(new Set([...parentPoNumbers, so.id, ...itemRefCodes]));
+
+                    await Promise.all(allRefIds.filter(Boolean).map((refId: string) => updatePOStatus(refId, targetStatus)));
                     addNotification(`${so.id} marked as ${targetStatus}.`, 'success');
                     // Optimistic UI update
                     setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
-                        if (parentPoNumbers.includes(po.poNumber)) {
+                        const matchesPo = allRefIds.includes(po.poNumber) || (po.eeReferenceCode && allRefIds.includes(po.eeReferenceCode));
+                        const hasMatchingItem = po.items?.some((item: POItem) => item.eeReferenceCode && allRefIds.includes(item.eeReferenceCode));
+
+                        if (matchesPo || hasMatchingItem) {
                             return {
                                 ...po,
                                 poDbStatus: targetStatus, // Ensure DB status is updated to prevent reversion
                                 items: po.items?.map((item: POItem) =>
-                                    item.eeReferenceCode === so.id ? { ...item, eeOrderStatus: targetStatus } : item
+                                    (item.eeReferenceCode && allRefIds.includes(item.eeReferenceCode)) || matchesPo
+                                        ? { ...item, eeOrderStatus: targetStatus }
+                                        : item
                                 )
                             };
                         }
