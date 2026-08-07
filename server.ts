@@ -1,14 +1,15 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express, { Request, Response } from "express";
 import { createServer as createViteServer } from "vite";
 import { google } from "googleapis";
-import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import fs from "fs";
 import { chromium } from "playwright";
-
-dotenv.config();
+import { registerApiV2Routes } from "./server/routes/index";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -337,53 +338,11 @@ async function startServer() {
     getRedirectUri()
   );
 
-  // --- Auth Routes ---
-  app.post("/api/login-google", async (req: Request, res: Response) => {
-    const { idToken } = req.body;
-    if (!idToken) {
-      return res.status(400).json({ status: 'error', message: 'ID Token is required' });
-    }
-
-    try {
-      const ticket = await oauth2Client.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-      const payload = ticket.getPayload();
-      
-      if (!payload) {
-        return res.status(401).json({ status: 'error', message: 'Invalid ID Token' });
-      }
-
-      const email = payload.email || "";
-      const name = payload.name || "User";
-
-      // Authorization check: Only allow @cubelelo.com emails
-      if (!email.endsWith("@cubelelo.com") && email !== "jainendra@cubelelo.com") {
-        return res.status(403).json({ 
-          status: 'error', 
-          message: 'Access Denied. This portal is restricted to @cubelelo.com accounts.' 
-        });
-      }
-
-      // In a real app, you would fetch the user's role from a database or sheet here.
-      // For now, we'll return a default Admin user for authorized emails.
-      res.json({
-        status: 'success',
-        user: {
-          id: payload.sub,
-          name: name,
-          email: email,
-          role: 'Admin',
-          avatarInitials: name.charAt(0).toUpperCase(),
-          contactNumber: ""
-        }
-      });
-    } catch (error: any) {
-      console.error("Google Login Verification Error:", error);
-      res.status(401).json({ status: 'error', message: 'Token verification failed: ' + error.message });
-    }
-  });
+  // --- Auth + Supabase-backed CRUD routes (Phase B) ---
+  // registerApiV2Routes mounts /api/login-google (real role lookup, replacing the old
+  // hardcoded-Admin stub) plus the new Tier 1 CRUD endpoints (users, channel configs,
+  // inventory, system config, store/POC mappings, upload logs, PO actions, packing data).
+  registerApiV2Routes(app, oauth2Client);
 
   app.get("/api/auth/google/url", (req: Request, res: Response) => {
     const url = oauth2Client.generateAuthUrl({

@@ -3145,7 +3145,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     const itemRefCodes = (so.items || []).map((i: any) => i.eeReferenceCode).filter(Boolean);
                     const allRefIds = Array.from(new Set([...parentPoNumbers, so.id, ...itemRefCodes]));
 
-                    await Promise.all(allRefIds.filter(Boolean).map((refId: string) => updatePOStatus(refId, 'RTD')));
+                    // updatePOStatus already matches a PO Number/EE reference/order ref ID against every
+                    // row in one scan, so calling it once per parent PO number is enough - issuing one
+                    // call per ref id (including per-item ref codes that map to the same rows) creates
+                    // concurrent GAS writes to the same sheet with no locking, which can race with the
+                    // resync and revert the displayed status. Dedupe down to the parent PO numbers.
+                    await Promise.all(parentPoNumbers.filter(Boolean).map((refId: string) => updatePOStatus(refId, 'RTD')));
                     addNotification(`${so.id} marked as RTD.`, 'success');
                     // Optimistic UI update
                     setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
@@ -3166,7 +3171,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         }
                         return po;
                     }));
-                    onSync(); // Force a refresh to ensure consistency
+                    // Note: no forced onSync() here. The GAS write has no flush/locking guarantee
+                    // across the concurrent per-row updates above, so an immediate resync can read
+                    // the sheet before every row commits and revert the displayed status back to
+                    // "Label Generated". The optimistic update above already reflects RTD; the
+                    // periodic auto-refresh will pick up the durable server state once writes settle.
                 } catch (e) {
                     console.error('Error marking as RTD:', e);
                     addNotification('Failed to update status to RTD.', 'error');
