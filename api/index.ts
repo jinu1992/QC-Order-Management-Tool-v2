@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { registerApiV2Routes } from "../server/routes/index";
+import { registerApiV2Routes } from "../server/routes/index.js";
 
 dotenv.config();
 

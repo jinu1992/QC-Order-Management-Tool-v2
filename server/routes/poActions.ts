@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { supabase } from '../db/supabaseClient';
+import { supabase } from '../db/supabaseClient.js';
 
 // Tier 1 PO-related write actions from services/api.ts: saveOrderNote (addOrderNote),
 // updatePOStatus, updateRTOStatus, updatePOPickupDate, updateShipmentDocuments,

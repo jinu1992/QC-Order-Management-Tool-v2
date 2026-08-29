@@ -1,4 +1,4 @@
-import type { Role, ViewType } from '../types';
+import type { Role, ViewType } from '../types.js';
 
 // Canonical Role x ViewType permission matrix, ported from data/mockData.ts
 // (initialRolePermissions). This is the single source of truth for authorization --

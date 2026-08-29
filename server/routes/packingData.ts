@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { supabase } from '../db/supabaseClient';
+import { supabase } from '../db/supabaseClient.js';
 
 // Mirrors services/api.ts: fetchPackingData (getPackingData), fetchBoxDetails
 // (FETCH_BOX_DETAILS). Rows are stored as jsonb (see packing_data table) since the

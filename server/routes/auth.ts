@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { google } from 'googleapis';
-import { supabase } from '../db/supabaseClient';
+import { supabase } from '../db/supabaseClient.js';
 
 const CUBELELO_DOMAIN = '@cubelelo.com';
 const EXTRA_ALLOWED_EMAILS = new Set(['jainendra@cubelelo.com']);

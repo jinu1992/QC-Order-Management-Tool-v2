@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { supabase } from '../db/supabaseClient';
+import { supabase } from '../db/supabaseClient.js';
 
 // Mirrors services/api.ts: fetchInventoryFromSheet (getInventory), createInventoryItem
 // (createItem), updateInventoryPrice (updatePrice).

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { supabase } from '../db/supabaseClient';
+import { supabase } from '../db/supabaseClient.js';
 
 // Mirrors services/api.ts: fetchUsers (GET ?action=getUsers), saveUserToSheet (saveUser),
 // deleteUserFromSheet (deleteUser). Response shapes match the existing User type in types.ts

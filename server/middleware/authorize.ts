@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
-import type { Role, ViewType } from '../../types';
-import { roleCanAccess } from '../permissions';
-import { supabase } from '../db/supabaseClient';
+import type { Role, ViewType } from '../../types.js';
+import { roleCanAccess } from '../permissions.js';
+import { supabase } from '../db/supabaseClient.js';
 
 // Attaches the authenticated user (looked up by email) onto the request, replacing
 // the old behavior where /api/login-google granted every @cubelelo.com email Admin
