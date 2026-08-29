@@ -119,6 +119,10 @@ export const pushToShippingPartner = async (eeReferenceCode: string, courierId?:
     return await postToScript({ action: 'pushToShippingPartner', eeReferenceCode, courierId });
 };
 
+export const reassignCourier = async (eeReferenceCode: string, courierId: number): Promise<{ status: string, message?: string, awb?: string }> => {
+    return await postToScript({ action: 'reassignCourier', eeReferenceCode, courierId });
+};
+
 export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: string): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updateFBAShipmentId', poNumber, fbaShipmentId });
 };

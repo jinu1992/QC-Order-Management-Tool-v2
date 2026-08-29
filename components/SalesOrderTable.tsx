@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder, triggerEasyEcomFetch } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder, triggerEasyEcomFetch } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -58,6 +58,10 @@ interface SalesOrderTableProps {
 
 // GroupedSalesOrder interface is now in types.ts
 
+// B2B channels routed through the Nimbus courier-selection flow (mirrors
+// B2B_NIMBUS_CHANNELS_ in backend_code.txt). Their E-Way Bill is generated during
+// shipping (once the courier is known), not beforehand, so they skip the EWB gate below.
+const B2B_NIMBUS_CHANNELS = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
 
 // --- Formatters ---
 
@@ -1766,12 +1770,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [isCreatingInvoice, setIsCreatingInvoice] = useState<string | null>(null);
     const [isPushingPartner, setIsPushingPartner] = useState<string | null>(null);
-    const [courierModal, setCourierModal] = useState<{ isOpen: boolean; eeRef: string; poRef: string; channel: string }>({
+    const [courierModal, setCourierModal] = useState<{ isOpen: boolean; eeRef: string; poRef: string; channel: string; mode: 'assign' | 'reassign' }>({
         isOpen: false,
         eeRef: '',
         poRef: '',
-        channel: ''
+        channel: '',
+        mode: 'assign'
     });
+    const [isReassigningCourier, setIsReassigningCourier] = useState<string | null>(null);
     const [isRefreshingSo, setIsRefreshingSo] = useState<string | null>(null);
     const [isSendingZeptoAppointment, setIsSendingZeptoAppointment] = useState(false);
     const [isSendingInstamartAppointment, setIsSendingInstamartAppointment] = useState(false);
@@ -3049,15 +3055,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         // Find the order to check its channel
         const so = allSalesOrders.find(o => o.id === eeRef);
         const channel = so?.channel.toLowerCase() || '';
-        const b2bChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
-
         // If it's a B2B channel and no courierId is provided, show the selection modal
-        if (b2bChannels.includes(channel) && !courierId) {
+        if (B2B_NIMBUS_CHANNELS.includes(channel) && !courierId) {
             setCourierModal({
                 isOpen: true,
                 eeRef,
                 poRef,
-                channel: so?.channel || channel
+                channel: so?.channel || channel,
+                mode: 'assign'
             });
             return;
         }
@@ -3100,6 +3105,52 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             addNotification('Failed to push to shipping partner. Check console for details.', 'error');
         } finally {
             setIsPushingPartner(null);
+        }
+    };
+
+    // Opens the courier picker for an order that's already been shipped, so it can be
+    // rebooked with a different courier (e.g. the original courier can't service it).
+    const handleReassignCourierClick = (so: GroupedSalesOrder) => {
+        setCourierModal({
+            isOpen: true,
+            eeRef: so.id,
+            poRef: so.poReference,
+            channel: so.channel,
+            mode: 'reassign'
+        });
+    };
+
+    const handleReassignCourierAction = async (eeRef: string, poRef: string, courierId: number) => {
+        setIsReassigningCourier(eeRef);
+        const parentPoNumbers = poRef.split(',').map(s => s.trim());
+
+        try {
+            const res = await reassignCourier(eeRef, courierId);
+            if (res.status === 'success') {
+                addNotification(res.message || 'Courier reassigned successfully.', 'success');
+                addLog('Courier Reassignment', `EE Ref: ${eeRef}`);
+
+                setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
+                    if (parentPoNumbers.includes(po.poNumber)) {
+                        return {
+                            ...po,
+                            items: po.items?.map((item: POItem) =>
+                                item.eeReferenceCode === eeRef
+                                    ? { ...item, awb: res.awb || item.awb, trackingStatus: 'Assigned' }
+                                    : item
+                            )
+                        };
+                    }
+                    return po;
+                }));
+            } else {
+                addNotification(res.message || 'Failed to reassign courier.', 'error');
+            }
+        } catch (error) {
+            console.error('Error reassigning courier:', error);
+            addNotification('Failed to reassign courier. Check console for details.', 'error');
+        } finally {
+            setIsReassigningCourier(null);
         }
     };
 
@@ -3433,7 +3484,10 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isAmazonFba = so.channel.toLowerCase().includes('amazon_fba') || so.channel.toLowerCase().includes('amazon fba');
             const isFlipkartMinutes = so.channel.toLowerCase().includes('minute');
             const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !isFlipkartMinutes;
-            const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb;
+            // B2B/Nimbus channels generate their EWB during shipping itself (once the
+            // courier is chosen), so they don't need one to already exist to enable Ship.
+            const isB2bNimbusChannel = B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase());
+            const ewbMissing = (so.invoiceTotal || 0) >= 50000 && !so.ewb && !isB2bNimbusChannel;
 
             if (isAmazonFba || isFlipkart) {
                 return {
@@ -4378,16 +4432,26 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                         handlePushToShippingAction(so.id, so.poReference);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb && !B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase())) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
                                                                                 className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
                                                                                 {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
                                                                             </button>
-                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart) && (
+                                                                            {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart && !B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase())) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
+                                                                    )}
+                                                                    {(so.awb && B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase()) && so.status !== 'Ready to Dispatch') && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); handleReassignCourierClick(so); }}
+                                                                            disabled={isReassigningCourier === so.id}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white text-[11px] font-bold rounded-lg shadow-md transition-all active:scale-95 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed"
+                                                                        >
+                                                                            {isReassigningCourier === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <TruckIcon className="h-3 w-3" />}
+                                                                            {isReassigningCourier === so.id ? 'Reassigning...' : 'Reassign Courier'}
+                                                                        </button>
                                                                     )}
                                                                 </div>
                                                             </div>
@@ -4535,10 +4599,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 <CourierSelectionModal
                     so={courierModal}
                     onSelect={(id) => {
-                        setCourierModal(prev => ({ ...prev, isOpen: false }));
-                        handlePushToShippingAction(courierModal.eeRef, courierModal.poRef, id);
+                        const mode = courierModal.mode;
+                        const eeRef = courierModal.eeRef;
+                        const poRef = courierModal.poRef;
+                        setCourierModal({ isOpen: false, eeRef: '', poRef: '', channel: '', mode: 'assign' });
+                        if (mode === 'reassign') {
+                            handleReassignCourierAction(eeRef, poRef, id);
+                        } else {
+                            handlePushToShippingAction(eeRef, poRef, id);
+                        }
                     }}
-                    onClose={() => setCourierModal({ isOpen: false, eeRef: '', poRef: '', channel: '' })}
+                    onClose={() => setCourierModal({ isOpen: false, eeRef: '', poRef: '', channel: '', mode: 'assign' })}
                 />
             )}
             {selfShipOrderData && (

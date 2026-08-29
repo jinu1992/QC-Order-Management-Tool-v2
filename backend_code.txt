@@ -72,6 +72,19 @@ const SHEET_QUOTATIONS = "Quotations";
 const VENDOR_NAME = "Brainlytic Solutions Pvt Ltd";
 const EMAIL_LOGS = "Email Logs";
 
+// Courier / E-Way Bill transporter mapping (must match CourierSelectionModal in the frontend)
+const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Xpressbees" };
+// B2B channels that go through the Nimbus courier-selection flow (createNimbusPostShipment)
+const B2B_NIMBUS_CHANNELS_ = ["instamart", "zepto", "bb", "rbl", "flipkartminutes", "blinkit"];
+
+function getTransporterNameByCourierId_(courierId) {
+  const name = COURIER_TRANSPORTER_MAP_[String(courierId || "110")];
+  if (!name) {
+    throw new Error(`No transporter mapping for courier_id ${courierId}. Add it to COURIER_TRANSPORTER_MAP_.`);
+  }
+  return name;
+}
+
 // API Endpoints
 const EASYECOM_BASE_URL = "https://api.easyecom.io";
 const EASYECOM_ORDERS_URL = `${EASYECOM_BASE_URL}/webhook/v2/createOrder`;
@@ -165,6 +178,7 @@ function doPost(e) {
     else if (action === 'pushToAmazon') result = createAmazonFbaInboundPlan(data);
     else if (action === 'createZohoInvoice') result = handleCreateZohoInvoice(data.eeReferenceCode);
     else if (action === 'pushToShippingPartner') result = handlePushToShippingAggregator(data.eeReferenceCode,data.courierId);
+    else if (action === 'reassignCourier') result = reassignCourierShipment(data.eeReferenceCode, data.courierId);
     else if (action === 'updatePOStatus') result = updatePOStatus(data.poNumber, data.status);
     else if (action === 'syncZohoContacts') result = handleSyncZohoContacts();
     else if (action === 'syncInventory') result = handleSyncInventory();
@@ -7133,8 +7147,11 @@ const createdInvoiceNumber = createResponseData.invoice.invoice_number;
     if (isSuccessStatusCode && pushResponseData.code === 0) {
       Logger.log(`Step 2/3: Successfully pushed to IRP. Message: ${pushResponseData.message}`);
 
-      if (channelKey !== "amazon_fba") 
+      if (channelKey !== "amazon_fba" && !B2B_NIMBUS_CHANNELS_.includes(channelKey))
       {
+        // B2B/Nimbus-routed channels generate their E-Way Bill later, at shipment-booking
+        // time (see ensureCorrectEwayBillForCourier_ in createNimbusPostShipment), once the
+        // actual courier is known — so the EWB's transporter matches who really ships it.
         processEwayBill_(createResponseData.invoice, branchStateCode, supplyStateCode);
 
       }
@@ -7302,7 +7319,7 @@ const createdInvoiceNumber = createResponseData.invoice.invoice_number;
   }
 }
 
-function processEwayBill_(invoiceObj, branchStateCode = "CG", supplyStateCode = "")
+function processEwayBill_(invoiceObj, branchStateCode = "CG", supplyStateCode = "", transporterName = "Delhivery")
  {
   const token = getZohoAccessToken();
   const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
@@ -7346,7 +7363,7 @@ function processEwayBill_(invoiceObj, branchStateCode = "CG", supplyStateCode = 
 
   const url = `https://www.zohoapis.in/books/v3/ewaybills?organization_id=${orgId}`;
 
-  const transporterId = getTransporterIdByName_("Delhivery");
+  const transporterId = getTransporterIdByName_(transporterName);
 
   const payload = {
     transaction_type: "regular",
@@ -7416,6 +7433,65 @@ function getTransporterIdByName_(name) {
   }
 
   return transporter.transporter_id; // ✅ correct ID
+}
+
+// Updates the transporter on an already-generated (Part-A only, no vehicle/Part-B) E-Way
+// Bill, without cancelling/regenerating it — used when a shipment is reassigned to a
+// different courier after its invoice's EWB was already created for the previous one.
+function updateEwayBillTransporter_(invoiceObj, newTransporterName) {
+  const ewbDetails = invoiceObj.eway_bill_details;
+
+  if (!ewbDetails || !ewbDetails.ewaybill_id) {
+    throw new Error(
+      `Cannot update transporter — no ewaybill_id on invoice ${invoiceObj.invoice_id}. ` +
+      `Raw eway_bill_details: ${JSON.stringify(ewbDetails)}`
+    );
+  }
+
+  const token = getZohoAccessToken();
+  const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+  const newTransporterId = getTransporterIdByName_(newTransporterName);
+
+  const url = `https://www.zohoapis.in/books/v3/ewaybills/${ewbDetails.ewaybill_id}?organization_id=${orgId}`;
+
+  const payload = {
+    transaction_type: "regular",
+    sub_supply_type: "supply",
+    entity_id: invoiceObj.invoice_id,
+    entity_type: "invoice",
+    ship_to_state_code: ewbDetails.ship_to_state_code || invoiceObj.place_of_supply,
+    transporter_id: newTransporterId,
+    transportation_mode: "road",
+    action: "save"
+  };
+
+  const options = {
+    method: "put",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`
+    },
+    contentType: "application/x-www-form-urlencoded",
+    payload: {
+      JSONString: JSON.stringify(payload)
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const code = response.getResponseCode();
+  const text = response.getContentText();
+
+  Logger.log("Eway Bill Update (Transporter) Response: " + text);
+
+  if (code >= 200 && code < 300) {
+    return {
+      status: "success",
+      message: `Eway Bill transporter updated to ${newTransporterName}`,
+      data: JSON.parse(text)
+    };
+  }
+
+  throw new Error("Eway Bill transporter update failed: " + text);
 }
 
 function test_ewb()
@@ -8166,7 +8242,7 @@ function getShiprocketToken() {
 
 
 
-function createShipment(eeReferenceCode,courier_id) {
+function createShipment(eeReferenceCode,courier_id,isReassignment) {
 
   if (!eeReferenceCode) {
     return { status: "error", message: "No EE Reference Code provided" };
@@ -8206,8 +8282,51 @@ function createShipment(eeReferenceCode,courier_id) {
   if (useShiprocket) {
     return createShiprocketShipment(eeReferenceCode);
   } else {
-    return createNimbusPostShipment(eeReferenceCode,courier_id);
+    return createNimbusPostShipment(eeReferenceCode,courier_id,isReassignment);
   }
+}
+
+// Reassigns an order that already has a shipment booked (e.g. Delhivery wasn't
+// serviceable) to a different courier. Clears the old AWB/tracking info — codifying what
+// today is a manual sheet edit — then re-runs the normal booking flow, which (for
+// B2B/Nimbus orders) also corrects the invoice's E-Way Bill transporter to match.
+function reassignCourierShipment(eeReferenceCode, newCourierId) {
+  if (!eeReferenceCode) {
+    return { status: "error", message: "No EE Reference Code provided" };
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+  const data = dbSheet.getDataRange().getValues();
+  const headers = data.shift();
+
+  const refIdx = headers.indexOf('EE_reference_code');
+  const awbIdx = headers.indexOf('AWB');
+
+  const rows = data
+    .map((r, i) => (String(r[refIdx]).trim() === eeReferenceCode ? i + 2 : null))
+    .filter(Boolean);
+
+  if (!rows.length) {
+    return { status: "error", message: "Order not found" };
+  }
+
+  const hasAwb = data.some(
+    r => String(r[refIdx]).trim() === eeReferenceCode && String(r[awbIdx]).trim() !== ""
+  );
+
+  if (!hasAwb) {
+    return { status: "error", message: "No existing shipment to reassign — use Ship instead." };
+  }
+
+  ['AWB', 'Carrier', 'Tracking Status', 'Tracking URL', 'Booked Date', 'Pickup Date', 'Label URL'].forEach(col => {
+    const idx = headers.indexOf(col);
+    if (idx !== -1) {
+      rows.forEach(r => dbSheet.getRange(r, idx + 1).setValue(''));
+    }
+  });
+
+  return createShipment(eeReferenceCode, newCourierId, /* isReassignment */ true);
 }
 
 function createShiprocketShipment(eeReferenceCode) {
@@ -8469,7 +8588,82 @@ function createShiprocketShipment(eeReferenceCode) {
   }
 }
 
-function createNimbusPostShipment(eeReferenceCode,courier_id) {
+// Makes sure the invoice's E-Way Bill (if one is required) reflects the courier actually
+// being booked in this request. Returns the EWB number to use in the Nimbus payload (or ""
+// if no EWB is required for this invoice). Called only for B2B_NIMBUS_CHANNELS_ orders.
+function ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, courier_id, isReassignment) {
+  const headers = dbSheet.getRange(1, 1, 1, 40).getValues()[0];
+  const getIdx = colName => headers.indexOf(colName);
+  const row = dbSheet.getRange(rowsToMark[0], 1, 1, headers.length).getValues()[0];
+  const getVal = colName => row[getIdx(colName)];
+
+  const invoiceId = String(getVal('Invoice Id') || "").trim();
+  if (!invoiceId) {
+    Logger.log(`ensureCorrectEwayBillForCourier_: no Invoice Id for ${eeReferenceCode}, skipping EWB step.`);
+    return "";
+  }
+
+  const token = getZohoAccessToken();
+  const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+  const invoiceUrl = `https://www.zohoapis.in/books/v3/invoices/${invoiceId}?organization_id=${orgId}`;
+  const getOptions = {
+    method: "get",
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    muteHttpExceptions: true
+  };
+
+  const invResponse = UrlFetchApp.fetch(invoiceUrl, getOptions);
+  if (invResponse.getResponseCode() !== 200) {
+    throw new Error(`Could not fetch invoice ${invoiceId} to check EWB status: ${invResponse.getContentText()}`);
+  }
+  let invoiceObj = JSON.parse(invResponse.getContentText()).invoice;
+
+  const transporterName = getTransporterNameByCourierId_(courier_id);
+  const ewbColIdx = getIdx('EWB');
+
+  const writeEwbToSheet = ewbNumber => {
+    if (ewbColIdx === -1) return;
+    rowsToMark.forEach(r => dbSheet.getRange(r, ewbColIdx + 1).setValue(ewbNumber));
+  };
+
+  const existingEwbNumber = invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.eway_bill_number;
+
+  if (!existingEwbNumber) {
+    // No EWB yet — generate it now, with the transporter that matches the courier being booked.
+    const locationKey = getVal('Location_Key');
+    const branchConfig = getZohoBranchConfigByLocationKey_(locationKey);
+    const gstOrSupplyValue = String(getVal('GST') || "").trim();
+    const supplyStateCode = gstOrSupplyValue ? getZohoStateCodeFromGstOrState_(gstOrSupplyValue) : "";
+
+    const result = processEwayBill_(invoiceObj, branchConfig.branchStateCode, supplyStateCode, transporterName);
+
+    if (result.status === "skipped") {
+      return ""; // Conditions not met (not B2B / <=50k / intrastate) — no EWB required.
+    }
+
+    // Re-fetch so we read back the government-issued eway_bill_number.
+    const refetchResponse = UrlFetchApp.fetch(invoiceUrl, getOptions);
+    invoiceObj = JSON.parse(refetchResponse.getContentText()).invoice;
+    const newEwbNumber = (invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.eway_bill_number) || "";
+    writeEwbToSheet(newEwbNumber);
+    return newEwbNumber;
+  }
+
+  if (!isReassignment) {
+    // EWB already correctly reflects the courier being booked (e.g. retry after a prior
+    // Nimbus failure) — just make sure the sheet has it, don't touch Zoho again.
+    writeEwbToSheet(existingEwbNumber);
+    return existingEwbNumber;
+  }
+
+  // Reassignment: the EWB exists but was generated for the PREVIOUS courier — update its
+  // transporter in place rather than cancelling/regenerating (preserves the EWB number).
+  updateEwayBillTransporter_(invoiceObj, transporterName);
+  writeEwbToSheet(existingEwbNumber);
+  return existingEwbNumber;
+}
+
+function createNimbusPostShipment(eeReferenceCode,courier_id,isReassignment) {
 
   if (!eeReferenceCode) {
     return { status: "error", message: "No EE Order Reference ID provided." };
@@ -8554,6 +8748,16 @@ function createNimbusPostShipment(eeReferenceCode,courier_id) {
     }
 
     // --------------------------------------------------
+    // E-WAY BILL (B2B/Nimbus channels only) — generate or correct the EWB's
+    // transporter so it matches the courier actually being booked here.
+    // --------------------------------------------------
+    let ewbOverride;
+    const orderChannel = String((orderData.items[0] || [])[headers.indexOf('Channel Name')] || "").trim().toLowerCase();
+    if (B2B_NIMBUS_CHANNELS_.includes(orderChannel)) {
+      ewbOverride = ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, courier_id, !!isReassignment);
+    }
+
+    // --------------------------------------------------
     // BUILD PAYLOAD
     // --------------------------------------------------
     const payload = _buildNimbusPayload(
@@ -8562,7 +8766,8 @@ function createNimbusPostShipment(eeReferenceCode,courier_id) {
       customerMap.get(orderData.customerId),
       packingData,
       dbSheet,
-      courier_id
+      courier_id,
+      ewbOverride
     );
 
     Logger.log("PAYLOAD: " + JSON.stringify(payload));
@@ -8819,18 +9024,26 @@ function _loadOrderData(ss, eeReferenceCode) {
 
 // --- PAYLOAD BUILDER HELPER ---
 
-function _buildNimbusPayload(eeReferenceCode,orderData, customerDetails, packingData,dbSheet,courier_id) {
+function _buildNimbusPayload(eeReferenceCode,orderData, customerDetails, packingData,dbSheet,courier_id, ewbOverride) {
   // --- Consignee & Invoice Details ---
   const firstItem = orderData.items[0];
   const orderHeaders = dbSheet.getRange(1, 1, 1, 40).getValues()[0]; // Get headers once
-  
+
   const getVal = (row, colName) => row[orderHeaders.indexOf(colName)];
 
   const invoiceNumber = getVal(firstItem, 'Invoice Number');
   const invoiceDate = new Date(getVal(firstItem, 'Invoice Date'));
   const invoiceValue = parseFloat(getVal(firstItem, 'Invoice Total'));
-  const ewbRaw = getVal(firstItem, 'EWB');
-  const ewb = ewbRaw ? String(ewbRaw).trim() : "";
+  // ewbOverride (set by ensureCorrectEwayBillForCourier_ for B2B/Nimbus channels) takes
+  // precedence over the sheet's EWB column, since it reflects the EWB just generated/
+  // corrected for the courier actually being booked in this request.
+  let ewb;
+  if (ewbOverride !== undefined) {
+    ewb = ewbOverride;
+  } else {
+    const ewbRaw = getVal(firstItem, 'EWB');
+    ewb = ewbRaw ? String(ewbRaw).trim() : "";
+  }
 
   // 🚨 EWB Validation
   if (invoiceValue >= 50000 && !ewb) {
