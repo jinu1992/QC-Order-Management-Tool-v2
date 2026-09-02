@@ -8311,12 +8311,24 @@ function reassignCourierShipment(eeReferenceCode, newCourierId) {
     return { status: "error", message: "Order not found" };
   }
 
-  const hasAwb = data.some(
+  const existingRow = data.find(
     r => String(r[refIdx]).trim() === eeReferenceCode && String(r[awbIdx]).trim() !== ""
   );
 
-  if (!hasAwb) {
+  if (!existingRow) {
     return { status: "error", message: "No existing shipment to reassign — use Ship instead." };
+  }
+
+  const oldAwb = String(existingRow[awbIdx]).trim();
+
+  // Cancel the previous courier's shipment on Nimbus first, so it doesn't stay active
+  // alongside the newly-booked one. A failure here is surfaced as a warning rather than
+  // blocking the reassignment — the new shipment is the more urgent operational need.
+  let cancelWarning = "";
+  const cancelResult = cancelNimbusShipment_(oldAwb);
+  if (!cancelResult || !cancelResult.status) {
+    Logger.log(`Warning: failed to cancel previous Nimbus shipment ${oldAwb}: ${JSON.stringify(cancelResult)}`);
+    cancelWarning = ` (Warning: could not auto-cancel the previous shipment ${oldAwb} on Nimbus — please cancel it manually.)`;
   }
 
   ['AWB', 'Carrier', 'Tracking Status', 'Tracking URL', 'Booked Date', 'Pickup Date', 'Label URL'].forEach(col => {
@@ -8326,7 +8338,13 @@ function reassignCourierShipment(eeReferenceCode, newCourierId) {
     }
   });
 
-  return createShipment(eeReferenceCode, newCourierId, /* isReassignment */ true);
+  const bookingResult = createShipment(eeReferenceCode, newCourierId, /* isReassignment */ true);
+
+  if (cancelWarning && bookingResult) {
+    bookingResult.message = (bookingResult.message || '') + cancelWarning;
+  }
+
+  return bookingResult;
 }
 
 function createShiprocketShipment(eeReferenceCode) {
@@ -8905,6 +8923,27 @@ function callNimbus(url, payload, token) {
     };
   }
 }
+// Cancels a previously-booked Nimbus shipment by AWB (per NimbusPost's shipments/cancel
+// API). Used on courier reassignment so the old courier's tracking doesn't stay live
+// alongside the newly-booked one. Never throws — returns Nimbus's response as-is (or a
+// synthetic failure object) so the caller can decide whether to surface a warning.
+function cancelNimbusShipment_(awb) {
+  const cleanAwb = String(awb || "").trim();
+
+  if (!cleanAwb || cleanAwb === "PROCESSING") {
+    return { status: false, message: `No cancellable AWB (got "${cleanAwb}")` };
+  }
+
+  const responseData = nimbusFetchWithRetry(
+    "https://ship.nimbuspost.com/api/shipments/cancel",
+    { awb: cleanAwb }
+  );
+
+  Logger.log(`Nimbus cancel (AWB ${cleanAwb}) response: ${JSON.stringify(responseData)}`);
+
+  return responseData;
+}
+
 function nimbusFetchWithRetry(url, payload) {
   let token = getNimbusPostToken();
 
