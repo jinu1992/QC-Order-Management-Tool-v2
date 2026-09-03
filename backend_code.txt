@@ -197,6 +197,8 @@ function doPost(e) {
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
     else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses(data.force);
     else if (action === 'backfillBlinkitAppointments') result = extractAppointmentPassDetails();
+    else if (action === 'debugBlinkitRepoRows') result = debugBlinkitRepoRows(data.limit);
+    else if (action === 'debugFindRecentBlinkitEmail') result = debugFindRecentBlinkitEmail();
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
@@ -10883,6 +10885,67 @@ function forceRescanBlinkitAppointments() {
   return processBlinkitAppointmentPasses(true);
 }
 
+/**
+ * Diagnostic: broad search (subject only, no sender restriction, last 24h)
+ * to check whether a specific recent appointment-pass email is findable by
+ * Gmail search at all under this account, and dump its raw From/subject/
+ * date/thread-id/label info - run this directly from the Apps Script
+ * editor's function dropdown.
+ */
+function debugFindRecentBlinkitEmail() {
+  const since = new Date();
+  since.setDate(since.getDate() - 1);
+  const startTime = Math.floor(since.getTime() / 1000);
+
+  const query = `subject:("Appointment Pass") after:${startTime}`;
+  const threads = GmailApp.search(query);
+
+  const results = threads.map(t => {
+    const msgs = t.getMessages();
+    return msgs.map(m => ({
+      threadId: t.getId(),
+      from: m.getFrom(),
+      subject: m.getSubject(),
+      date: m.getDate(),
+      labels: t.getLabels().map(l => l.getName())
+    }));
+  }).flat();
+
+  Logger.log(`Query: ${query}`);
+  Logger.log(`Threads found: ${threads.length}, messages: ${results.length}`);
+  results.forEach(r => Logger.log(JSON.stringify(r)));
+
+  return { status: "success", query, threadsFound: threads.length, messages: results };
+}
+
+/**
+ * Diagnostic: returns the most recent PO_Repository rows logged as
+ * "Appointment Pass" category, exactly as extracted (PO Number, Status,
+ * Appointment ID/Date/Time, Sender, Subject) - to compare against what a
+ * given PO's row in PO_Database actually shows.
+ */
+function debugBlinkitRepoRows(limit) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const repoSheet = ss.getSheetByName(SHEET_PO_REPO);
+  if (!repoSheet) return { status: "error", message: "PO_Repository sheet not found." };
+
+  const lastRow = repoSheet.getLastRow();
+  if (lastRow < 2) return { status: "success", data: [] };
+
+  const data = repoSheet.getRange(1, 1, lastRow, repoSheet.getLastColumn()).getValues();
+  const headers = data[0];
+  const rows = data.slice(1)
+    .map((row, i) => {
+      const obj = { _row: i + 2 };
+      headers.forEach((h, idx) => obj[h] = row[idx]);
+      return obj;
+    })
+    .filter(r => String(r['Category'] || '').trim().toLowerCase() === 'appointment pass');
+
+  const n = limit || 10;
+  return { status: "success", data: rows.slice(-n) };
+}
+
 function processBlinkitAppointmentPasses(force) {
 
   try {
@@ -10967,8 +11030,14 @@ function processBlinkitAppointmentPasses(force) {
           const sender = message.getFrom().toLowerCase();
           if (!emailList.some(e => sender.includes(e))) { rowDebug.skippedSender++; return; }
 
+          // PartnersBiz sends two subject formats: "... | Appointment Pass | ..."
+          // for the original appointment, and "Courier Appointment Summary"
+          // for updates (e.g. after a courier reassignment triggers a fresh
+          // appointment on the same PO/thread).
           const subject = message.getSubject();
-          if (!subject.toUpperCase().includes('APPOINTMENT PASS')) { rowDebug.skippedSubject++; return; }
+          const subjectUpper = subject.toUpperCase();
+          const isAppointmentEmail = subjectUpper.includes('APPOINTMENT PASS') || subjectUpper.includes('COURIER APPOINTMENT SUMMARY');
+          if (!isAppointmentEmail) { rowDebug.skippedSubject++; return; }
 
           rowDebug.matched++;
 
@@ -11129,6 +11198,7 @@ function extractAppointmentPassDetails() {
   const appointmentIdIndex = headers.indexOf("Appointment ID");
   const appointmentDateIndex = headers.indexOf("Appointment Date");
   const appointmentTimeIndex = headers.indexOf("Appointment Time");
+  const dateReceivedIndex = headers.indexOf("Date Received");
 
   if (
     categoryIndex === -1 ||
@@ -11136,7 +11206,8 @@ function extractAppointmentPassDetails() {
     poNumIndex === -1 ||
     appointmentIdIndex === -1 ||
     appointmentDateIndex === -1 ||
-    appointmentTimeIndex === -1
+    appointmentTimeIndex === -1 ||
+    dateReceivedIndex === -1
   ) {
     Logger.log("Required columns not found.");
     return { status: "error", message: "Required columns not found in PO_Repo." };
@@ -11153,58 +11224,79 @@ function extractAppointmentPassDetails() {
   const rowsToUpdate = {};
   let extractedCount = 0;
   let skippedCount = 0;
+  let supersededCount = 0;
 
   // 🔥 ONLY APPOINTMENT PASS LOGIC
   // Retry both never-linked rows (empty status) AND previously-skipped ones
   // (PO wasn't in PO_Database yet at the time) - the PO may have since
   // synced in, so a stuck "Skipped" row should get another chance instead
   // of being permanently stuck.
+  //
+  // A PO can get more than one appointment pass over time (e.g. the courier
+  // gets reassigned and Blinkit issues a fresh appointment for the new
+  // one). Group retryable rows by PO Number and only apply the one with the
+  // latest "Date Received" to PO_Database - older ones for the same PO are
+  // marked "Superseded" instead of written, so a stale appointment/QR can
+  // never win just because of loop/processing order.
+  const retryableByPo = {};
   dataRows.forEach((row, index) => {
-
     const category = String(row[categoryIndex] || "").trim().toLowerCase();
     const currentStatus = String(row[statusIndex] || "").trim();
-    const rowIndexInSheet = index + 2;
     const isRetryable = currentStatus === "" || currentStatus === "Skipped (PO Not Found in DB)";
+    if (category !== "appointment pass" || !isRetryable) return;
 
-    if (category === "appointment pass" && isRetryable) {
+    const poNumber = String(row[poNumIndex] || "").trim();
+    if (!poNumber) return;
 
-      const poNumber = String(row[poNumIndex] || "").trim();
-      if (!poNumber) return;
+    const entry = {
+      rowIndexInSheet: index + 2,
+      dateReceived: new Date(row[dateReceivedIndex] || 0).getTime(),
+      appointmentId: row[appointmentIdIndex] || "Not Found",
+      appointmentDate: row[appointmentDateIndex] || "Not Found",
+      appointmentTime: row[appointmentTimeIndex] || "Not Found",
+      fileUrl: row[fileUrlIndex] || ""
+    };
 
-      const appointmentId = row[appointmentIdIndex] || "Not Found";
-      const appointmentDate = row[appointmentDateIndex] || "Not Found";
-      const appointmentTime = row[appointmentTimeIndex] || "Not Found";
-      const fileUrl = row[fileUrlIndex] || "";
+    if (!retryableByPo[poNumber]) retryableByPo[poNumber] = [];
+    retryableByPo[poNumber].push(entry);
+  });
 
-      const dbRowIndexes = findRowIndexesByPoNumber(dbSheet, poNumber);
+  Object.keys(retryableByPo).forEach(poNumber => {
+    const entries = retryableByPo[poNumber].sort((a, b) => b.dateReceived - a.dateReceived);
+    const latest = entries[0];
+    const older = entries.slice(1);
 
-      if (dbRowIndexes.length > 0) {
+    older.forEach(e => {
+      rowsToUpdate[e.rowIndexInSheet] = "Superseded (newer appointment received)";
+      supersededCount++;
+    });
 
-        const appointmentValues = [
-          appointmentId,
-          appointmentDate,
-          appointmentTime,
-          fileUrl
-        ];
+    const dbRowIndexes = findRowIndexesByPoNumber(dbSheet, poNumber);
 
-        dbRowIndexes.forEach(dbRowIndex => {
-          dbSheet
-            .getRange(dbRowIndex, dbAppointmentColumnIndex + 1, 1, 4)
-            .setValues([appointmentValues]);
-        });
+    if (dbRowIndexes.length > 0) {
 
-        rowsToUpdate[rowIndexInSheet] = "Extracted";
-        extractedCount++;
+      const appointmentValues = [
+        latest.appointmentId,
+        latest.appointmentDate,
+        latest.appointmentTime,
+        latest.fileUrl
+      ];
 
-      } else {
+      dbRowIndexes.forEach(dbRowIndex => {
+        dbSheet
+          .getRange(dbRowIndex, dbAppointmentColumnIndex + 1, 1, 4)
+          .setValues([appointmentValues]);
+      });
 
-        rowsToUpdate[rowIndexInSheet] = "Skipped (PO Not Found in DB)";
-        skippedCount++;
+      rowsToUpdate[latest.rowIndexInSheet] = "Extracted";
+      extractedCount++;
 
-      }
+    } else {
+
+      rowsToUpdate[latest.rowIndexInSheet] = "Skipped (PO Not Found in DB)";
+      skippedCount++;
 
     }
-
   });
 
   // ✅ Update status column in Repo sheet
@@ -11216,7 +11308,7 @@ function extractAppointmentPassDetails() {
 
   SpreadsheetApp.flush();
 
-  Logger.log(`Appointment Pass processing completed. Extracted: ${extractedCount}, Skipped: ${skippedCount}`);
+  Logger.log(`Appointment Pass processing completed. Extracted: ${extractedCount}, Skipped: ${skippedCount}, Superseded: ${supersededCount}`);
 
   return {
     status: "success",
@@ -11224,7 +11316,8 @@ function extractAppointmentPassDetails() {
       ? `Linked ${extractedCount} appointment pass(es) to PO_Database.`
       : "No appointment passes needed linking.",
     extracted: extractedCount,
-    skipped: skippedCount
+    skipped: skippedCount,
+    superseded: supersededCount
   };
 }
 
