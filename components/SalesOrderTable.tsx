@@ -1559,7 +1559,51 @@ const AmazonBoxDetailsModal: FC<{
                     </button>
                 </div>
 
-                <div className="p-6 overflow-y-auto flex-1 bg-gray-50">
+                <div className="p-6 overflow-y-auto flex-1 bg-gray-50 space-y-6">
+                    {/* FBA Shipment ID Linking Section -- always visible. Linking this is a
+                        PREREQUISITE for invoicing (see fbaMissing in the parent table), while
+                        box weight/dimension data below is only ever uploaded AFTER invoicing
+                        via the packing-list upload. Gating this section behind boxDetails
+                        having data created a deadlock: it never showed for an order that
+                        hadn't been invoiced yet, so the FBA Shipment ID could never be linked
+                        to unblock that invoice in the first place. */}
+                    <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-between gap-3">
+                        <div>
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">FBA Shipment ID</p>
+                            {so.fbaShipmentId ? (
+                                <p className="text-[11px] text-green-600 font-bold flex items-center gap-1 mt-1">
+                                    <CheckCircleIcon className="h-3.5 w-3.5" /> Linked: <span className="font-mono bg-green-50 px-1.5 py-0.5 rounded border border-green-200">{so.fbaShipmentId}</span>
+                                </p>
+                            ) : (
+                                <p className="text-[11px] text-amber-600 font-bold flex items-center gap-1 mt-1">
+                                    <AlertIcon className="h-3.5 w-3.5" /> Shipment ID Required before invoicing
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={fbaId}
+                                onChange={(e) => setFbaId(e.target.value)}
+                                placeholder="Enter FBA Shipment ID"
+                                className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#FF9900] focus:border-[#FF9900] transition-all outline-none font-mono font-bold text-xs"
+                            />
+                            <button
+                                onClick={async () => {
+                                    if (!fbaId.trim() || !onLinkFbaShipment) return;
+                                    setIsLinking(true);
+                                    await onLinkFbaShipment(fbaId.trim());
+                                    setIsLinking(false);
+                                }}
+                                disabled={isLinking || !fbaId.trim() || fbaId.trim() === so.fbaShipmentId}
+                                className="px-4 py-2 bg-[#FF9900] text-gray-900 font-black rounded-xl hover:bg-[#FF8C00] transition-all active:scale-[0.98] text-[10px] uppercase flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                                {isLinking ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CheckCircleIcon className="h-3.5 w-3.5" />}
+                                {so.fbaShipmentId ? 'Update' : 'Link'}
+                            </button>
+                        </div>
+                    </div>
+
                     {isLoading ? (
                         <div className="flex flex-col items-center justify-center h-64">
                             <RefreshIcon className="h-10 w-10 animate-spin text-[#FF9900] mb-4" />
@@ -1568,65 +1612,25 @@ const AmazonBoxDetailsModal: FC<{
                     ) : boxDetails.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-64 text-center">
                             <AlertIcon className="h-12 w-12 text-amber-500 mb-4" />
-                            <p className="font-bold text-gray-800">No Box Details Found</p>
-                            <p className="text-sm text-gray-500 mt-2">Could not retrieve box summary for this shipment.</p>
+                            <p className="font-bold text-gray-800">No Box Weight/Dimension Data Yet</p>
+                            <p className="text-sm text-gray-500 mt-2">This is uploaded via the packing list after invoicing. Link the FBA Shipment ID above to proceed with invoicing first.</p>
                         </div>
                     ) : (
                         <div className="space-y-6">
                             {/* Total Boxes Summary Card */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex items-center justify-between">
-                                    <div className="flex gap-12">
-                                        <div>
-                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Shipment Boxes</p>
-                                            <p className="text-4xl font-black text-gray-900">{boxDetails.length}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Order Ref</p>
-                                            <p className="text-xl font-bold text-[#FF9900] truncate max-w-[150px]" title={so.id}>{so.id}</p>
-                                        </div>
+                            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div className="flex gap-12">
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Shipment Boxes</p>
+                                        <p className="text-4xl font-black text-gray-900">{boxDetails.length}</p>
                                     </div>
-                                    <div className="p-4 bg-orange-50 rounded-2xl">
-                                        <CubeIcon className="h-8 w-8 text-[#FF9900]" />
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Order Ref</p>
+                                        <p className="text-xl font-bold text-[#FF9900] truncate max-w-[150px]" title={so.id}>{so.id}</p>
                                     </div>
                                 </div>
-
-                                {/* FBA Shipment ID Linking Section */}
-                                <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col justify-between gap-3">
-                                    <div>
-                                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">FBA Shipment ID</p>
-                                        {so.fbaShipmentId ? (
-                                            <p className="text-[11px] text-green-600 font-bold flex items-center gap-1 mt-1">
-                                                <CheckCircleIcon className="h-3.5 w-3.5" /> Linked: <span className="font-mono bg-green-50 px-1.5 py-0.5 rounded border border-green-200">{so.fbaShipmentId}</span>
-                                            </p>
-                                        ) : (
-                                            <p className="text-[11px] text-amber-600 font-bold flex items-center gap-1 mt-1">
-                                                <AlertIcon className="h-3.5 w-3.5" /> Shipment ID Required before invoicing
-                                            </p>
-                                        )}
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            value={fbaId}
-                                            onChange={(e) => setFbaId(e.target.value)}
-                                            placeholder="Enter FBA Shipment ID"
-                                            className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#FF9900] focus:border-[#FF9900] transition-all outline-none font-mono font-bold text-xs"
-                                        />
-                                        <button
-                                            onClick={async () => {
-                                                if (!fbaId.trim() || !onLinkFbaShipment) return;
-                                                setIsLinking(true);
-                                                await onLinkFbaShipment(fbaId.trim());
-                                                setIsLinking(false);
-                                            }}
-                                            disabled={isLinking || !fbaId.trim() || fbaId.trim() === so.fbaShipmentId}
-                                            className="px-4 py-2 bg-[#FF9900] text-gray-900 font-black rounded-xl hover:bg-[#FF8C00] transition-all active:scale-[0.98] text-[10px] uppercase flex items-center gap-1.5 disabled:opacity-50"
-                                        >
-                                            {isLinking ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CheckCircleIcon className="h-3.5 w-3.5" />}
-                                            {so.fbaShipmentId ? 'Update' : 'Link'}
-                                        </button>
-                                    </div>
+                                <div className="p-4 bg-orange-50 rounded-2xl">
+                                    <CubeIcon className="h-8 w-8 text-[#FF9900]" />
                                 </div>
                             </div>
 
