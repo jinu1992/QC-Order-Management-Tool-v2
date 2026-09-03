@@ -10933,7 +10933,32 @@ function processBlinkitAppointmentPasses() {
       const threads = GmailApp.search(query);
       const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, matched: 0 };
       debug.push(rowDebug);
-      if (!threads.length) return;
+
+      if (!threads.length) {
+        // Diagnostic only: if the sender-scoped search found nothing, check
+        // whether matching-subject emails exist at all in this mailbox under
+        // a different sender (e.g. manually forwarded), so we're not blind
+        // to a from: filter that no longer matches how these emails arrive.
+        try {
+          const fallbackQuery = `subject:("Appointment Pass") -from:me after:${startTime}`;
+          const fallbackThreads = GmailApp.search(fallbackQuery, 0, 5);
+          const fallbackSenders = [];
+          fallbackThreads.forEach(t => {
+            const msgs = t.getMessages();
+            if (msgs.length) fallbackSenders.push(msgs[msgs.length - 1].getFrom());
+          });
+          rowDebug.fallbackQuery = fallbackQuery;
+          rowDebug.fallbackThreadsFound = fallbackThreads.length;
+          rowDebug.fallbackSenders = fallbackSenders;
+
+          const senderOnlyThreads = GmailApp.search(fromClause + ` -from:me after:${startTime}`, 0, 5);
+          rowDebug.senderOnlyThreadsFound = senderOnlyThreads.length;
+          rowDebug.senderOnlySubjects = senderOnlyThreads.map(t => t.getFirstMessageSubject());
+        } catch (fallbackErr) {
+          rowDebug.fallbackError = fallbackErr.message;
+        }
+        return;
+      }
 
       const threadMessages = GmailApp.getMessagesForThreads(threads);
 
@@ -11227,31 +11252,46 @@ function _parseBlinkitAppointmentPass(message, folder) {
 
   // ----------------------------------------------------
   // QR CODE EXTRACTION (FIXED)
+  // Blinkit sometimes sends the QR inline in the HTML (qr-section <img>)
+  // and sometimes as a JPEG/PNG attachment instead. Try the attachment
+  // first (it's the more reliable/current format), then fall back to the
+  // inline <img> parsing for backward compatibility.
   // ----------------------------------------------------
   try {
-    /**
-     * Match ANY img inside the qr-section
-     * This avoids brittle URL assumptions
-     */
-    const qrImgMatch = emailHtml.match(
-      /<div class="qr-section">[\s\S]*?<img[^>]+src="([^"]+)"/i
+    const imageName = `QR_APPT_${details.appointmentId || 'UNKNOWN'}.jpeg`;
+    let imageBlob = null;
+
+    // 1. Try QR code as an email attachment (image files only)
+    const attachments = message.getAttachments();
+    const qrAttachment = attachments.find(att =>
+      /\.(jpe?g|png)$/i.test(att.getName()) &&
+      att.getContentType().indexOf('image/') === 0
     );
 
-    if (!qrImgMatch || !qrImgMatch[1]) {
-      Logger.log("QR image not found in HTML");
-      details.qrCodeUrl = "NOT FOUND";
-      return details;
+    if (qrAttachment) {
+      imageBlob = qrAttachment.copyBlob();
+      Logger.log(`QR image found as attachment: ${qrAttachment.getName()}`);
+    } else {
+      // 2. Fall back to inline <img> inside the qr-section div
+      const qrImgMatch = emailHtml.match(
+        /<div class="qr-section">[\s\S]*?<img[^>]+src="([^"]+)"/i
+      );
+
+      if (!qrImgMatch || !qrImgMatch[1]) {
+        Logger.log("QR image not found in HTML or attachments");
+        details.qrCodeUrl = "NOT FOUND";
+        return details;
+      }
+
+      // HTML entities decode (&amp; → &)
+      const qrImageUrl = qrImgMatch[1].replace(/&amp;/g, '&');
+
+      imageBlob = UrlFetchApp.fetch(qrImageUrl, {
+        followRedirects: true,
+        muteHttpExceptions: true
+      }).getBlob();
     }
 
-    // HTML entities decode (&amp; → &)
-    const qrImageUrl = qrImgMatch[1].replace(/&amp;/g, '&');
-
-    const imageBlob = UrlFetchApp.fetch(qrImageUrl, {
-      followRedirects: true,
-      muteHttpExceptions: true
-    }).getBlob();
-
-    const imageName = `QR_APPT_${details.appointmentId || 'UNKNOWN'}.jpeg`;
     const file = folder.createFile(imageBlob).setName(imageName);
 
     details.qrCodeUrl = file.getUrl();
