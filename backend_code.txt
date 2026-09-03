@@ -10878,10 +10878,11 @@ function processBlinkitAppointmentPasses() {
 
     let startTime = parseInt(scriptProperties.getProperty(LAST_RUN_KEY) || '0', 10);
 
-    // First-run fallback → look back 120 hours
+    // First-run fallback → look back 30 days (covers backlog from before this
+    // function was able to run successfully at all; see DRIVE_FOLDER note below)
     if (startTime === 0) {
       const fallbackDate = new Date();
-      fallbackDate.setHours(fallbackDate.getHours() - 24);
+      fallbackDate.setDate(fallbackDate.getDate() - 30);
       startTime = Math.floor(fallbackDate.getTime() / 1000);
     }
 
@@ -10890,7 +10891,17 @@ function processBlinkitAppointmentPasses() {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const configSheet = ss.getSheetByName(SHEET_CHANNEL_CONFIG);
     const logSheet = getOrCreateLogSheet(ss, SHEET_PO_REPO);
-    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+
+    // QR code image saving (inside _parseBlinkitAppointmentPass) is already
+    // wrapped in its own try/catch and degrades gracefully without a folder.
+    // Don't let a Drive permission/authorization problem block Gmail search
+    // and appointment-detail extraction for the whole batch.
+    let folder = null;
+    try {
+      folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    } catch (driveErr) {
+      Logger.log(`Blinkit appointment pass: Drive folder unavailable, QR images will not be saved. ${driveErr.message}`);
+    }
 
     if (!configSheet) {
       return { status: "error", message: "Channel Config sheet not found." };
@@ -10899,6 +10910,7 @@ function processBlinkitAppointmentPasses() {
     const configData = configSheet.getDataRange().getValues();
     const newLogs = [];
     let processedCount = 0;
+    const debug = [];
 
     configData.forEach(row => {
 
@@ -10919,6 +10931,8 @@ function processBlinkitAppointmentPasses() {
       if (subjectKeyword) query += ` subject:("${subjectKeyword}")`;
 
       const threads = GmailApp.search(query);
+      const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, matched: 0 };
+      debug.push(rowDebug);
       if (!threads.length) return;
 
       const threadMessages = GmailApp.getMessagesForThreads(threads);
@@ -10929,11 +10943,15 @@ function processBlinkitAppointmentPasses() {
           const messageTime = Math.floor(message.getDate().getTime() / 1000);
           if (messageTime <= startTime) return;
 
+          rowDebug.messagesSeen++;
+
           const sender = message.getFrom().toLowerCase();
-          if (!emailList.some(e => sender.includes(e))) return;
+          if (!emailList.some(e => sender.includes(e))) { rowDebug.skippedSender++; return; }
 
           const subject = message.getSubject();
-          if (!subject.toUpperCase().includes('APPOINTMENT PASS')) return;
+          if (!subject.toUpperCase().includes('APPOINTMENT PASS')) { rowDebug.skippedSubject++; return; }
+
+          rowDebug.matched++;
 
           const appointmentDetails = _parseBlinkitAppointmentPass(message, folder);
 
@@ -10967,8 +10985,8 @@ function processBlinkitAppointmentPasses() {
 
       SpreadsheetApp.flush();
       extractAppointmentPassDetails();
-      scriptProperties.setProperty(LAST_RUN_KEY, String(currentRunTime));
     }
+    scriptProperties.setProperty(LAST_RUN_KEY, String(currentRunTime));
 
     return {
       status: "success",
@@ -10976,7 +10994,8 @@ function processBlinkitAppointmentPasses() {
         ? `${processedCount} Blinkit appointment pass(es) processed successfully.`
         : "No new Blinkit appointment passes found.",
       processedCount: processedCount,
-      scannedTill: new Date(currentRunTime * 1000)
+      scannedTill: new Date(currentRunTime * 1000),
+      debug: debug
     };
 
   } catch (e) {
