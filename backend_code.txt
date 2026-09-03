@@ -965,9 +965,15 @@ function logFileUpload(data)
         if (typeof UpdatePackingListData !== "function") {
           throw new Error("Function 'UpdatePackingListData' is not defined in the backend.");
         }
-        UpdatePackingListData(data.fileData, data.fileName);
-        status = 'Success';
-        processingResult = "Packing list data processed successfully.";
+        const packingResult = UpdatePackingListData(data.fileData, data.fileName);
+        if (packingResult && packingResult.status === 'success') {
+          const hadSkips = (packingResult.skippedNotProcessable || []).length > 0 ||
+            (packingResult.skippedInvalidDimensions || []).length > 0;
+          status = hadSkips ? 'Partial' : 'Success';
+          processingResult = packingResult.message;
+        } else {
+          throw new Error(packingResult ? packingResult.message : "Packing list function returned an invalid response.");
+        }
         break;
 
       case 'flipkart-minutes-po':
@@ -1147,14 +1153,18 @@ rows.forEach(row => {
 });
 
 const rowsToAppend = [];
+const fileRefCodes = new Set();
+const appendedRefCodes = new Set();
 
 // Second pass: process only valid rows
 rows.forEach(row => {
 
   const refCode = (row[colMap["Reference Code"]] || "").replace(/`/g, '').trim();
+  if (!refCode) return;
+  fileRefCodes.add(refCode);
 
   // Skip if not processable OR marked invalid
-  if (!refCode || !processableRefCodes.has(refCode) || invalidOrders.has(refCode)) return;
+  if (!processableRefCodes.has(refCode) || invalidOrders.has(refCode)) return;
 
   const quantity = parseFloat(row[colMap["Item Quantity"]]) || 0;
   const priceExclTax = parseFloat(row[colMap["Item Price(Excluding Tax)"]]) || 0;
@@ -1175,7 +1185,17 @@ rows.forEach(row => {
     calculatedValue.toFixed(2)
   ]);
 
+  appendedRefCodes.add(refCode);
+
 });
+
+// Categorize every ref code in the file that DIDN'T get appended, so the caller can
+// surface exactly why -- previously these were dropped silently (only a count was
+// logged to the Apps Script execution log, which the uploader never sees).
+const skippedNotProcessable = [...fileRefCodes].filter(rc => !processableRefCodes.has(rc));
+const skippedInvalidDimensions = [...fileRefCodes].filter(
+  rc => processableRefCodes.has(rc) && invalidOrders.has(rc)
+);
 
 if (invalidOrders.size > 0) {
   Logger.log(`Skipped ${invalidOrders.size} orders due to missing box dimensions.`);
@@ -1190,18 +1210,38 @@ if (invalidOrders.size > 0) {
       targetSheet = ss.insertSheet(SHEET_MASTER_DATA);
       targetSheet.appendRow(targetHeaders);
     }
-    
+
     targetSheet.getRange(targetSheet.getLastRow() + 1, 1, rowsToAppend.length, targetHeaders.length)
       .setValues(rowsToAppend);
-    
+
     console.log(`Successfully processed and appended ${rowsToAppend.length} valid rows.`);
   } else {
     console.log("No matching rows found in the uploaded file for the processable POs.");
   }
 
   updatePoDatabaseWithBoxDataStatus();
-  
-  return rowsToAppend.length;
+
+  // Build a human-readable summary so the uploader can immediately see which orders (if
+  // any) were skipped and why, instead of a blanket "Success" regardless of outcome.
+  const messageParts = [`Appended box data for ${appendedRefCodes.size} order(s).`];
+  if (skippedNotProcessable.length > 0) {
+    messageParts.push(
+      `Skipped (not yet processable -- order must be Confirmed with an invoice date set and no existing Box Data): ${skippedNotProcessable.join(', ')}.`
+    );
+  }
+  if (skippedInvalidDimensions.length > 0) {
+    messageParts.push(
+      `Skipped (missing weight/width/height/length on at least one row): ${skippedInvalidDimensions.join(', ')}.`
+    );
+  }
+
+  return {
+    status: 'success',
+    message: messageParts.join(' '),
+    appendedCount: appendedRefCodes.size,
+    skippedNotProcessable,
+    skippedInvalidDimensions
+  };
 }
 
 /**

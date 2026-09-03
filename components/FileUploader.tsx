@@ -144,7 +144,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentUser, addLog, addNot
                     
                     if (res.status === 'success') {
                         addLog('File Upload', `Successfully uploaded ${file.name} for ${selectedFunction}`);
-                        addNotification(`File "${file.name}" processed successfully by backend.`, 'success');
+                        addNotification(res.message || `File "${file.name}" processed successfully by backend.`, 'success');
                         setPendingFile(null);
                         setIsModalOpen(false);
                         loadMetadata();
