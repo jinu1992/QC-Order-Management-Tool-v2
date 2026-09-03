@@ -597,7 +597,10 @@ export const updateZeptoASN = async (eeReferenceCode: string, asnNumber: string)
 };
 
 export const processBlinkitAppointmentPasses = async () => {
-    return await postToScript({ action: 'processBlinkitAppointmentPasses' });
+    // force: true - a manual click means "check now", so always do a full
+    // rescan rather than relying on the shared last-run watermark, which
+    // can be advanced by a run under a different mailbox that found nothing.
+    return await postToScript({ action: 'processBlinkitAppointmentPasses', force: true });
 };
 
 export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{ status: string, message?: string, data?: any }> => {

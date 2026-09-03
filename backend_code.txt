@@ -195,7 +195,8 @@ function doPost(e) {
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
-    else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses();
+    else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses(data.force);
+    else if (action === 'backfillBlinkitAppointments') result = extractAppointmentPassDetails();
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
@@ -10869,17 +10870,35 @@ appointment.gs
 
 
 
-function processBlinkitAppointmentPasses() {
+/**
+ * No-arg convenience wrapper so this can be selected and run directly from
+ * the Apps Script editor's function dropdown (Run always calls the selected
+ * function with zero arguments, so `force` can't be passed there directly).
+ * Ignores the stored watermark and rescans the last 30 days under whichever
+ * account runs it - use this to recover mail that a run under a *different*
+ * account's mailbox may have caused to be skipped (the last-run watermark
+ * is shared script-wide, not per-mailbox).
+ */
+function forceRescanBlinkitAppointments() {
+  return processBlinkitAppointmentPasses(true);
+}
+
+function processBlinkitAppointmentPasses(force) {
 
   try {
 
     const scriptProperties = PropertiesService.getScriptProperties();
     const LAST_RUN_KEY = 'BLINKIT_APPOINTMENT_LAST_RUN';
 
-    let startTime = parseInt(scriptProperties.getProperty(LAST_RUN_KEY) || '0', 10);
+    // NOTE: this watermark is a script-level property, shared across every
+    // account/identity that ever runs this function (manual button, a
+    // different user's editor run, another user's time-driven trigger).
+    // It only advances when a run actually finds+logs something (see
+    // below) specifically so an empty run under one mailbox can't push the
+    // cutoff past mail that hasn't been scanned yet under another mailbox.
+    let startTime = force ? 0 : parseInt(scriptProperties.getProperty(LAST_RUN_KEY) || '0', 10);
 
-    // First-run fallback → look back 30 days (covers backlog from before this
-    // function was able to run successfully at all; see DRIVE_FOLDER note below)
+    // First-run (or forced) fallback → look back 30 days
     if (startTime === 0) {
       const fallbackDate = new Date();
       fallbackDate.setDate(fallbackDate.getDate() - 30);
@@ -10933,32 +10952,7 @@ function processBlinkitAppointmentPasses() {
       const threads = GmailApp.search(query);
       const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, matched: 0 };
       debug.push(rowDebug);
-
-      if (!threads.length) {
-        // Diagnostic only: if the sender-scoped search found nothing, check
-        // whether matching-subject emails exist at all in this mailbox under
-        // a different sender (e.g. manually forwarded), so we're not blind
-        // to a from: filter that no longer matches how these emails arrive.
-        try {
-          const fallbackQuery = `subject:("Appointment Pass") -from:me after:${startTime}`;
-          const fallbackThreads = GmailApp.search(fallbackQuery, 0, 5);
-          const fallbackSenders = [];
-          fallbackThreads.forEach(t => {
-            const msgs = t.getMessages();
-            if (msgs.length) fallbackSenders.push(msgs[msgs.length - 1].getFrom());
-          });
-          rowDebug.fallbackQuery = fallbackQuery;
-          rowDebug.fallbackThreadsFound = fallbackThreads.length;
-          rowDebug.fallbackSenders = fallbackSenders;
-
-          const senderOnlyThreads = GmailApp.search(fromClause + ` -from:me after:${startTime}`, 0, 5);
-          rowDebug.senderOnlyThreadsFound = senderOnlyThreads.length;
-          rowDebug.senderOnlySubjects = senderOnlyThreads.map(t => t.getFirstMessageSubject());
-        } catch (fallbackErr) {
-          rowDebug.fallbackError = fallbackErr.message;
-        }
-        return;
-      }
+      if (!threads.length) return;
 
       const threadMessages = GmailApp.getMessagesForThreads(threads);
 
@@ -11009,9 +11003,20 @@ function processBlinkitAppointmentPasses() {
         .setValues(newLogs);
 
       SpreadsheetApp.flush();
-      extractAppointmentPassDetails();
+
+      // Only advance the watermark once something was actually found+logged.
+      // An empty run (e.g. under a mailbox that doesn't receive this mail,
+      // or a stray manual/diagnostic call) must NOT push the cutoff forward,
+      // or a different mailbox's later, legitimate run would skip mail that
+      // arrived before this run but hasn't been scanned under it yet.
+      scriptProperties.setProperty(LAST_RUN_KEY, String(currentRunTime));
     }
-    scriptProperties.setProperty(LAST_RUN_KEY, String(currentRunTime));
+
+    // Always retry linking any previously-logged-but-unmatched appointment
+    // pass rows (e.g. logged before the matching PO existed in PO_Database
+    // yet, or from a run that errored out after logging but before linking)
+    // - not just rows from this specific run.
+    extractAppointmentPassDetails();
 
     return {
       status: "success",
@@ -11108,10 +11113,10 @@ function extractAppointmentPassDetails() {
   const repoSheet = ss.getSheetByName(SHEET_PO_REPO);
   const dbSheet = ss.getSheetByName(SHEET_PO_DB);
 
-  if (!repoSheet || !dbSheet) return;
+  if (!repoSheet || !dbSheet) return { status: "error", message: "PO Repo or PO Database sheet not found." };
 
   const lastRow = repoSheet.getLastRow();
-  if (lastRow < 2) return;
+  if (lastRow < 2) return { status: "success", message: "Nothing to backfill.", extracted: 0, skipped: 0 };
 
   const repoData = repoSheet.getRange(1, 1, lastRow, repoSheet.getLastColumn()).getValues();
   const headers = repoData[0];
@@ -11134,7 +11139,7 @@ function extractAppointmentPassDetails() {
     appointmentTimeIndex === -1
   ) {
     Logger.log("Required columns not found.");
-    return;
+    return { status: "error", message: "Required columns not found in PO_Repo." };
   }
 
   const dbHeaders = dbSheet.getRange(1, 1, 1, dbSheet.getLastColumn()).getValues()[0];
@@ -11142,19 +11147,26 @@ function extractAppointmentPassDetails() {
 
   if (dbAppointmentColumnIndex === -1) {
     Logger.log("Appointment columns not found in PO DB sheet.");
-    return;
+    return { status: "error", message: "Appointment columns not found in PO_Database." };
   }
 
   const rowsToUpdate = {};
+  let extractedCount = 0;
+  let skippedCount = 0;
 
   // 🔥 ONLY APPOINTMENT PASS LOGIC
+  // Retry both never-linked rows (empty status) AND previously-skipped ones
+  // (PO wasn't in PO_Database yet at the time) - the PO may have since
+  // synced in, so a stuck "Skipped" row should get another chance instead
+  // of being permanently stuck.
   dataRows.forEach((row, index) => {
 
     const category = String(row[categoryIndex] || "").trim().toLowerCase();
     const currentStatus = String(row[statusIndex] || "").trim();
     const rowIndexInSheet = index + 2;
+    const isRetryable = currentStatus === "" || currentStatus === "Skipped (PO Not Found in DB)";
 
-    if (category === "appointment pass" && currentStatus === "") {
+    if (category === "appointment pass" && isRetryable) {
 
       const poNumber = String(row[poNumIndex] || "").trim();
       if (!poNumber) return;
@@ -11182,10 +11194,12 @@ function extractAppointmentPassDetails() {
         });
 
         rowsToUpdate[rowIndexInSheet] = "Extracted";
+        extractedCount++;
 
       } else {
 
         rowsToUpdate[rowIndexInSheet] = "Skipped (PO Not Found in DB)";
+        skippedCount++;
 
       }
 
@@ -11202,7 +11216,16 @@ function extractAppointmentPassDetails() {
 
   SpreadsheetApp.flush();
 
-  Logger.log("Appointment Pass processing completed.");
+  Logger.log(`Appointment Pass processing completed. Extracted: ${extractedCount}, Skipped: ${skippedCount}`);
+
+  return {
+    status: "success",
+    message: extractedCount > 0
+      ? `Linked ${extractedCount} appointment pass(es) to PO_Database.`
+      : "No appointment passes needed linking.",
+    extracted: extractedCount,
+    skipped: skippedCount
+  };
 }
 
 
@@ -11261,12 +11284,15 @@ function _parseBlinkitAppointmentPass(message, folder) {
     const imageName = `QR_APPT_${details.appointmentId || 'UNKNOWN'}.jpeg`;
     let imageBlob = null;
 
-    // 1. Try QR code as an email attachment (image files only)
-    const attachments = message.getAttachments();
-    const qrAttachment = attachments.find(att =>
-      /\.(jpe?g|png)$/i.test(att.getName()) &&
-      att.getContentType().indexOf('image/') === 0
-    );
+    // 1. Try QR code as an email attachment (image files only). Must
+    // explicitly ask for inline images too - by default getAttachments()
+    // excludes CID-referenced inline images (e.g. an <img> the email client
+    // renders inline instead of showing as a downloadable attachment),
+    // which is how newer Blinkit appointment emails send the QR.
+    const attachments = message.getAttachments({ includeAttachments: true, includeInlineImages: true });
+    // Match by content type only (not filename) - inline/CID images from
+    // some senders don't carry a normal .jpg/.png filename.
+    const qrAttachment = attachments.find(att => att.getContentType().indexOf('image/') === 0);
 
     if (qrAttachment) {
       imageBlob = qrAttachment.copyBlob();
