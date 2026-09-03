@@ -212,19 +212,30 @@ const AppointmentPass: React.FC<AppointmentPassProps> = ({
 
                                 <div style={{ textAlign: 'center', flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
                                     <div style={{ fontSize: '18px', fontWeight: '900', color: 'black', marginBottom: '4px' }}>Appointment Pass</div>
-                                    <div style={{ display: 'inline-block', width: '180px', height: '180px', background: 'white' }}>
+                                    {/* PartnersBiz's pass image bundles a facility-name strip and an
+                                        appointment ID/date strip around the QR - both already printed as
+                                        text above, so crop them out here and show just the code, larger.
+                                        The full asset is ~100:156 (w:h), with the square QR band starting
+                                        22 units down (of 100 width-equivalent units) from the top. Setting
+                                        width:100% (height:auto) renders the full image at the box's width,
+                                        and CSS percentage margins are relative to the containing block's
+                                        WIDTH even for margin-top - so marginTop:-22% shifts it up by
+                                        exactly that offset, cropping to the QR band via CSS alone (no
+                                        reprocessing). Re-measure against the real asset if PartnersBiz
+                                        changes the template. */}
+                                    <div style={{ width: '230px', height: '230px', overflow: 'hidden', position: 'relative', background: 'white' }}>
                                         {processedQrUrl ? (
-                                            <img 
-                                                src={processedQrUrl} 
+                                            <img
+                                                src={processedQrUrl}
                                                 alt="Appointment QR Code"
-                                                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                                                style={{ width: '100%', height: 'auto', display: 'block', marginTop: '-22%' }}
                                             />
                                         ) : (
-                                            <div style={{ 
-                                                width: '100%', 
-                                                height: '100%', 
-                                                display: 'flex', 
-                                                alignItems: 'center', 
+                                            <div style={{
+                                                width: '100%',
+                                                height: '100%',
+                                                display: 'flex',
+                                                alignItems: 'center',
                                                 justifyContent: 'center',
                                                 background: 'white',
                                                 fontSize: '13px',
