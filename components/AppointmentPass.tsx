@@ -217,7 +217,6 @@ const AppointmentPass: React.FC<AppointmentPassProps> = ({
                                     top instead means any such slack shows up as blank space below the
                                     QR, never as a cut edge. */}
                                 <div style={{ textAlign: 'center', flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center' }}>
-                                    <div style={{ fontSize: '18px', fontWeight: '900', color: 'black', marginBottom: '4px' }}>Appointment Pass</div>
                                     {/* PartnersBiz's pass image bundles a facility-name strip above and
                                         an appointment ID/date strip below the QR - both already printed
                                         as text above on this label - and the QR itself only occupies the
