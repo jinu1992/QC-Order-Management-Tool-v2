@@ -210,7 +210,13 @@ const AppointmentPass: React.FC<AppointmentPassProps> = ({
 
                                 <div style={{ height: '2px', background: 'black', margin: '15px 0' }}></div>
 
-                                <div style={{ textAlign: 'center', flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                                {/* justifyContent: flex-start (not center) - the on-screen preview
+                                    masks overflow via its own scaled/clipped wrapper, but at real
+                                    print size any misjudged margin pushes centered content past the
+                                    physical 4x6 bottom edge and the QR gets clipped. Anchoring to the
+                                    top instead means any such slack shows up as blank space below the
+                                    QR, never as a cut edge. */}
+                                <div style={{ textAlign: 'center', flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center' }}>
                                     <div style={{ fontSize: '18px', fontWeight: '900', color: 'black', marginBottom: '4px' }}>Appointment Pass</div>
                                     {/* PartnersBiz's pass image bundles a facility-name strip above and
                                         an appointment ID/date strip below the QR - both already printed
