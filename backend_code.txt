@@ -12273,11 +12273,16 @@ function createAppointmentFile(orders,requestId,channel,to,cc){
     `${channel.NAME}_Appointment_${requestId}.csv`
   );
 
-  const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
-  const file = folder.createFile(blob);
-
-  shareFile(file,to);
-  shareFile(file,cc);
+  // Drive archive/share is a side-effect only; the caller uses just the blob
+  // as the email attachment. Don't let a Drive auth failure block the email.
+  try {
+    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    const file = folder.createFile(blob);
+    shareFile(file,to);
+    shareFile(file,cc);
+  } catch (driveErr) {
+    Logger.log(`createAppointmentFile: Drive archive/share failed for ${channel.NAME}_Appointment_${requestId}, continuing with email-only. ${driveErr.message}`);
+  }
 
   return blob;
 }
