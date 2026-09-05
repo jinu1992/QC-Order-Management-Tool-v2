@@ -1548,7 +1548,16 @@ function processPurchaseOrders() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const configSheet = ss.getSheetByName(SHEET_CHANNEL_CONFIG);
   const logSheet = getOrCreateLogSheet(ss, SHEET_PO_REPO);
-  const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+
+  // Don't let a Drive permission/authorization problem block the entire
+  // Gmail PO-ingestion run; attachment saves below already fail gracefully
+  // per-attachment ("SAVE FAILED") when folder is null.
+  let folder = null;
+  try {
+    folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  } catch (driveErr) {
+    Logger.log(`processPurchaseOrders: Drive folder unavailable, attachments will not be saved. ${driveErr.message}`);
+  }
 
   // -------------------------------
   // Gmail Label Setup
@@ -6265,7 +6274,16 @@ function processPurchaseOrders_oneday() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const configSheet = ss.getSheetByName(SHEET_CHANNEL_CONFIG);
   const logSheet = getOrCreateLogSheet(ss, SHEET_PO_REPO);
-  const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+
+  // Don't let a Drive permission/authorization problem block the entire
+  // Gmail PO-ingestion run; attachment saves below already fail gracefully
+  // per-attachment when folder is null.
+  let folder = null;
+  try {
+    folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  } catch (driveErr) {
+    Logger.log(`processPurchaseOrders_oneday: Drive folder unavailable, attachments will not be saved. ${driveErr.message}`);
+  }
 
   // --- NEW: Setup the Gmail Label ---
   const LABEL_NAME = 'ProcessedPO';
