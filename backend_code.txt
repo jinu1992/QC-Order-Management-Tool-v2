@@ -10989,9 +10989,35 @@ function processBlinkitAppointmentPasses(force) {
       return { status: "error", message: "Channel Config sheet not found." };
     }
 
+    // Per-message dedup: the last column of PO_Repository (previously always
+    // blank - a dead "emailHtml" field that was read but never actually
+    // attached to the returned object) now stores the Gmail message ID of
+    // whatever was logged in that row. A message already logged here is
+    // never re-parsed/re-logged again, no matter how wide a window future
+    // runs search (including a forced 30-day rescan).
+    //
+    // This is deliberately a per-MESSAGE check, not a Gmail label on the
+    // thread: Blinkit sends a courier-reassignment's fresh appointment as a
+    // reply in the *same thread* as the original, and Apps Script's label
+    // API (addLabel) only operates at thread granularity - labeling the
+    // thread "processed" (the pattern used by processPurchaseOrders() for
+    // other channels) would make `-label:X` hide that reassignment reply
+    // forever too. Tracking individual message IDs avoids that.
+    const MSG_ID_COL = 13;
+    const repoLastRow = logSheet.getLastRow();
+    const processedMessageIds = new Set();
+    if (repoLastRow > 1) {
+      logSheet.getRange(2, MSG_ID_COL, repoLastRow - 1, 1).getValues()
+        .forEach(r => { if (r[0]) processedMessageIds.add(String(r[0])); });
+    }
+    if (!logSheet.getRange(1, MSG_ID_COL).getValue()) {
+      logSheet.getRange(1, MSG_ID_COL).setValue('Message ID');
+    }
+
     const configData = configSheet.getDataRange().getValues();
     const newLogs = [];
     let processedCount = 0;
+    let alreadyProcessedCount = 0;
     const debug = [];
 
     configData.forEach(row => {
@@ -11013,7 +11039,7 @@ function processBlinkitAppointmentPasses(force) {
       if (subjectKeyword) query += ` subject:("${subjectKeyword}")`;
 
       const threads = GmailApp.search(query);
-      const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, matched: 0 };
+      const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, skippedAlreadyProcessed: 0, matched: 0 };
       debug.push(rowDebug);
       if (!threads.length) return;
 
@@ -11039,6 +11065,9 @@ function processBlinkitAppointmentPasses(force) {
           const isAppointmentEmail = subjectUpper.includes('APPOINTMENT PASS') || subjectUpper.includes('COURIER APPOINTMENT SUMMARY');
           if (!isAppointmentEmail) { rowDebug.skippedSubject++; return; }
 
+          const messageId = message.getId();
+          if (processedMessageIds.has(messageId)) { alreadyProcessedCount++; rowDebug.skippedAlreadyProcessed++; return; }
+
           rowDebug.matched++;
 
           const appointmentDetails = _parseBlinkitAppointmentPass(message, folder);
@@ -11056,8 +11085,9 @@ function processBlinkitAppointmentPasses(force) {
             appointmentDetails.appointmentId,
             appointmentDetails.appointmentDate,
             appointmentDetails.reportingTime,
-            appointmentDetails.emailHtml
+            messageId
           ]);
+          processedMessageIds.add(messageId);
 
           processedCount++;
         });
@@ -11093,6 +11123,7 @@ function processBlinkitAppointmentPasses(force) {
         ? `${processedCount} Blinkit appointment pass(es) processed successfully.`
         : "No new Blinkit appointment passes found.",
       processedCount: processedCount,
+      alreadyProcessedCount: alreadyProcessedCount,
       scannedTill: new Date(currentRunTime * 1000),
       debug: debug
     };
