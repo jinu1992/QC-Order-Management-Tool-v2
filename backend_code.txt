@@ -199,6 +199,10 @@ function doPost(e) {
     else if (action === 'backfillBlinkitAppointments') result = extractAppointmentPassDetails();
     else if (action === 'debugBlinkitRepoRows') result = debugBlinkitRepoRows(data.limit);
     else if (action === 'debugFindRecentBlinkitEmail') result = debugFindRecentBlinkitEmail();
+    else if (action === 'whoAmI') result = whoAmI();
+    else if (action === 'debugGmailSearch') result = debugGmailSearch(data.query);
+    else if (action === 'debugRepoHeaders') result = debugRepoHeaders();
+    else if (action === 'repairBlinkitStatusColumnCollision') result = repairBlinkitStatusColumnCollision(data.dryRun);
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
@@ -10988,6 +10992,147 @@ function debugFindRecentBlinkitEmail() {
 }
 
 /**
+ * Diagnostic: identifies which Google account this deployment (executeAs:
+ * USER_DEPLOYING, per appsscript.json) is actually running Gmail/Drive
+ * calls as - i.e. whoever most recently ran `clasp deploy`. Use this to
+ * confirm the deployed web app's Gmail search is running against the
+ * expected mailbox before assuming a search-query or auth bug.
+ */
+/**
+ * Diagnostic: runs an arbitrary raw Gmail search query (exactly as typed into
+ * the Gmail search box - e.g. "in:anywhere subject:(\"Appointment Pass\")" to
+ * include Spam/Trash) and returns matching thread/message summaries. Lets us
+ * test search-scope hypotheses (spam, label, date range, sender variations)
+ * without redeploying for each attempt.
+ */
+function debugGmailSearch(query) {
+  if (!query) return { status: "error", message: "query is required" };
+  const threads = GmailApp.search(query);
+  const results = threads.slice(0, 25).map(t => {
+    const msgs = t.getMessages();
+    return msgs.map(m => ({
+      threadId: t.getId(),
+      from: m.getFrom(),
+      to: m.getTo(),
+      subject: m.getSubject(),
+      date: m.getDate(),
+      labels: t.getLabels().map(l => l.getName()),
+      isInTrash: t.isInTrash(),
+      isInInbox: t.isInInbox()
+    }));
+  }).flat();
+  return { status: "success", query, threadsFound: threads.length, messages: results };
+}
+
+/**
+ * One-off data repair for the MSG_ID_COL=13/"Status" column collision (see
+ * the MSG_ID_COL comment in processBlinkitAppointmentPasses): every
+ * "Appointment Pass" row logged while that bug was live has its Status cell
+ * (col 13) holding a Gmail message ID instead of a real status, which makes
+ * extractAppointmentPassDetails() treat the row as already handled and skip
+ * ever linking its Appointment ID/Date/Time into PO_Database.
+ *
+ * Moves the message-ID-looking value from col 13 into col 14 (the real
+ * Message ID column) and blanks col 13 back to "" so the row becomes
+ * retryable again, then (unless dryRun) runs extractAppointmentPassDetails()
+ * to backfill PO_Database. Pass dryRun:true to see the affected rows/POs
+ * without writing anything.
+ */
+function repairBlinkitStatusColumnCollision(dryRun) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const repoSheet = ss.getSheetByName(SHEET_PO_REPO);
+  if (!repoSheet) return { status: "error", message: "PO_Repository sheet not found." };
+
+  const lastRow = repoSheet.getLastRow();
+  if (lastRow < 2) return { status: "success", message: "Nothing to repair.", affected: [] };
+
+  const lastCol = repoSheet.getLastColumn();
+  const data = repoSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  const headers = data[0];
+
+  const categoryIndex = headers.indexOf("Category");
+  const statusIndex = headers.indexOf("Status");
+  const poNumIndex = headers.indexOf("PO Number");
+  const MSG_ID_COL_INDEX = 13; // 0-indexed col 14, matches MSG_ID_COL=14 in processBlinkitAppointmentPasses
+
+  if (categoryIndex === -1 || statusIndex === -1) {
+    return { status: "error", message: "Required columns (Category, Status) not found in PO_Repository." };
+  }
+
+  // Message/thread IDs from GmailApp.getId() are lowercase hex, ~16 chars.
+  // Real status values are "Extracted", "Skipped (PO Not Found in DB)",
+  // "Superseded (newer appointment received)", or blank - none match this.
+  const looksLikeMessageId = v => /^[0-9a-f]{10,20}$/i.test(String(v).trim());
+
+  const affected = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const category = String(row[categoryIndex] || "").trim().toLowerCase();
+    if (category !== "appointment pass") continue;
+
+    const statusVal = row[statusIndex];
+    if (!looksLikeMessageId(statusVal)) continue;
+
+    affected.push({
+      row: i + 1,
+      poNumber: poNumIndex !== -1 ? row[poNumIndex] : undefined,
+      messageId: String(statusVal).trim()
+    });
+  }
+
+  if (dryRun) {
+    return { status: "success", dryRun: true, affectedCount: affected.length, affected };
+  }
+
+  // Targeted per-cell writes (not a full-range rewrite) so this can't clobber
+  // any concurrent write to an unrelated row/column between read and write.
+  affected.forEach(a => {
+    repoSheet.getRange(a.row, statusIndex + 1).setValue("");
+    repoSheet.getRange(a.row, MSG_ID_COL_INDEX + 1).setValue(a.messageId);
+  });
+
+  if (affected.length > 0) {
+    if (!repoSheet.getRange(1, MSG_ID_COL_INDEX + 1).getValue()) {
+      repoSheet.getRange(1, MSG_ID_COL_INDEX + 1).setValue('Message ID');
+    }
+    SpreadsheetApp.flush();
+  }
+
+  const backfillResult = affected.length > 0 ? extractAppointmentPassDetails() : null;
+
+  return {
+    status: "success",
+    dryRun: false,
+    repairedCount: affected.length,
+    affected,
+    backfillResult
+  };
+}
+
+/**
+ * Diagnostic: dumps the raw PO_Repository header row (1-indexed column
+ * numbers) so column-position assumptions in code (e.g. MSG_ID_COL) can be
+ * verified against the sheet's actual current layout instead of guessed.
+ */
+function debugRepoHeaders() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const repoSheet = ss.getSheetByName(SHEET_PO_REPO);
+  if (!repoSheet) return { status: "error", message: "PO_Repository sheet not found." };
+  const headers = repoSheet.getRange(1, 1, 1, repoSheet.getLastColumn()).getValues()[0];
+  return { status: "success", columnCount: headers.length, headers: headers.map((h, i) => ({ col: i + 1, header: h })) };
+}
+
+function whoAmI() {
+  // Session.getEffectiveUser() needs a scope (userinfo.email) this project isn't
+  // authorized for. DriveApp's own root folder is always owned by whichever account
+  // is running the script, so its owner's email is a reliable stand-in that needs no
+  // new scope grant.
+  const email = DriveApp.getRootFolder().getOwner().getEmail();
+  Logger.log(`Effective user (executeAs identity, via Drive root owner): ${email}`);
+  return { status: "success", effectiveUser: email };
+}
+
+/**
  * Diagnostic: returns the most recent PO_Repository rows logged as
  * "Appointment Pass" category, exactly as extracted (PO Number, Status,
  * Appointment ID/Date/Time, Sender, Subject) - to compare against what a
@@ -11058,7 +11203,7 @@ function processBlinkitAppointmentPasses(force) {
       return { status: "error", message: "Channel Config sheet not found." };
     }
 
-    // Per-message dedup: the last column of PO_Repository (previously always
+    // Per-message dedup: a dead column of PO_Repository (previously always
     // blank - a dead "emailHtml" field that was read but never actually
     // attached to the returned object) now stores the Gmail message ID of
     // whatever was logged in that row. A message already logged here is
@@ -11072,7 +11217,18 @@ function processBlinkitAppointmentPasses(force) {
     // thread "processed" (the pattern used by processPurchaseOrders() for
     // other channels) would make `-label:X` hide that reassignment reply
     // forever too. Tracking individual message IDs avoids that.
-    const MSG_ID_COL = 13;
+    //
+    // IMPORTANT: this must NOT be column 13 - PO_Repository already has a
+    // "Status" column there (used by extractAppointmentPassDetails() to
+    // track Extracted/Skipped/Superseded). An earlier version of this fix
+    // wrongly assumed col 13 was the sheet's dead tail column and used it
+    // for the message ID, which silently overwrote every row's "Status"
+    // with a message ID string - extractAppointmentPassDetails() then saw
+    // a non-blank/non-"Skipped" status and treated the row as already
+    // handled, so it never linked the appointment into PO_Database. Column
+    // 14 (verified via debugRepoHeaders - cols 14-18 are genuinely blank)
+    // is the real dead column.
+    const MSG_ID_COL = 14;
     const repoLastRow = logSheet.getLastRow();
     const processedMessageIds = new Set();
     if (repoLastRow > 1) {
@@ -11154,7 +11310,8 @@ function processBlinkitAppointmentPasses(force) {
             appointmentDetails.appointmentId,
             appointmentDetails.appointmentDate,
             appointmentDetails.reportingTime,
-            messageId
+            "",       // col 13 "Status" - left blank; extractAppointmentPassDetails() below owns this column
+            messageId // col 14 "Message ID" (MSG_ID_COL) - was wrongly landing in col 13/"Status" before, see MSG_ID_COL comment
           ]);
           processedMessageIds.add(messageId);
 
