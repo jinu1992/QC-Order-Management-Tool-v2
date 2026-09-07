@@ -1980,6 +1980,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
     const { salesOrders, salesTabCounts, allSalesOrders } = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
+        // A single PO can be split into multiple EasyEcom invoices when inventory is short
+        // (one per inventory-assignment pass), each with its own distinct box IDs. Track box
+        // counts per distinct EE Order Ref ID (invoice) within each SO group so the total can
+        // be summed across invoices instead of only reflecting whichever invoice loaded first.
+        const boxCountsByOrderRef: Record<string, Record<string, number>> = {};
         const counts: Record<string, number> = {
             'All POs': 0,
             'Processing': 0,
@@ -2005,6 +2010,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 const effectiveLineAmount = effectiveQty * (item.unitCost || 0);
 
                 const eeBoxCount = Number(item.eeBoxCount || 0);
+                // Fall back to refCode when an item has no distinct order-ref (e.g. single-invoice
+                // POs), so behavior is unchanged when there's only one invoice for the PO.
+                const orderRefKey = item.eeOrderRefId ? String(item.eeOrderRefId).trim() : refCode;
+                if (!boxCountsByOrderRef[refCode]) boxCountsByOrderRef[refCode] = {};
+                if (eeBoxCount > (boxCountsByOrderRef[refCode][orderRefKey] || 0)) {
+                    boxCountsByOrderRef[refCode][orderRefKey] = eeBoxCount;
+                }
                 const carrier = item.carrier || po.carrier;
                 const awb = item.awb || po.awb;
                 const trackingStatus = item.trackingStatus || po.trackingStatus;
@@ -2221,6 +2233,13 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         });
 
         const results = Object.values(groups);
+
+        // Total box count for a PO = sum of unique box counts across all its invoices
+        // (not just whichever invoice's item row happened to populate the group first).
+        results.forEach(so => {
+            const boxCountsForRef = boxCountsByOrderRef[so.id] || {};
+            so.boxCount = Object.values(boxCountsForRef).reduce((sum, c) => sum + c, 0);
+        });
 
         results.forEach(so => {
             const hasInvoice = !!so.invoiceNumber && so.invoiceNumber !== 'GENERATING...';
