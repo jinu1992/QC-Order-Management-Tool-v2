@@ -971,7 +971,8 @@ function logFileUpload(data)
         const packingResult = UpdatePackingListData(data.fileData, data.fileName);
         if (packingResult && packingResult.status === 'success') {
           const hadSkips = (packingResult.skippedNotProcessable || []).length > 0 ||
-            (packingResult.skippedInvalidDimensions || []).length > 0;
+            (packingResult.skippedInvalidDimensions || []).length > 0 ||
+            (packingResult.skippedIncompleteQty || []).length > 0;
           status = hadSkips ? 'Partial' : 'Success';
           processingResult = packingResult.message;
         } else {
@@ -1072,36 +1073,55 @@ function UpdatePackingListData(base64Data, fileName) {
   // =========================================================================
   const dbSheet = ss.getSheetByName(SHEET_PO_DB);
   const processableRefCodes = new Set();
+  // Total ordered Qty per PO-level reference code, deduped by Item Code. A PO that gets
+  // split across multiple EasyEcom invoices (short inventory assignment) can have its
+  // SKU rows duplicated once per split in PO_Database, all sharing the same
+  // EE_reference_code -- dedup keeps this an accurate PO-level ordered total instead of
+  // multiplying by the number of splits. Used below to gate logging on quantity match.
+  const refCodeOrderedQty = new Map(); // refCode -> total ordered Qty
+  const seenSkuPerRef = new Set();     // `${refCode}|${itemCode}` already counted
 
   if (dbSheet.getLastRow() > 1) {
     const dbData = dbSheet.getDataRange().getValues();
     const dbHeaders = dbData.shift();
-    
+
     // Find the indexes of the columns we need to check
     const statusIndex = dbHeaders.indexOf("EE_order_status");
     const invoiceDateIndex = dbHeaders.indexOf("EE_invoice_date");
     const boxDataIndex = dbHeaders.indexOf("Box Data");
     const refIdIndex = dbHeaders.indexOf("EE_reference_code");
+    const qtyIndex = dbHeaders.indexOf("Qty");
+    const itemCodeIndex = dbHeaders.indexOf("Item Code");
 
-    if ([statusIndex, invoiceDateIndex, boxDataIndex, refIdIndex].includes(-1)) {
-      throw new Error("One or more required columns (EE_order_status, EE_invoice_date, Box Data, EE_reference_code) not found in PO_Database.");
+    if ([statusIndex, invoiceDateIndex, boxDataIndex, refIdIndex, qtyIndex, itemCodeIndex].includes(-1)) {
+      throw new Error("One or more required columns (EE_order_status, EE_invoice_date, Box Data, EE_reference_code, Qty, Item Code) not found in PO_Database.");
     }
 
     dbData.forEach(row => {
       const status = String(row[statusIndex]).trim();
       const invoiceDate = String(row[invoiceDateIndex]).trim();
       const boxData = String(row[boxDataIndex]).trim();
-      
+      const refCode = String(row[refIdIndex]).trim();
+
+      if (refCode) {
+        const itemCode = String(row[itemCodeIndex]).trim();
+        const dedupKey = `${refCode}|${itemCode}`;
+        if (!seenSkuPerRef.has(dedupKey)) {
+          seenSkuPerRef.add(dedupKey);
+          const qty = Number(row[qtyIndex]) || 0;
+          refCodeOrderedQty.set(refCode, (refCodeOrderedQty.get(refCode) || 0) + qty);
+        }
+      }
+
       // Check if the row meets all three conditions
       if (status === 'Confirmed' && invoiceDate !== '' && boxData === '') {
-        const refCode = String(row[refIdIndex]).trim();
         if (refCode) {
           processableRefCodes.add(refCode);
         }
       }
     });
   }
-  
+
   if (processableRefCodes.size === 0) {
     throw new Error("No processable orders found in the PO_Database. (Status must be 'Confirmed' with blank Invoice Date and Box Data).");
   }
@@ -1138,11 +1158,14 @@ function UpdatePackingListData(base64Data, fileName) {
 
 // Track orders that have invalid box data
 const invalidOrders = new Set();
+// Total packed Item Quantity per reference code, summed across this upload's rows.
+const packedQtyByRef = {};
 
-// First pass: detect invalid orders
+// First pass: detect invalid orders + sum packed quantity per reference code
 rows.forEach(row => {
 
   const refCode = (row[colMap["Reference Code"]] || "").replace(/`/g, '').trim();
+  if (!refCode) return;
 
   const weight = row[colMap["Box Weight"]];
   const width = row[colMap["Box Width"]];
@@ -1153,21 +1176,39 @@ rows.forEach(row => {
   if (!weight || !width || !height || !length) {
     invalidOrders.add(refCode);
   }
+
+  const rowQty = parseFloat(row[colMap["Item Quantity"]]) || 0;
+  packedQtyByRef[refCode] = (packedQtyByRef[refCode] || 0) + rowQty;
+});
+
+// A PO can be split across multiple EasyEcom invoices when inventory assignment is
+// short, each invoice getting its own boxes. Only log packing data once this upload's
+// total quantity for a PO matches the PO's own ordered quantity -- otherwise we'd lock
+// in a partial box count from whichever invoice happened to be packed first: once Box
+// Data is non-blank the PO drops out of processableRefCodes and is never revisited.
+const incompleteQtyOrders = new Set();
+processableRefCodes.forEach(refCode => {
+  if (!packedQtyByRef.hasOwnProperty(refCode)) return; // not in this file; reported separately below
+  const orderedQty = refCodeOrderedQty.get(refCode);
+  if (orderedQty === undefined || packedQtyByRef[refCode] !== orderedQty) {
+    incompleteQtyOrders.add(refCode);
+  }
 });
 
 const rowsToAppend = [];
 const fileRefCodes = new Set();
 const appendedRefCodes = new Set();
 
-// Second pass: process only valid rows
+// Second pass: process only valid, quantity-complete rows
 rows.forEach(row => {
 
   const refCode = (row[colMap["Reference Code"]] || "").replace(/`/g, '').trim();
   if (!refCode) return;
   fileRefCodes.add(refCode);
 
-  // Skip if not processable OR marked invalid
-  if (!processableRefCodes.has(refCode) || invalidOrders.has(refCode)) return;
+  // Skip if not processable, marked invalid, or the packed quantity doesn't yet match
+  // the PO's full ordered quantity (still awaiting another invoice split's boxes).
+  if (!processableRefCodes.has(refCode) || invalidOrders.has(refCode) || incompleteQtyOrders.has(refCode)) return;
 
   const quantity = parseFloat(row[colMap["Item Quantity"]]) || 0;
   const priceExclTax = parseFloat(row[colMap["Item Price(Excluding Tax)"]]) || 0;
@@ -1199,9 +1240,13 @@ const skippedNotProcessable = [...fileRefCodes].filter(rc => !processableRefCode
 const skippedInvalidDimensions = [...fileRefCodes].filter(
   rc => processableRefCodes.has(rc) && invalidOrders.has(rc)
 );
+const skippedIncompleteQty = [...incompleteQtyOrders];
 
 if (invalidOrders.size > 0) {
   Logger.log(`Skipped ${invalidOrders.size} orders due to missing box dimensions.`);
+}
+if (incompleteQtyOrders.size > 0) {
+  Logger.log(`Skipped ${incompleteQtyOrders.size} orders because packed quantity doesn't yet match the PO's ordered quantity.`);
 }
 
   // =========================================================================
@@ -1237,13 +1282,19 @@ if (invalidOrders.size > 0) {
       `Skipped (missing weight/width/height/length on at least one row): ${skippedInvalidDimensions.join(', ')}.`
     );
   }
+  if (skippedIncompleteQty.length > 0) {
+    messageParts.push(
+      `Skipped (packed quantity in this file doesn't yet match the PO's full ordered quantity -- likely still awaiting another invoice split's boxes): ${skippedIncompleteQty.join(', ')}.`
+    );
+  }
 
   return {
     status: 'success',
     message: messageParts.join(' '),
     appendedCount: appendedRefCodes.size,
     skippedNotProcessable,
-    skippedInvalidDimensions
+    skippedInvalidDimensions,
+    skippedIncompleteQty
   };
 }
 
