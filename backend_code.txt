@@ -9072,10 +9072,18 @@ function callNimbus(url, payload, token) {
     };
   }
 }
-// Cancels a previously-booked Nimbus shipment by AWB (per NimbusPost's shipments/cancel
-// API). Used on courier reassignment so the old courier's tracking doesn't stay live
-// alongside the newly-booked one. Never throws — returns Nimbus's response as-is (or a
-// synthetic failure object) so the caller can decide whether to surface a warning.
+// Cancels a previously-booked Nimbus shipment by AWB. Used on courier reassignment so the
+// old courier's tracking doesn't stay live alongside the newly-booked one. Never throws —
+// returns Nimbus's response as-is (or a synthetic failure object) so the caller can decide
+// whether to surface a warning.
+//
+// MUST use the shipmentcargo/cancel endpoint (same B2B/Cargo namespace as the
+// shipmentcargo/create booking call), NOT shipments/cancel — that's a different, classic
+// API surface this account has no key for and returns a misleading "Invalid API key" 403.
+// Payload must be a plain string awb, NOT an array — {awb: [awb]} 404s with "awb is
+// required". Both confirmed 2026-09-08 by trying every endpoint/method/payload combination
+// live against a real orphaned shipment; only POST shipmentcargo/cancel {awb: "<string>"}
+// returned {"status":true,"message":"Shipment Cancelled"}.
 function cancelNimbusShipment_(awb) {
   const cleanAwb = String(awb || "").trim();
 
@@ -9084,8 +9092,8 @@ function cancelNimbusShipment_(awb) {
   }
 
   const responseData = nimbusFetchWithRetry(
-    "https://ship.nimbuspost.com/api/shipments/cancel",
-    { awb: [cleanAwb] }
+    "https://ship.nimbuspost.com/api/shipmentcargo/cancel",
+    { awb: cleanAwb }
   );
 
   Logger.log(`Nimbus cancel (AWB ${cleanAwb}) response: ${JSON.stringify(responseData)}`);
@@ -9098,13 +9106,17 @@ function nimbusFetchWithRetry(url, payload) {
 
   let res = callNimbus(url, payload, token);
 
-  const msg = String(res.message || "").toLowerCase();
+  // Nimbus doesn't consistently put its error text under the same key across endpoints —
+  // some responses use "message", others (e.g. shipments/cancel's "Invalid API key") use
+  // "error" instead. Check both so this retry actually fires when it should.
+  const msg = String(res.message || res.error || "").toLowerCase();
 
   const authFailed =
     !res.status &&
     (
       msg.includes("invalid token") ||
       msg.includes("invalid authorization") ||
+      msg.includes("invalid api key") ||
       msg.includes("unauthorized") ||
       msg.includes("authorization")
     );
