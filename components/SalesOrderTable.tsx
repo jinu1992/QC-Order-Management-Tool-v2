@@ -4466,7 +4466,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             )}
                                                                         </div>
                                                                     )}
-                                                                    {(so.awb && B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase()) && so.status !== 'Ready to Dispatch') && (
+                                                                    {(so.awb && B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase()) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned') && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleReassignCourierClick(so); }}
                                                                             disabled={isReassigningCourier === so.id}
