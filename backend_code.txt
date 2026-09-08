@@ -8898,12 +8898,24 @@ function createNimbusPostShipment(eeReferenceCode,courier_id,isReassignment) {
 
     // --------------------------------------------------
     // E-WAY BILL (B2B/Nimbus channels only) — generate or correct the EWB's
-    // transporter so it matches the courier actually being booked here.
+    // transporter so it matches the courier actually being booked here. A failure here
+    // (e.g. the courier isn't registered as a transporter in Zoho yet) is surfaced as a
+    // warning rather than blocking the booking — same reasoning as the Nimbus-cancel
+    // warning below: getting the shipment physically moving is more urgent than a
+    // perfectly-correct EWB, which can be fixed manually once the transporter exists.
+    // ewbOverride stays undefined on failure, so _buildNimbusPayload falls back to
+    // whatever EWB is already on the sheet (unchanged/stale, but still present).
     // --------------------------------------------------
     let ewbOverride;
+    let ewbWarning = "";
     const orderChannel = String((orderData.items[0] || [])[headers.indexOf('Channel Name')] || "").trim().toLowerCase();
     if (B2B_NIMBUS_CHANNELS_.includes(orderChannel)) {
-      ewbOverride = ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, courier_id, !!isReassignment);
+      try {
+        ewbOverride = ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, courier_id, !!isReassignment);
+      } catch (ewbErr) {
+        Logger.log(`Warning: EWB step failed for ${eeReferenceCode}: ${ewbErr.message}`);
+        ewbWarning = ` (Warning: E-Way Bill could not be ${isReassignment ? 'updated to the new transporter' : 'generated'} — ${ewbErr.message}. Please correct it manually in Zoho.)`;
+      }
     }
 
     // --------------------------------------------------
@@ -9001,7 +9013,7 @@ function createNimbusPostShipment(eeReferenceCode,courier_id,isReassignment) {
 
     return {
       status: "success",
-      message: "Shipment created",
+      message: "Shipment created" + ewbWarning,
       awb: awbNumber
     };
 
