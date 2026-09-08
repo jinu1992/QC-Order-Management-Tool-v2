@@ -7555,12 +7555,17 @@ function getTransporterIdByName_(name) {
 // Bill, without cancelling/regenerating it — used when a shipment is reassigned to a
 // different courier after its invoice's EWB was already created for the previous one.
 function updateEwayBillTransporter_(invoiceObj, newTransporterName) {
-  const ewbDetails = invoiceObj.eway_bill_details;
+  // Zoho's invoice response carries the e-way bill's internal Zoho record ID as a
+  // TOP-LEVEL "ewaybill_id" field — NOT nested inside eway_bill_details (that sub-object
+  // only ever has eway_bill_number/eway_bill_date/vehicle_number). Confirmed by dumping a
+  // live invoice's raw JSON (2026-09-08) after this mismatch caused every reassignment's
+  // transporter-correction attempt to fail with "no ewaybill_id on invoice ...".
+  const ewaybillId = invoiceObj.ewaybill_id;
 
-  if (!ewbDetails || !ewbDetails.ewaybill_id) {
+  if (!ewaybillId) {
     throw new Error(
       `Cannot update transporter — no ewaybill_id on invoice ${invoiceObj.invoice_id}. ` +
-      `Raw eway_bill_details: ${JSON.stringify(ewbDetails)}`
+      `Raw eway_bill_details: ${JSON.stringify(invoiceObj.eway_bill_details)}`
     );
   }
 
@@ -7568,14 +7573,14 @@ function updateEwayBillTransporter_(invoiceObj, newTransporterName) {
   const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
   const newTransporterId = getTransporterIdByName_(newTransporterName);
 
-  const url = `https://www.zohoapis.in/books/v3/ewaybills/${ewbDetails.ewaybill_id}?organization_id=${orgId}`;
+  const url = `https://www.zohoapis.in/books/v3/ewaybills/${ewaybillId}?organization_id=${orgId}`;
 
   const payload = {
     transaction_type: "regular",
     sub_supply_type: "supply",
     entity_id: invoiceObj.invoice_id,
     entity_type: "invoice",
-    ship_to_state_code: ewbDetails.ship_to_state_code || invoiceObj.place_of_supply,
+    ship_to_state_code: (invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.ship_to_state_code) || invoiceObj.place_of_supply,
     transporter_id: newTransporterId,
     transportation_mode: "road",
     action: "save"
