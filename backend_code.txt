@@ -7557,43 +7557,33 @@ function getTransporterIdByName_(name) {
   return transporter.transporter_id; // ✅ correct ID
 }
 
-// Updates the transporter on an already-generated (Part-A only, no vehicle/Part-B) E-Way
-// Bill, without cancelling/regenerating it — used when a shipment is reassigned to a
-// different courier after its invoice's EWB was already created for the previous one.
-function updateEwayBillTransporter_(invoiceObj, newTransporterName) {
-  // Zoho's invoice response carries the e-way bill's internal Zoho record ID as a
-  // TOP-LEVEL "ewaybill_id" field — NOT nested inside eway_bill_details (that sub-object
-  // only ever has eway_bill_number/eway_bill_date/vehicle_number). Confirmed by dumping a
-  // live invoice's raw JSON (2026-09-08) after this mismatch caused every reassignment's
-  // transporter-correction attempt to fail with "no ewaybill_id on invoice ...".
-  const ewaybillId = invoiceObj.ewaybill_id;
-
+// Cancels an already-generated e-way bill (Part-A generated) so a fresh one can be
+// generated with the correct transporter. Zoho/GST only allow cancelling an e-way bill
+// within 24 hours of its generation — the caller (ensureCorrectEwayBillForCourier_) must
+// check that before calling this; Zoho will reject the cancel attempt itself past that
+// window regardless. `reason` must be one of Zoho's allowed values (duplicate,
+// order_cancelled, data_entry_mistake, others).
+//
+// Replaces the old updateEwayBillTransporter_, which tried to PUT a transporter change
+// onto an already-generated e-way bill via the generic "save" action — confirmed live
+// 2026-09-08 that Zoho rejects that outright ("cannot generate any e-Way Bill, one already
+// exists") no matter what fields are sent; cancel-and-regenerate is the only compliant path.
+function cancelEwayBill_(ewaybillId, reason, remarks) {
   if (!ewaybillId) {
-    throw new Error(
-      `Cannot update transporter — no ewaybill_id on invoice ${invoiceObj.invoice_id}. ` +
-      `Raw eway_bill_details: ${JSON.stringify(invoiceObj.eway_bill_details)}`
-    );
+    throw new Error("cancelEwayBill_: no ewaybillId provided");
   }
 
   const token = getZohoAccessToken();
   const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
-  const newTransporterId = getTransporterIdByName_(newTransporterName);
-
-  const url = `https://www.zohoapis.in/books/v3/ewaybills/${ewaybillId}?organization_id=${orgId}`;
+  const url = `https://www.zohoapis.in/books/v3/ewaybills/${ewaybillId}/cancel?organization_id=${orgId}`;
 
   const payload = {
-    transaction_type: "regular",
-    sub_supply_type: "supply",
-    entity_id: invoiceObj.invoice_id,
-    entity_type: "invoice",
-    ship_to_state_code: (invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.ship_to_state_code) || invoiceObj.place_of_supply,
-    transporter_id: newTransporterId,
-    transportation_mode: "road",
-    action: "save"
+    reason: reason || "data_entry_mistake",
+    remarks: remarks || ""
   };
 
   const options = {
-    method: "put",
+    method: "post",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`
     },
@@ -7608,17 +7598,17 @@ function updateEwayBillTransporter_(invoiceObj, newTransporterName) {
   const code = response.getResponseCode();
   const text = response.getContentText();
 
-  Logger.log("Eway Bill Update (Transporter) Response: " + text);
+  Logger.log("Eway Bill Cancel Response: " + text);
 
   if (code >= 200 && code < 300) {
     return {
       status: "success",
-      message: `Eway Bill transporter updated to ${newTransporterName}`,
+      message: "Eway Bill cancelled",
       data: JSON.parse(text)
     };
   }
 
-  throw new Error("Eway Bill transporter update failed: " + text);
+  throw new Error("Eway Bill cancel failed: " + text);
 }
 
 function test_ewb()
@@ -8781,15 +8771,16 @@ function ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, 
     rowsToMark.forEach(r => dbSheet.getRange(r, ewbColIdx + 1).setValue(ewbNumber));
   };
 
-  const existingEwbNumber = invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.eway_bill_number;
+  const locationKey = getVal('Location_Key');
+  const branchConfig = getZohoBranchConfigByLocationKey_(locationKey);
+  const gstOrSupplyValue = String(getVal('GST') || "").trim();
+  const supplyStateCode = gstOrSupplyValue ? getZohoStateCodeFromGstOrState_(gstOrSupplyValue) : "";
 
-  if (!existingEwbNumber) {
-    // No EWB yet — generate it now, with the transporter that matches the courier being booked.
-    const locationKey = getVal('Location_Key');
-    const branchConfig = getZohoBranchConfigByLocationKey_(locationKey);
-    const gstOrSupplyValue = String(getVal('GST') || "").trim();
-    const supplyStateCode = gstOrSupplyValue ? getZohoStateCodeFromGstOrState_(gstOrSupplyValue) : "";
-
+  // Generates a fresh EWB Part-A for the courier being booked now, writes the resulting
+  // government eway_bill_number to the sheet, and returns it ("" if the invoice doesn't
+  // require one at all). Used both when there's no existing EWB, and after cancelling a
+  // stale one below.
+  const generateFreshEwb_ = () => {
     const result = processEwayBill_(invoiceObj, branchConfig.branchStateCode, supplyStateCode, transporterName);
 
     if (result.status === "skipped") {
@@ -8802,20 +8793,48 @@ function ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, 
     const newEwbNumber = (invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.eway_bill_number) || "";
     writeEwbToSheet(newEwbNumber);
     return newEwbNumber;
+  };
+
+  const existingEwbNumber = invoiceObj.eway_bill_details && invoiceObj.eway_bill_details.eway_bill_number;
+
+  if (!existingEwbNumber) {
+    // No EWB yet — generate it now, with the transporter that matches the courier being booked.
+    return generateFreshEwb_();
   }
 
-  // An EWB already exists on this invoice. Always (re-)correct its transporter to match
-  // the courier actually being booked here, rather than trusting the isReassignment flag
-  // to decide whether that's needed — isReassignment only reflects whether *this specific
-  // action* was clicked as "Reassign Courier", but the sheet's AWB can already be blank
-  // (e.g. left over from an earlier failed booking attempt) while the EWB itself still has
-  // a stale transporter from a courier several actions back. A plain "Ship" in that state
-  // used to skip this correction entirely, silently leaving the wrong transporter on the
-  // EWB even though the courier genuinely changed. Re-sending the same transporter_id when
-  // nothing actually changed is a harmless no-op PUT to Zoho.
-  updateEwayBillTransporter_(invoiceObj, transporterName);
-  writeEwbToSheet(existingEwbNumber);
-  return existingEwbNumber;
+  // An EWB already exists on this invoice, and it needs to (re-)match the courier actually
+  // being booked here — isReassignment can't be trusted alone to decide that (see git
+  // history: the sheet's AWB can already be blank from an earlier failed attempt, making a
+  // plain "Ship" look like a fresh booking even though the courier genuinely changed).
+  //
+  // Zoho's PUT /ewaybills/<id> "save" action CANNOT change the transporter on an
+  // already-generated (Part-A generated) e-way bill — confirmed live 2026-09-08, it
+  // rejects even a fully-populated payload matching Zoho's own documented sample with
+  // "Sorry, you cannot generate any e-Way Bill. An active e-Way Bill already exists",
+  // regardless of what fields are sent. The only compliant way to correct the transporter
+  // is to cancel the e-way bill and regenerate it — and GST rules only allow cancelling an
+  // e-way bill within 24 hours of its generation. Past that window there is no API-level
+  // fix; this throws and the caller (createNimbusPostShipment) surfaces it as a
+  // non-blocking warning instead of silently leaving stale/wrong compliance data.
+  const ewbDateStr = invoiceObj.eway_bill_details.eway_bill_date; // e.g. "2026-09-08 12:35"
+  const ewbAgeMs = ewbDateStr ? (Date.now() - new Date(ewbDateStr.replace(' ', 'T') + ':00+05:30').getTime()) : Infinity;
+  const withinCancelWindow = ewbAgeMs < 24 * 60 * 60 * 1000;
+
+  if (!withinCancelWindow) {
+    throw new Error(
+      `E-Way Bill ${existingEwbNumber} (generated ${ewbDateStr || 'unknown time'}) is older than 24h and can no ` +
+      `longer be cancelled via the API to correct its transporter. Please correct it manually in Zoho.`
+    );
+  }
+
+  // Zoho caps "remarks" at 50 characters — confirmed live 2026-09-08 ({"code":15,
+  // "message":"Please ensure that the \"remarks\" has less than 50 characters."}).
+  cancelEwayBill_(
+    invoiceObj.ewaybill_id,
+    "data_entry_mistake",
+    `Reassigned to ${transporterName}`.slice(0, 49)
+  );
+  return generateFreshEwb_();
 }
 
 function createNimbusPostShipment(eeReferenceCode,courier_id,isReassignment) {
