@@ -8418,6 +8418,7 @@ function reassignCourierShipment(eeReferenceCode, newCourierId) {
 
   const refIdx = headers.indexOf('EE_reference_code');
   const awbIdx = headers.indexOf('AWB');
+  const statusIdx = headers.indexOf('Status');
 
   const rows = data
     .map((r, i) => (String(r[refIdx]).trim() === eeReferenceCode ? i + 2 : null))
@@ -8436,6 +8437,8 @@ function reassignCourierShipment(eeReferenceCode, newCourierId) {
   }
 
   const oldAwb = String(existingRow[awbIdx]).trim();
+  const currentStatus = statusIdx !== -1 ? String(existingRow[statusIdx]).trim().toLowerCase() : '';
+  const wasRTD = currentStatus === 'rtd' || currentStatus === 'ready to dispatch';
 
   // Cancel the previous courier's shipment on Nimbus first, so it doesn't stay active
   // alongside the newly-booked one. A failure here is surfaced as a warning rather than
@@ -8453,6 +8456,13 @@ function reassignCourierShipment(eeReferenceCode, newCourierId) {
       rows.forEach(r => dbSheet.getRange(r, idx + 1).setValue(''));
     }
   });
+
+  // If the order had already been marked Ready to Dispatch, reassigning the courier means
+  // it has to go through RTD prep again (new label, new pickup date, appointment, etc.) —
+  // drop the RTD override so the UI falls back to "Label Generated" until it's re-marked RTD.
+  if (wasRTD && statusIdx !== -1) {
+    rows.forEach(r => dbSheet.getRange(r, statusIdx + 1).setValue(''));
+  }
 
   const bookingResult = createShipment(eeReferenceCode, newCourierId, /* isReassignment */ true);
 
@@ -9052,7 +9062,7 @@ function cancelNimbusShipment_(awb) {
 
   const responseData = nimbusFetchWithRetry(
     "https://ship.nimbuspost.com/api/shipments/cancel",
-    { awb: cleanAwb }
+    { awb: [cleanAwb] }
   );
 
   Logger.log(`Nimbus cancel (AWB ${cleanAwb}) response: ${JSON.stringify(responseData)}`);
