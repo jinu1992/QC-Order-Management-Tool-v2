@@ -8804,15 +8804,15 @@ function ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rowsToMark, 
     return newEwbNumber;
   }
 
-  if (!isReassignment) {
-    // EWB already correctly reflects the courier being booked (e.g. retry after a prior
-    // Nimbus failure) — just make sure the sheet has it, don't touch Zoho again.
-    writeEwbToSheet(existingEwbNumber);
-    return existingEwbNumber;
-  }
-
-  // Reassignment: the EWB exists but was generated for the PREVIOUS courier — update its
-  // transporter in place rather than cancelling/regenerating (preserves the EWB number).
+  // An EWB already exists on this invoice. Always (re-)correct its transporter to match
+  // the courier actually being booked here, rather than trusting the isReassignment flag
+  // to decide whether that's needed — isReassignment only reflects whether *this specific
+  // action* was clicked as "Reassign Courier", but the sheet's AWB can already be blank
+  // (e.g. left over from an earlier failed booking attempt) while the EWB itself still has
+  // a stale transporter from a courier several actions back. A plain "Ship" in that state
+  // used to skip this correction entirely, silently leaving the wrong transporter on the
+  // EWB even though the courier genuinely changed. Re-sending the same transporter_id when
+  // nothing actually changed is a harmless no-op PUT to Zoho.
   updateEwayBillTransporter_(invoiceObj, transporterName);
   writeEwbToSheet(existingEwbNumber);
   return existingEwbNumber;
