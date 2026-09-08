@@ -73,7 +73,13 @@ const VENDOR_NAME = "Brainlytic Solutions Pvt Ltd";
 const EMAIL_LOGS = "Email Logs";
 
 // Courier / E-Way Bill transporter mapping (must match CourierSelectionModal in the frontend)
-const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Xpressbees" };
+// Names must substring-match (case-insensitive) the transporter_name Zoho actually has
+// registered under Settings > E-Way Bill > Transporters — not necessarily the courier's
+// brand name. Confirmed 2026-09-08: Xpressbees (courier_id 71) is registered in Zoho as
+// "BUSYBEES LOGISTICS SOLUTIONS PRIVATE LIMITED" (its legal name), not "Xpressbees" —
+// the old mapping made getTransporterIdByName_ throw "Transporter not found: Xpressbees"
+// on every reassignment/booking to this courier.
+const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Busybees" };
 // B2B channels that go through the Nimbus courier-selection flow (createNimbusPostShipment)
 const B2B_NIMBUS_CHANNELS_ = ["instamart", "zepto", "bb", "rbl", "flipkartminutes", "blinkit"];
 
