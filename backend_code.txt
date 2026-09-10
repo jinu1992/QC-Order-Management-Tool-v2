@@ -12834,6 +12834,7 @@ function getZeptoPendingFromPODB() {
 
   const IDX = {
     CHANNEL: col("Channel Name"),
+    STATUS: col("Status"),
     PO: col("PO Number"),
     STORE: col("Store Code"),
     QTY: col("Qty"),
@@ -12846,11 +12847,26 @@ function getZeptoPendingFromPODB() {
 
   validateHeaders(IDX);
 
+  // Anything already dead shouldn't keep nagging Zepto for an appointment
+  // forever just because it got an Appointment Request ID before it was
+  // cancelled/RTO'd/expired and never got a confirmed Appointment Date back.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const map = {};
 
   for (let i = 1; i < data.length; i++) {
 
     if (data[i][IDX.CHANNEL] !== "Zepto") continue;
+
+    const status = String(data[i][IDX.STATUS] || "").trim().toLowerCase();
+    if (status === "cancelled" || status === "rto") continue;
+
+    const expiryRaw = data[i][IDX.EXPIRY];
+    if (expiryRaw) {
+      const expiryD = new Date(expiryRaw);
+      if (!isNaN(expiryD.getTime()) && expiryD < today) continue;
+    }
 
     const apptId = String(data[i][IDX.APPT_ID] || "").trim();
     const apptDate = data[i][IDX.APPT_DATE];
