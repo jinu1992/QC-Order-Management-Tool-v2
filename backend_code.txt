@@ -1751,13 +1751,20 @@ function processPurchaseOrders() {
             // -----------------------
             const appointmentDate = extractAppointmentFromBody(emailBody);
 
-            let expiryDate = "";
+            // -----------------------
+            // Expiry - prefer an explicit date Blinkit states in the email
+            // body (e.g. "Expiry Date: 2026-09-02" in appointment/reschedule
+            // emails) over the attachment-derived computed value below: it
+            // can reflect a manual extension the ops team negotiated that no
+            // PO Date + N day formula has any way to know about.
+            // -----------------------
+            let expiryDate = extractExpiryFromBody(emailBody);
 
             // -----------------------
-            // Expiry (ATTACHMENT)
+            // Expiry (ATTACHMENT) - fallback when the body doesn't state one
             // -----------------------
 
-            if (attachments.length > 0) {
+            if (!expiryDate && attachments.length > 0) {
 
               const skuMapping = loadSkuMapping(ss);
               const channelThresholds = loadChannelThresholds(ss);
@@ -1794,7 +1801,9 @@ function processPurchaseOrders() {
                     skuMapping,
                     {},
                     channelThresholds,
-                    new Date()
+                    // Anchor to the PO's original date, not "now" (the revision
+                    // email's processing time) - see getExistingPoDbDate_.
+                    getExistingPoDbDate_(poNumber) || new Date()
                   );
 
                   if (extracted && extracted.length > 0) {
@@ -2310,7 +2319,10 @@ function extractDatabaseDetails() {
             skuMapping,
             pdfMap,
             channelThresholds,
-            row[0]
+            // Anchor to the PO's original date, not row[0] (this repo row's
+            // own timestamp, i.e. when the revision email arrived) - see
+            // getExistingPoDbDate_.
+            getExistingPoDbDate_(poNumber) || row[0]
           );
 
           if (extracted && extracted.length > 0) {
@@ -13178,6 +13190,24 @@ function extractAppointmentFromBody(text) {
   return match ? match[1] : "";
 }
 
+// Extracts an explicit "Expiry Date: YYYY-MM-DD" Blinkit prints in some of
+// its emails (e.g. appointment/reschedule confirmations). This is Blinkit's
+// own stated deadline for the PO - it can reflect a manual extension the ops
+// team negotiated directly with Blinkit, which no PO Date + N day formula
+// can ever know about, so it must be preferred over any computed value
+// whenever it's present. Returns "" (not found/unparseable) otherwise.
+function extractExpiryFromBody(text) {
+  if (!text) return "";
+
+  const match = text.match(/Expiry\s*Date\s*:\s*(\d{4}-\d{2}-\d{2})/i);
+  if (!match) return "";
+
+  const d = new Date(match[1]);
+  if (isNaN(d.getTime())) return "";
+
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "dd-MMM-yyyy");
+}
+
 // ✅ Read Excel attachment via blob
 function getExcelDataViaBlobFromAttachment(blob) {
   const tempFile = DriveApp.createFile(blob);
@@ -13188,6 +13218,35 @@ function getExcelDataViaBlobFromAttachment(blob) {
   DriveApp.getFileById(fileId).setTrashed(true);
 
   return data;
+}
+
+// Returns the ORIGINAL "PO Date" already stored in PO_Database for poNumber
+// (or null if the PO isn't in the DB yet). Used by the Revision-handling code
+// paths so that recomputing a channel's date-derived fields (e.g. Blinkit's
+// fixed PO Date + N day expiry/EDD offset - see parseBlinkitExcel) anchors to
+// the PO's true original date instead of accidentally using the date the
+// revision email arrived/was processed, which silently pushes the computed
+// expiry further out than Blinkit's actual deadline.
+function getExistingPoDbDate_(poNumber) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+  if (!dbSheet) return null;
+
+  const data = dbSheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = name => headers.indexOf(name);
+
+  const idxPo = col("PO Number");
+  const idxDate = col("PO Date");
+  if (idxPo === -1 || idxDate === -1) return null;
+
+  const target = String(poNumber).trim();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idxPo]).trim() === target) {
+      return data[i][idxDate] || null;
+    }
+  }
+  return null;
 }
 
 function updateExistingPO(poNumber, newData) {
