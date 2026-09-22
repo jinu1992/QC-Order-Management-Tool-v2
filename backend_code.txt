@@ -13195,15 +13195,25 @@ po_updation.gs
 // ✅ Detect Revised / Amendment Emails
 function isRevisedEmail(subject, body) {
   const text = (subject + " " + body).toLowerCase();
-  return text.includes("amendment") || text.includes("revised");
+  // "reschedul(ed)" covers appointment-reschedule notices (e.g. Blinkit's
+  // feeder-warehouse emails via partnersbiz.com), consistent with CAT_REV
+  // (PATTERNS.CAT_REV already treats RESCHEDULED as a revision category).
+  return text.includes("amendment") || text.includes("revised") || text.includes("reschedul");
 }
 
 // ✅ Extract Appointment Date ONLY from email body
 function extractAppointmentFromBody(text) {
   if (!text) return "";
 
-  const match = text.match(/appointment\s*date[:\-]?\s*([0-9\/\-]+)/i);
-  return match ? match[1] : "";
+  const labeledMatch = text.match(/appointment\s*date[:\-]?\s*([0-9\/\-]+)/i);
+  if (labeledMatch) return labeledMatch[1];
+
+  // Some appointment-reschedule notices (e.g. Blinkit's feeder-warehouse
+  // emails via partnersbiz.com) don't label an "Appointment Date" field -
+  // they state it inline instead, e.g. "has been rescheduled to
+  // 2026-09-25 for 12:00:00".
+  const inlineMatch = text.match(/(?:rescheduled|scheduled)\s*to\s*(\d{4}-\d{2}-\d{2})/i);
+  return inlineMatch ? inlineMatch[1] : "";
 }
 
 // Extracts an explicit "Expiry Date: YYYY-MM-DD" Blinkit prints in some of
