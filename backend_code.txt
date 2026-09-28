@@ -13823,7 +13823,7 @@ function sendTrackerSummaryEmail_(cfg) {
       const invoiceUrl = invoiceUrlIdx !== -1 ? extractUrlFromCell(row[invoiceUrlIdx], formulaRow[invoiceUrlIdx]) : "";
       
       shipments.push({
-        bookedDate: bookedDateIdx !== -1 ? formatDate(row[bookedDateIdx]) : "N/A",
+        bookedDate: bookedDateIdx !== -1 ? formatTrackerDate_(row[bookedDateIdx]) : "N/A",
         eeRef: poNo,
         channel: channelIdx !== -1 ? String(row[channelIdx] || "N/A") : "N/A",
         storeCode: storeCodeIdx !== -1 ? String(row[storeCodeIdx] || "N/A") : "N/A",
@@ -13831,7 +13831,7 @@ function sendTrackerSummaryEmail_(cfg) {
         trackingStatus: trackingStatus || "Pending",
         latestStatus: latestStatusIdx !== -1 ? String(row[latestStatusIdx] || "N/A") : "N/A",
         currentLocation: currentLocationIdx !== -1 ? String(row[currentLocationIdx] || "N/A") : "N/A",
-        edd: eddIdx !== -1 ? formatDate(row[eddIdx]) : "N/A",
+        edd: eddIdx !== -1 ? formatTrackerDate_(row[eddIdx]) : "N/A",
         apptDateTime: apptDateTimeStr || "N/A",
         apptId: apptIdIdx !== -1 ? String(row[apptIdIdx] || "N/A") : "N/A",
         poPdf: poPdf,
@@ -14166,7 +14166,7 @@ function getApptTag(date, isNew) {
   </span>`;
 }
 
-function formatDate(val) {
+function formatTrackerDate_(val) {
   if (!val) return "N/A";
   const d = new Date(val);
   if (isNaN(d.getTime())) return "N/A";
