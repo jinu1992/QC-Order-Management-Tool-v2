@@ -13776,7 +13776,7 @@ function sendTrackerSummaryEmail_(cfg) {
       const isDelivered = 
         trackingStatusLower === "delivered" || 
         trackingStatusLower === "successfully delivered" || 
-        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered"));
+        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered") && !latestStatusLower.includes("rto") && !latestStatusLower.includes("return"));
 
       const isRtoOrCancelled = 
         trackingStatusLower.includes("cancelled") || 
@@ -13846,8 +13846,8 @@ function sendTrackerSummaryEmail_(cfg) {
 
     // Sort by Appointment Date/EDD ascending: oldest first, N/A at the end
     shipments.sort((a, b) => {
-      const d1 = parseApptDateTime(a.apptDateTime) || new Date(9999, 0, 1);
-      const d2 = parseApptDateTime(b.apptDateTime) || new Date(9999, 0, 1);
+      const d1 = parseApptDateTime(a.apptDateTime) || parseApptDateTime(a.edd) || new Date(9999, 0, 1);
+      const d2 = parseApptDateTime(b.apptDateTime) || parseApptDateTime(b.edd) || new Date(9999, 0, 1);
       return d1 - d2;
     });
 
@@ -13887,16 +13887,25 @@ function buildHtmlEmailTemplate(shipments, opts) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
+    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
+
     if (s.isNew) {
       newCount++;
+      return;
     }
 
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
     if (!apptDateObj) return;
 
-    if (apptDateObj < now) {
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const appt = new Date(
+      apptDateObj.getFullYear(),
+      apptDateObj.getMonth(),
+      apptDateObj.getDate()
+    );
+
+    if (appt < todayDate) {
       missedCount++;
-    } else if (isSameDay(apptDateObj, now)) {
+    } else if (appt.getTime() === todayDate.getTime()) {
       todayCount++;
     } else {
       upcomingCount++;
@@ -13916,27 +13925,34 @@ function buildHtmlEmailTemplate(shipments, opts) {
       ? `<a href="${s.invoiceUrl}" style="color:#2563EB;text-decoration:none;"><b>${s.awb}_Invoice</b></a>`
       : "N/A";
 
-    const apptDateObj = parseApptDateTime(s.apptDateTime);
+    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
     const tag = getApptTag(apptDateObj, s.isNew);
 
     // ---------------- ROW COLOR / BORDER ----------------
     let rowColor = "";
     let leftBorder = "#E5E7EB";
 
-    if (apptDateObj) {
-      if (apptDateObj < now) {
+    if (s.isNew) {
+      rowColor = "#E0F2FE";   // NEW
+      leftBorder = "#0284C7";
+    } else if (apptDateObj) {
+      const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const appt = new Date(
+        apptDateObj.getFullYear(),
+        apptDateObj.getMonth(),
+        apptDateObj.getDate()
+      );
+
+      if (appt < todayDate) {
         rowColor = "#FEF2F2"; // MISSED
         leftBorder = "#DC2626";
-      } else if (isSameDay(apptDateObj, now)) {
+      } else if (appt.getTime() === todayDate.getTime()) {
         rowColor = "#ECFDF5"; // TODAY
         leftBorder = "#16A34A";
       } else {
         rowColor = "#EFF6FF"; // UPCOMING
         leftBorder = "#3B82F6";
       }
-    } else if (s.isNew) {
-      rowColor = "#E0F2FE";   // NEW
-      leftBorder = "#0284C7";
     }
 
     // ---------------- TRACKING STATUS BADGE ----------------
@@ -14016,7 +14032,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
   return `
     <div style="font-family:Arial, sans-serif;max-width:1400px;margin:0 auto;">
       <div style="background:#059669;padding:20px;color:white;border-radius:8px 8px 0 0;">
-        <h2 style="margin:0;">📦 ${opts.title}</h2>
+        <h2 style="margin:0;">&#128230; ${opts.title}</h2>
         <p style="margin:5px 0 0 0;opacity:0.95;">
           Upcoming Appointments | Date : ${today}
         </p>
@@ -14027,7 +14043,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
         <p>Please find below the summary of shipments aligned for delivery as per their upcoming appointment dates.</p>
         <p>Kindly review and confirm that these deliveries are scheduled accordingly to avoid any misses.</p>
         <p>
-          📄
+          &#128196;
           <a href="${opts.sheetUrl}"
              style="color:#2563EB;font-weight:bold;text-decoration:none;">
             View Full Logistics Summary Sheet
@@ -14108,6 +14124,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
   `;
 }
 
+
 function getApptTag(date, isNew) {
   const dot = (color) => `
     <span style="
@@ -14120,37 +14137,33 @@ function getApptTag(date, isNew) {
     "></span>
   `;
 
-  if (date) {
-    const now = new Date();
-    if (date < now) {
-      return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
-        ${dot('#DC2626')} MISSED
-      </span>`;
-    }
-    if (isSameDay(date, now)) {
-      return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
-        ${dot('#16A34A')} TODAY
-      </span>`;
-    }
-    return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
-      ${dot('#3B82F6')} UPCOMING
-    </span>`;
-  }
-
   if (isNew) {
     return `<span style="font-size:11px;font-weight:700;color:#1D4ED8;">
       ${dot('#0284C7')} NEW
     </span>`;
   }
 
-  return "";
-}
+  if (!date) return "";
 
-function isSameDay(d1, d2) {
-  if (!d1 || !d2) return false;
-  return d1.getFullYear() === d2.getFullYear() &&
-         d1.getMonth() === d2.getMonth() &&
-         d1.getDate() === d2.getDate();
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const appt = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (appt < today) {
+    return `<span style="font-size:11px;font-weight:700;color:#DC2626;">
+      ${dot('#DC2626')} MISSED
+    </span>`;
+  }
+
+  if (appt.getTime() === today.getTime()) {
+    return `<span style="font-size:11px;font-weight:700;color:#16A34A;">
+      ${dot('#16A34A')} TODAY
+    </span>`;
+  }
+
+  return `<span style="font-size:11px;font-weight:700;color:#2563EB;">
+    ${dot('#3B82F6')} UPCOMING
+  </span>`;
 }
 
 function formatDate(val) {
@@ -14235,6 +14248,7 @@ function extractUrlFromCell(value, formula) {
   }
   return String(value).trim() || 'N/A';
 }
+
 
 
 
