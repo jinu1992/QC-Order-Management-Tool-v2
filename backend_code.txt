@@ -13636,6 +13636,25 @@ const SHEET_SYSTEM_CONFIG = "System_Config";
 const NIMBUS_TRACKER_SPREADSHEET_ID = '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
 const NIMBUS_TRACKER_SHEET_GID = '1014733683';
 
+// PO_Database Status values that mean the shipment no longer needs following up
+const CLOSED_PO_STATUSES_ = ["delivered", "grn pending", "grn updated", "closed", "rto", "cancelled"];
+
+const NIMBUS_EMAIL_COLUMNS_ = [
+  { header: "Booked Date", nowrap: true, cell: s => s.bookedDate },
+  { header: "PO Number", cell: s => s.eeRef },
+  { header: "Channel", cell: s => s.channel },
+  { header: "Store Code", cell: s => s.storeCode },
+  { header: "AWB", cell: s => s.awbLink },
+  { header: "Tracking Status", cell: s => trackingStatusBadge_(s.trackingStatus) },
+  { header: "Latest Status", cell: s => s.latestStatus },
+  { header: "Current Location", cell: s => s.currentLocation },
+  { header: "EDD", nowrap: true, cell: s => s.edd },
+  { header: "Appt Date / Time", cell: s => apptCell_(s.apptDateTime || "N/A", s.tag) },
+  { header: "Appt ID", cell: s => s.apptId },
+  { header: "PO PDF", cell: s => docLink_(s.poPdf, `${s.awb}_PO`) },
+  { header: "Invoice URL", cell: s => docLink_(s.invoiceUrl, `${s.awb}_Invoice`) }
+];
+
 function processNimbusAndSendEmail() {
   const props = PropertiesService.getScriptProperties();
   sendTrackerSummaryEmail_({
@@ -13646,18 +13665,65 @@ function processNimbusAndSendEmail() {
     toEmail: props.getProperty('NIMBUS_NOTIFICATION_EMAIL'),
     ccEmail: props.getProperty('NIMBUS_CC_EMAILS'),
     subjectTitle: "📦 Delivery Alignment Confirmation Report",
+    isClosedRow: isNimbusRowClosed_,
+    readRow: readNimbusTrackerRow_,
     template: {
       title: "Delivery Alignment Confirmation Report",
       trackingUrlBase: "https://ship.nimbuspost.com/shipping/tracking/",
-      sheetUrl: `https://docs.google.com/spreadsheets/d/${NIMBUS_TRACKER_SPREADSHEET_ID}/edit?gid=${NIMBUS_TRACKER_SHEET_GID}#gid=${NIMBUS_TRACKER_SHEET_GID}`
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${NIMBUS_TRACKER_SPREADSHEET_ID}/edit?gid=${NIMBUS_TRACKER_SHEET_GID}#gid=${NIMBUS_TRACKER_SHEET_GID}`,
+      columns: NIMBUS_EMAIL_COLUMNS_
     }
   });
+}
+
+// Skip if delivered, cancelled, returned, or RTO per Nimbus's tracking columns
+function isNimbusRowClosed_(c) {
+  const trackingStatusLower = String(c.raw("Tracking Status") || "").trim().toLowerCase();
+  const latestStatusLower = c.has("Latest Status") ? String(c.raw("Latest Status") || "").trim().toLowerCase() : "";
+
+  const isDelivered =
+    trackingStatusLower === "delivered" ||
+    trackingStatusLower === "successfully delivered" ||
+    (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered") && !latestStatusLower.includes("rto") && !latestStatusLower.includes("return"));
+
+  const isRtoOrCancelled =
+    trackingStatusLower.includes("cancelled") ||
+    trackingStatusLower.includes("return") ||
+    trackingStatusLower.includes("rto") ||
+    latestStatusLower.includes("cancelled") ||
+    latestStatusLower.includes("return") ||
+    latestStatusLower.includes("rto");
+
+  return isDelivered || isRtoOrCancelled;
+}
+
+function readNimbusTrackerRow_(c) {
+  const apptDateTime = c.has("Appointment Date & Time") ? String(c.raw("Appointment Date & Time") || "").trim() || "N/A" : "N/A";
+  const edd = c.has("EDD") ? formatTrackerDate_(c.raw("EDD")) : "N/A";
+  return {
+    bookedDate: c.has("Booked Date") ? formatTrackerDate_(c.raw("Booked Date")) : "N/A",
+    channel: c.has("Channel") ? String(c.raw("Channel") || "N/A") : "N/A",
+    storeCode: c.has("Store Code") ? String(c.raw("Store Code") || "N/A") : "N/A",
+    trackingStatus: String(c.raw("Tracking Status") || "").trim() || "Pending",
+    latestStatus: c.has("Latest Status") ? String(c.raw("Latest Status") || "N/A") : "N/A",
+    currentLocation: c.has("Current Location") ? String(c.raw("Current Location") || "N/A") : "N/A",
+    edd: edd,
+    apptDateTime: apptDateTime,
+    apptDateObj: parseApptDateTime(apptDateTime) || parseApptDateTime(edd),
+    apptId: c.has("Appointment ID") ? String(c.raw("Appointment ID") || "N/A") : "N/A",
+    poPdf: c.has("PO PDF") ? c.url("PO PDF") : "",
+    invoiceUrl: c.has("Invoice Url") ? c.url("Invoice Url") : ""
+  };
 }
 
 /**
  * Shared body of the courier tracker summary emails (Nimbus, Delhivery self-ship).
  * Reads the courier's tracker tab, emails the active shipments, and marks
  * newly reported POs as SENT in PO_Database's Email Flag column.
+ *
+ * cfg.readRow(c) maps a tracker row to shipment fields (must include apptDateObj);
+ * cfg.isClosedRow(c) optionally skips rows by tracker columns; cfg.skipClosedPos
+ * skips rows whose POs all have a closed Status in PO_Database.
  */
 function sendTrackerSummaryEmail_(cfg) {
   try {
@@ -13682,14 +13748,15 @@ function sendTrackerSummaryEmail_(cfg) {
     const dataRange = trackerSheet.getDataRange();
     const values = dataRange.getValues();
     const formulas = dataRange.getFormulas();
-    
+    const displays = dataRange.getDisplayValues();
+
     if (values.length <= 1) {
       Logger.log(`${cfg.label} Tracker sheet is empty. Exiting.`);
       return;
     }
-    
+
     const headers = values[0];
-    
+
     // Find column indexes in the tracker sheet
     const getColIndex = (name) => {
       let idx = headers.indexOf(name);
@@ -13699,21 +13766,12 @@ function sendTrackerSummaryEmail_(cfg) {
       idx = headers.findIndex(h => String(h).toLowerCase().includes(name.toLowerCase()));
       return idx;
     };
-    
-    const bookedDateIdx = getColIndex("Booked Date");
-    const poNumIdx = getColIndex("PO Number");
-    const channelIdx = getColIndex("Channel");
-    const storeCodeIdx = getColIndex("Store Code");
-    const awbIdx = getColIndex("AWB");
-    const trackingStatusIdx = getColIndex("Tracking Status");
-    const latestStatusIdx = getColIndex("Latest Status");
-    const currentLocationIdx = getColIndex("Current Location");
-    const eddIdx = getColIndex("EDD");
-    const apptDateTimeIdx = getColIndex("Appointment Date & Time");
-    const apptIdIdx = getColIndex("Appointment ID");
-    const poPdfIdx = getColIndex("PO PDF");
-    const invoiceUrlIdx = getColIndex("Invoice Url");
-    
+    const colCache = {};
+    const col = (name) => (name in colCache ? colCache[name] : (colCache[name] = getColIndex(name)));
+
+    const poNumIdx = col("PO Number");
+    const awbIdx = col("AWB");
+
     if (poNumIdx === -1 || awbIdx === -1) {
       Logger.log("Required columns are missing from the Tracker sheet");
       return;
@@ -13724,29 +13782,35 @@ function sendTrackerSummaryEmail_(cfg) {
     const dbSheet = dbSS.getSheetByName(SHEET_PO_DATABASE);
     const poEmailFlagMap = {};
     const poRowsMap = {};
+    const poStatusMap = {};
     let dbPoIdx = -1;
     let emailFlagIdx = -1;
-    
+
     if (dbSheet) {
       const dbData = dbSheet.getDataRange().getValues();
       const dbHeaders = dbData.shift();
       dbPoIdx = dbHeaders.indexOf("PO Number");
       emailFlagIdx = dbHeaders.indexOf("Email Flag");
-      
+      const dbStatusIdx = dbHeaders.indexOf("Status");
+
       if (dbPoIdx !== -1 && emailFlagIdx !== -1) {
         dbData.forEach((row, i) => {
           const poVal = String(row[dbPoIdx] || "").trim();
           const flagVal = String(row[emailFlagIdx] || "").trim().toUpperCase();
           const rowNum = i + 2; // +2 due to shifting and 1-indexing
-          
+
           if (poVal) {
             if (!poRowsMap[poVal]) {
               poRowsMap[poVal] = [];
             }
             poRowsMap[poVal].push(rowNum);
-            
+
             if (flagVal === "SENT") {
               poEmailFlagMap[poVal] = true;
+            }
+
+            if (dbStatusIdx !== -1 && !poStatusMap[poVal]) {
+              poStatusMap[poVal] = String(row[dbStatusIdx] || "").trim().toLowerCase();
             }
           }
         });
@@ -13756,45 +13820,35 @@ function sendTrackerSummaryEmail_(cfg) {
     const shipments = [];
     const rowsToUpdate = [];
     const processedMap = {}; // AWB -> index in shipments
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
       const formulaRow = formulas[i];
-      
+      const displayRow = displays[i];
+
+      // Accessors by header name, so each tracker can have its own column layout
+      const c = {
+        has: (name) => col(name) !== -1,
+        raw: (name) => row[col(name)],
+        display: (name) => col(name) !== -1 ? String(displayRow[col(name)] || "").trim() : "",
+        url: (name) => extractUrlFromCell(row[col(name)], formulaRow[col(name)])
+      };
+
       const awbText = String(row[awbIdx] || "").trim();
       if (!awbText || awbText === "N/A" || awbText === "") continue;
 
-      const trackingStatus = String(row[trackingStatusIdx] || "").trim();
-      const trackingStatusLower = trackingStatus.toLowerCase();
-      
-      const latestStatus = latestStatusIdx !== -1 ? String(row[latestStatusIdx] || "").trim() : "";
-      const latestStatusLower = latestStatus.toLowerCase();
+      if (cfg.isClosedRow && cfg.isClosedRow(c)) continue;
 
-      // Skip if delivered, cancelled, returned, or RTO
-      const isDelivered = 
-        trackingStatusLower === "delivered" || 
-        trackingStatusLower === "successfully delivered" || 
-        (latestStatusLower.includes("delivered") && !latestStatusLower.includes("undelivered") && !latestStatusLower.includes("rto") && !latestStatusLower.includes("return"));
-
-      const isRtoOrCancelled = 
-        trackingStatusLower.includes("cancelled") || 
-        trackingStatusLower.includes("return") || 
-        trackingStatusLower.includes("rto") || 
-        latestStatusLower.includes("cancelled") || 
-        latestStatusLower.includes("return") || 
-        latestStatusLower.includes("rto");
-
-      if (isDelivered || isRtoOrCancelled) {
-        continue;
-      }
-      
       const poNo = String(row[poNumIdx] || "").trim();
+      const poList = poNo.split(",").map(p => p.trim());
+
+      if (cfg.skipClosedPos) {
+        const knownPos = poList.filter(p => p && poStatusMap[p]);
+        if (knownPos.length && knownPos.every(p => CLOSED_PO_STATUSES_.includes(poStatusMap[p]))) continue;
+      }
 
       // Check if this shipment has new/unreported POs
       let isNew = false;
-      const poList = poNo.split(",").map(p => p.trim());
       poList.forEach(p => {
         if (p && (!poEmailFlagMap[p])) {
           isNew = true;
@@ -13816,38 +13870,17 @@ function sendTrackerSummaryEmail_(cfg) {
         continue;
       }
 
-      const eddStr = eddIdx !== -1 ? String(row[eddIdx] || "").trim() : "N/A";
-      const apptDateTimeStr = apptDateTimeIdx !== -1 ? String(row[apptDateTimeIdx] || "").trim() : "N/A";
-      
-      const poPdf = poPdfIdx !== -1 ? extractUrlFromCell(row[poPdfIdx], formulaRow[poPdfIdx]) : "";
-      const invoiceUrl = invoiceUrlIdx !== -1 ? extractUrlFromCell(row[invoiceUrlIdx], formulaRow[invoiceUrlIdx]) : "";
-      
-      shipments.push({
-        bookedDate: bookedDateIdx !== -1 ? formatTrackerDate_(row[bookedDateIdx]) : "N/A",
-        eeRef: poNo,
-        channel: channelIdx !== -1 ? String(row[channelIdx] || "N/A") : "N/A",
-        storeCode: storeCodeIdx !== -1 ? String(row[storeCodeIdx] || "N/A") : "N/A",
-        awb: awbText,
-        trackingStatus: trackingStatus || "Pending",
-        latestStatus: latestStatusIdx !== -1 ? String(row[latestStatusIdx] || "N/A") : "N/A",
-        currentLocation: currentLocationIdx !== -1 ? String(row[currentLocationIdx] || "N/A") : "N/A",
-        edd: eddIdx !== -1 ? formatTrackerDate_(row[eddIdx]) : "N/A",
-        apptDateTime: apptDateTimeStr || "N/A",
-        apptId: apptIdIdx !== -1 ? String(row[apptIdIdx] || "N/A") : "N/A",
-        poPdf: poPdf,
-        invoiceUrl: invoiceUrl,
-        isNew: isNew
-      });
+      shipments.push(Object.assign({ eeRef: poNo, awb: awbText, isNew: isNew }, cfg.readRow(c)));
 
       processedMap[awbText] = shipments.length - 1;
     }
 
     if (!shipments.length) return;
 
-    // Sort by Appointment Date/EDD ascending: oldest first, N/A at the end
+    // Sort by appointment date ascending: oldest first, N/A at the end
     shipments.sort((a, b) => {
-      const d1 = parseApptDateTime(a.apptDateTime) || parseApptDateTime(a.edd) || new Date(9999, 0, 1);
-      const d2 = parseApptDateTime(b.apptDateTime) || parseApptDateTime(b.edd) || new Date(9999, 0, 1);
+      const d1 = a.apptDateObj || new Date(9999, 0, 1);
+      const d2 = b.apptDateObj || new Date(9999, 0, 1);
       return d1 - d2;
     });
 
@@ -13887,7 +13920,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
   let upcomingCount = 0;
 
   shipments.forEach(s => {
-    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
+    const apptDateObj = s.apptDateObj;
 
     if (s.isNew) {
       newCount++;
@@ -13914,19 +13947,11 @@ function buildHtmlEmailTemplate(shipments, opts) {
 
   // ---------------- TABLE ROWS ----------------
   const tableRows = shipments.map(s => {
-    const trackingLink = `${opts.trackingUrlBase}${s.awb}`;
-    const awbLink = `<a href="${trackingLink}" style="color:#059669;text-decoration:none;"><b>${s.awb}</b></a>`;
+    const trackingLink = s.trackingUrl || `${opts.trackingUrlBase}${s.awb}`;
+    s.awbLink = `<a href="${trackingLink}" style="color:#059669;text-decoration:none;"><b>${s.awb}</b></a>`;
 
-    const poLink = s.poPdf
-      ? `<a href="${s.poPdf}" style="color:#2563EB;text-decoration:none;"><b>${s.awb}_PO</b></a>`
-      : "N/A";
-
-    const invLink = s.invoiceUrl
-      ? `<a href="${s.invoiceUrl}" style="color:#2563EB;text-decoration:none;"><b>${s.awb}_Invoice</b></a>`
-      : "N/A";
-
-    const apptDateObj = parseApptDateTime(s.apptDateTime) || parseApptDateTime(s.edd);
-    const tag = getApptTag(apptDateObj, s.isNew);
+    const apptDateObj = s.apptDateObj;
+    s.tag = getApptTag(apptDateObj, s.isNew);
 
     // ---------------- ROW COLOR / BORDER ----------------
     let rowColor = "";
@@ -13955,53 +13980,9 @@ function buildHtmlEmailTemplate(shipments, opts) {
       }
     }
 
-    // ---------------- TRACKING STATUS BADGE ----------------
-    const status = String(s.trackingStatus || "").toLowerCase();
-    let statusBg = "#FEF3C7";
-    let statusText = "#92400E";
-    let statusDot = "#D97706";
-
-    if (status.includes("delivered")) {
-      statusBg = "#DCFCE7";
-      statusText = "#166534";
-      statusDot = "#16A34A";
-    } else if (status.includes("transit")) {
-      statusBg = "#DBEAFE";
-      statusText = "#1D4ED8";
-      statusDot = "#2563EB";
-    } else if (status.includes("out for delivery")) {
-      statusBg = "#E0F2FE";
-      statusText = "#0369A1";
-      statusDot = "#0284C7";
-    } else if (status.includes("failed") || status.includes("cancel")) {
-      statusBg = "#FEE2E2";
-      statusText = "#B91C1C";
-      statusDot = "#DC2626";
-    }
-
-    const trackingStatusBadge = `
-      <span style="
-        display:inline-flex;
-        align-items:center;
-        gap:6px;
-        background:${statusBg};
-        color:${statusText};
-        padding:5px 9px;
-        border-radius:999px;
-        font-size:11px;
-        font-weight:700;
-        white-space:nowrap;
-      ">
-        <span style="
-          display:inline-block;
-          width:8px;
-          height:8px;
-          border-radius:50%;
-          background:${statusDot};
-        "></span>
-        ${s.trackingStatus}
-      </span>
-    `;
+    const cells = opts.columns.map(c =>
+      `<td style="padding:10px;border:1px solid #E5E7EB;${c.nowrap ? 'white-space:nowrap;' : ''}">${c.cell(s)}</td>`
+    ).join("\n        ");
 
     return `
       <tr style="
@@ -14009,25 +13990,14 @@ function buildHtmlEmailTemplate(shipments, opts) {
         border-left:4px solid ${leftBorder};
         font-weight:${s.isNew ? '600' : 'normal'};
       ">
-        <td style="padding:10px;border:1px solid #E5E7EB;white-space:nowrap;">${s.bookedDate}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.eeRef}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.channel}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.storeCode}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${awbLink}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${trackingStatusBadge}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.latestStatus}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.currentLocation}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;white-space:nowrap;">${s.edd}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">
-          <div style="font-weight:600;">${s.apptDateTime || "N/A"}</div>
-          <div style="margin-top:5px;">${tag}</div>
-        </td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${s.apptId}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${poLink}</td>
-        <td style="padding:10px;border:1px solid #E5E7EB;">${invLink}</td>
+        ${cells}
       </tr>
     `;
   }).join("");
+
+  const tableHeaders = opts.columns.map(c =>
+    `<th style="padding:10px;border:1px solid #E5E7EB;">${c.header}</th>`
+  ).join("\n              ");
 
   return `
     <div style="font-family:Arial, sans-serif;max-width:1400px;margin:0 auto;">
@@ -14096,19 +14066,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
         <table style="width:100%;border-collapse:collapse;margin-top:15px;font-size:12px;text-align:left;">
           <thead>
             <tr style="background:#F9FAFB;">
-              <th style="padding:10px;border:1px solid #E5E7EB;">Booked Date</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">PO Number</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Channel</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Store Code</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">AWB</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Tracking Status</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Latest Status</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Current Location</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">EDD</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Appt Date / Time</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Appt ID</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">PO PDF</th>
-              <th style="padding:10px;border:1px solid #E5E7EB;">Invoice URL</th>
+              ${tableHeaders}
             </tr>
           </thead>
           <tbody>
@@ -14124,6 +14082,69 @@ function buildHtmlEmailTemplate(shipments, opts) {
   `;
 }
 
+
+function trackingStatusBadge_(trackingStatus) {
+  const status = String(trackingStatus || "").toLowerCase();
+  let statusBg = "#FEF3C7";
+  let statusText = "#92400E";
+  let statusDot = "#D97706";
+
+  if (status.includes("delivered")) {
+    statusBg = "#DCFCE7";
+    statusText = "#166534";
+    statusDot = "#16A34A";
+  } else if (status.includes("transit")) {
+    statusBg = "#DBEAFE";
+    statusText = "#1D4ED8";
+    statusDot = "#2563EB";
+  } else if (status.includes("out for delivery")) {
+    statusBg = "#E0F2FE";
+    statusText = "#0369A1";
+    statusDot = "#0284C7";
+  } else if (status.includes("failed") || status.includes("cancel")) {
+    statusBg = "#FEE2E2";
+    statusText = "#B91C1C";
+    statusDot = "#DC2626";
+  }
+
+  return `
+      <span style="
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        background:${statusBg};
+        color:${statusText};
+        padding:5px 9px;
+        border-radius:999px;
+        font-size:11px;
+        font-weight:700;
+        white-space:nowrap;
+      ">
+        <span style="
+          display:inline-block;
+          width:8px;
+          height:8px;
+          border-radius:50%;
+          background:${statusDot};
+        "></span>
+        ${trackingStatus}
+      </span>
+    `;
+}
+
+// Appointment cell: value on top, MISSED/TODAY/NEW/UPCOMING tag below
+function apptCell_(value, tag) {
+  return `
+          <div style="font-weight:600;">${value}</div>
+          <div style="margin-top:5px;">${tag}</div>
+        `;
+}
+
+function docLink_(url, label) {
+  return url && url !== 'N/A'
+    ? `<a href="${url}" style="color:#2563EB;text-decoration:none;"><b>${label}</b></a>`
+    : "N/A";
+}
 
 function getApptTag(date, isNew) {
   const dot = (color) => `
@@ -14259,10 +14280,31 @@ delhivery email.gs
  * Same report as processNimbusAndSendEmail (nimbuspost email.js), read from the
  * Delhivery self-ship tracker instead. Scheduled via a 4-hour time-driven
  * trigger added from the editor's Triggers page.
+ *
+ * Tracker columns: Booked Date | PO Number | Channel | Invoice Number |
+ * No. of Boxes | AWB | Tracking Link | Appointment Date | Appointment Time |
+ * Appointment ID | PO PDF | Invoice Url
+ *
+ * The tracker has no tracking-status columns, so finished shipments are
+ * dropped by their PO_Database Status (Delivered, GRN, Closed, RTO, Cancelled).
  */
 
 const DELHIVERY_TRACKER_SPREADSHEET_ID = '1pvpg71Z6WNrYh5GsDO2BHix2o0xDReRaBrqcIdncoZ8';
 const DELHIVERY_TRACKER_SHEET_GID = '1014733683';
+
+const DELHIVERY_EMAIL_COLUMNS_ = [
+  { header: "Booked Date", nowrap: true, cell: s => s.bookedDate },
+  { header: "PO Number", cell: s => s.eeRef },
+  { header: "Channel", cell: s => s.channel },
+  { header: "Invoice Number", cell: s => s.invoiceNumber },
+  { header: "No. of Boxes", cell: s => s.boxes },
+  { header: "AWB", cell: s => s.awbLink },
+  { header: "Appt Date", nowrap: true, cell: s => apptCell_(s.apptDate, s.tag) },
+  { header: "Appt Time", nowrap: true, cell: s => s.apptTime },
+  { header: "Appt ID", cell: s => s.apptId },
+  { header: "PO PDF", cell: s => docLink_(s.poPdf, `${s.awb}_PO`) },
+  { header: "Invoice URL", cell: s => docLink_(s.invoiceUrl, `${s.awb}_Invoice`) }
+];
 
 function processDelhiveryAndSendEmail() {
   const props = PropertiesService.getScriptProperties();
@@ -14271,17 +14313,67 @@ function processDelhiveryAndSendEmail() {
     label: "Delhivery",
     trackerSpreadsheetId: DELHIVERY_TRACKER_SPREADSHEET_ID,
     trackerSheetGid: DELHIVERY_TRACKER_SHEET_GID,
-    trackerSheetNames: ["Delhivery B2B Tracker", "Action Required"],
+    trackerSheetNames: ["Action Required"],
     toEmail: props.getProperty('DELHIVERY_NOTIFICATION_EMAIL') || props.getProperty('NIMBUS_NOTIFICATION_EMAIL'),
     ccEmail: props.getProperty('DELHIVERY_CC_EMAILS') || props.getProperty('NIMBUS_CC_EMAILS'),
     subjectTitle: "📦 Delhivery Self-Ship | Delivery Alignment Confirmation Report",
+    skipClosedPos: true,
+    readRow: readDelhiveryTrackerRow_,
     template: {
       title: "Delivery Alignment Confirmation Report | Delhivery Self-Ship",
       trackingUrlBase: "https://www.delhivery.com/track-v2/package/",
-      sheetUrl: `https://docs.google.com/spreadsheets/d/${DELHIVERY_TRACKER_SPREADSHEET_ID}/edit?gid=${DELHIVERY_TRACKER_SHEET_GID}#gid=${DELHIVERY_TRACKER_SHEET_GID}`
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${DELHIVERY_TRACKER_SPREADSHEET_ID}/edit?gid=${DELHIVERY_TRACKER_SHEET_GID}#gid=${DELHIVERY_TRACKER_SHEET_GID}`,
+      columns: DELHIVERY_EMAIL_COLUMNS_
     }
   });
 }
+
+function readDelhiveryTrackerRow_(c) {
+  const text = (name) => c.has(name) ? String(c.raw(name) === 0 ? 0 : (c.raw(name) || "")).trim() || "N/A" : "N/A";
+
+  // Appointment Date may be a date cell or typed text; Appointment Time is read
+  // as displayed (time-only cells come back as 1899 dates otherwise)
+  const rawDate = c.has("Appointment Date") ? c.raw("Appointment Date") : "";
+  const baseDate = rawDate instanceof Date ? (isNaN(rawDate.getTime()) ? null : rawDate) : parseApptDateTime(String(rawDate || ""));
+  const apptTime = c.display("Appointment Time") || "N/A";
+  const time = parseTimeOfDay_(apptTime);
+
+  let apptDateObj = null;
+  if (baseDate) {
+    apptDateObj = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(),
+                           time ? time.hours : 0, time ? time.minutes : 0);
+  }
+
+  const trackingUrl = c.has("Tracking Link") ? c.url("Tracking Link") : "";
+
+  return {
+    bookedDate: c.has("Booked Date") ? formatTrackerDate_(c.raw("Booked Date")) : "N/A",
+    channel: text("Channel"),
+    invoiceNumber: text("Invoice Number"),
+    boxes: text("No. of Boxes"),
+    trackingUrl: trackingUrl && trackingUrl !== 'N/A' ? trackingUrl : "",
+    apptDate: baseDate ? formatTrackerDate_(baseDate) : "N/A",
+    apptTime: apptTime,
+    apptDateObj: apptDateObj,
+    apptId: text("Appointment ID"),
+    poPdf: c.has("PO PDF") ? c.url("PO PDF") : "",
+    invoiceUrl: c.has("Invoice Url") ? c.url("Invoice Url") : ""
+  };
+}
+
+// "14:30", "14:30:00", "2:30 PM" -> { hours, minutes }
+function parseTimeOfDay_(str) {
+  const m = String(str || "").trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?$/);
+  if (!m) return null;
+  let hours = Number(m[1]);
+  if (m[3]) {
+    if (hours === 12) hours = 0;
+    if (/p/i.test(m[3])) hours += 12;
+  }
+  return { hours: hours, minutes: Number(m[2]) };
+}
+
+
 
 
 easyecom.gs
