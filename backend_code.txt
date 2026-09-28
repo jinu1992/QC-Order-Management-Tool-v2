@@ -13633,30 +13633,50 @@ nimbuspost.gs
 const SHEET_PO_DATABASE = "PO_Database";
 const SHEET_SYSTEM_CONFIG = "System_Config";
 
+const NIMBUS_TRACKER_SPREADSHEET_ID = '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
+const NIMBUS_TRACKER_SHEET_GID = '1014733683';
+
 function processNimbusAndSendEmail() {
+  const props = PropertiesService.getScriptProperties();
+  sendTrackerSummaryEmail_({
+    label: "Nimbus",
+    trackerSpreadsheetId: NIMBUS_TRACKER_SPREADSHEET_ID,
+    trackerSheetGid: NIMBUS_TRACKER_SHEET_GID,
+    trackerSheetNames: ["NimbusPost B2B Tracker", "Action Required"],
+    toEmail: props.getProperty('NIMBUS_NOTIFICATION_EMAIL'),
+    ccEmail: props.getProperty('NIMBUS_CC_EMAILS'),
+    subjectTitle: "📦 Delivery Alignment Confirmation Report",
+    template: {
+      title: "Delivery Alignment Confirmation Report",
+      trackingUrlBase: "https://ship.nimbuspost.com/shipping/tracking/",
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${NIMBUS_TRACKER_SPREADSHEET_ID}/edit?gid=${NIMBUS_TRACKER_SHEET_GID}#gid=${NIMBUS_TRACKER_SHEET_GID}`
+    }
+  });
+}
+
+/**
+ * Shared body of the courier tracker summary emails (Nimbus, Delhivery self-ship).
+ * Reads the courier's tracker tab, emails the active shipments, and marks
+ * newly reported POs as SENT in PO_Database's Email Flag column.
+ */
+function sendTrackerSummaryEmail_(cfg) {
   try {
     const DATABASE_SPREADSHEET_ID = '1YM0dKPWySifYFDyNqCenJ4L85xIBSTrBGNPDcoo6Kfg';
-    const TRACKER_SPREADSHEET_ID = '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
-    const TRACKER_SHEET_GID = '1014733683';
 
     // 1. Open the tracker spreadsheet and get the tracker sheet tab
-    const trackerSS = SpreadsheetApp.openById(TRACKER_SPREADSHEET_ID);
-    let trackerSheet = getSheetById(trackerSS, TRACKER_SHEET_GID);
+    const trackerSS = SpreadsheetApp.openById(cfg.trackerSpreadsheetId);
+    let trackerSheet = getSheetById(trackerSS, cfg.trackerSheetGid);
     if (!trackerSheet) {
-      trackerSheet = trackerSS.getSheetByName("NimbusPost B2B Tracker") || 
-                     trackerSS.getSheetByName("Action Required") ||
+      trackerSheet = cfg.trackerSheetNames.map(n => trackerSS.getSheetByName(n)).find(Boolean) ||
                      trackerSS.getSheets()[0];
     }
-    
+
     if (!trackerSheet) {
-      Logger.log("Nimbus B2B Tracker sheet not found in tracker spreadsheet. Exiting.");
+      Logger.log(`${cfg.label} Tracker sheet not found in tracker spreadsheet. Exiting.`);
       return;
     }
 
-    const props = PropertiesService.getScriptProperties();
-    const nimbus_to_Email = props.getProperty('NIMBUS_NOTIFICATION_EMAIL');
-    const nimbus_cc_Email = props.getProperty('NIMBUS_CC_EMAILS');
-    if (!nimbus_to_Email) return;
+    if (!cfg.toEmail) return;
 
     // Load active tracker data
     const dataRange = trackerSheet.getDataRange();
@@ -13664,7 +13684,7 @@ function processNimbusAndSendEmail() {
     const formulas = dataRange.getFormulas();
     
     if (values.length <= 1) {
-      Logger.log("Nimbus B2B Tracker sheet is empty. Exiting.");
+      Logger.log(`${cfg.label} Tracker sheet is empty. Exiting.`);
       return;
     }
     
@@ -13832,12 +13852,12 @@ function processNimbusAndSendEmail() {
     });
 
     // 2. Build HTML Email
-    const htmlEmail = buildHtmlEmailTemplate(shipments);
+    const htmlEmail = buildHtmlEmailTemplate(shipments, cfg.template);
     const todayStr = Utilities.formatDate(new Date(), "Asia/Kolkata", "dd-MMM-yyyy");
 
     // 3. Send Email
-    GmailApp.sendEmail(nimbus_to_Email, "📦 Delivery Alignment Confirmation Report | Upcoming Appointments | Date : " + todayStr, "", {
-      cc: nimbus_cc_Email,
+    GmailApp.sendEmail(cfg.toEmail, cfg.subjectTitle + " | Upcoming Appointments | Date : " + todayStr, "", {
+      cc: cfg.ccEmail,
       htmlBody: htmlEmail
     });
 
@@ -13849,14 +13869,14 @@ function processNimbusAndSendEmail() {
       });
     }
 
-    Logger.log(`Successfully sent summary for ${shipments.length} shipments.`);
-    
+    Logger.log(`Successfully sent ${cfg.label} summary for ${shipments.length} shipments.`);
+
   } catch (err) {
-    Logger.log("Error in processNimbusAndSendEmail: " + err.toString());
+    Logger.log(`Error in ${cfg.label} tracker summary email: ` + err.toString());
   }
 }
 
-function buildHtmlEmailTemplate(shipments) {
+function buildHtmlEmailTemplate(shipments, opts) {
   const now = new Date();
   const today = Utilities.formatDate(now, "Asia/Kolkata", "dd-MMM-yyyy");
 
@@ -13885,7 +13905,7 @@ function buildHtmlEmailTemplate(shipments) {
 
   // ---------------- TABLE ROWS ----------------
   const tableRows = shipments.map(s => {
-    const trackingLink = `https://ship.nimbuspost.com/shipping/tracking/${s.awb}`;
+    const trackingLink = `${opts.trackingUrlBase}${s.awb}`;
     const awbLink = `<a href="${trackingLink}" style="color:#059669;text-decoration:none;"><b>${s.awb}</b></a>`;
 
     const poLink = s.poPdf
@@ -13996,7 +14016,7 @@ function buildHtmlEmailTemplate(shipments) {
   return `
     <div style="font-family:Arial, sans-serif;max-width:1400px;margin:0 auto;">
       <div style="background:#059669;padding:20px;color:white;border-radius:8px 8px 0 0;">
-        <h2 style="margin:0;">📦 Delivery Alignment Confirmation Report</h2>
+        <h2 style="margin:0;">📦 ${opts.title}</h2>
         <p style="margin:5px 0 0 0;opacity:0.95;">
           Upcoming Appointments | Date : ${today}
         </p>
@@ -14008,7 +14028,7 @@ function buildHtmlEmailTemplate(shipments) {
         <p>Kindly review and confirm that these deliveries are scheduled accordingly to avoid any misses.</p>
         <p>
           📄
-          <a href="https://docs.google.com/spreadsheets/d/1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk/edit?gid=1014733683#gid=1014733683"
+          <a href="${opts.sheetUrl}"
              style="color:#2563EB;font-weight:bold;text-decoration:none;">
             View Full Logistics Summary Sheet
           </a>
@@ -14216,6 +14236,38 @@ function extractUrlFromCell(value, formula) {
   return String(value).trim() || 'N/A';
 }
 
+
+
+delhivery email.gs
+
+/**
+ * Delhivery Self-Ship Email Scheduler
+ * Same report as processNimbusAndSendEmail (nimbuspost email.js), read from the
+ * Delhivery self-ship tracker instead. Scheduled via a 4-hour time-driven
+ * trigger added from the editor's Triggers page.
+ */
+
+const DELHIVERY_TRACKER_SPREADSHEET_ID = '1pvpg71Z6WNrYh5GsDO2BHix2o0xDReRaBrqcIdncoZ8';
+const DELHIVERY_TRACKER_SHEET_GID = '1014733683';
+
+function processDelhiveryAndSendEmail() {
+  const props = PropertiesService.getScriptProperties();
+  // Falls back to the Nimbus recipients until Delhivery-specific ones are set
+  sendTrackerSummaryEmail_({
+    label: "Delhivery",
+    trackerSpreadsheetId: DELHIVERY_TRACKER_SPREADSHEET_ID,
+    trackerSheetGid: DELHIVERY_TRACKER_SHEET_GID,
+    trackerSheetNames: ["Delhivery B2B Tracker", "Action Required"],
+    toEmail: props.getProperty('DELHIVERY_NOTIFICATION_EMAIL') || props.getProperty('NIMBUS_NOTIFICATION_EMAIL'),
+    ccEmail: props.getProperty('DELHIVERY_CC_EMAILS') || props.getProperty('NIMBUS_CC_EMAILS'),
+    subjectTitle: "📦 Delhivery Self-Ship | Delivery Alignment Confirmation Report",
+    template: {
+      title: "Delivery Alignment Confirmation Report | Delhivery Self-Ship",
+      trackingUrlBase: "https://www.delhivery.com/track-v2/package/",
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${DELHIVERY_TRACKER_SPREADSHEET_ID}/edit?gid=${DELHIVERY_TRACKER_SHEET_GID}#gid=${DELHIVERY_TRACKER_SHEET_GID}`
+    }
+  });
+}
 
 
 easyecom.gs
