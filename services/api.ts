@@ -459,9 +459,16 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.podImageUrl && (row['POD Image'] || row['POD Image URL'])) po.podImageUrl = String(row['POD Image'] || row['POD Image URL']);
             if (!po.grnNumber && row['GRN Number']) po.grnNumber = String(row['GRN Number']);
             if (!po.grnDate && row['GRN Date']) po.grnDate = formatSheetDate(row['GRN Date']);
-            // Preserve DB status override: if ANY row for this PO has a status override, keep/update it
+            // Preserve DB status override: if ANY row for this PO has a status override, keep/update it.
+            // A 'Cancelled' row is a single cancelled line item (cancelLineItem / updatePOStatus skip it),
+            // not the PO's status - it must not clobber a live override like RTD/Dispatched from a sibling
+            // row, or the order falls through to the AWB branch and shows as 'Label Generated' again.
             if (rawStatus && isOverrideStatus(rawStatus)) {
-                po.poDbStatus = rawStatus;
+                const isCancelledRow = rawStatus.toLowerCase() === 'cancelled';
+                const currentIsLiveOverride = isOverrideStatus(po.poDbStatus) && (po.poDbStatus || '').trim().toLowerCase() !== 'cancelled';
+                if (!isCancelledRow || !currentIsLiveOverride) {
+                    po.poDbStatus = rawStatus;
+                }
             }
         } else {
             poMap.set(poNumber, {
