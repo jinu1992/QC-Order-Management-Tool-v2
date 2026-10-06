@@ -63,6 +63,25 @@ const postToScript = async (payload: any) => {
     }
 };
 
+// GETs from the Apps Script web app, retrying when Google returns its HTML
+// "Page not found" page (or the request fails) instead of JSON. This happens
+// intermittently, mostly on the first loads after a deploy; without the retry
+// the caller silently gets no data.
+const getFromScript = async (url: string, attempts = 3): Promise<any> => {
+    let lastError: unknown;
+    for (let i = 0; i < attempts; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 1500 * i));
+        try {
+            const response = await fetch(url, { redirect: 'follow' });
+            return await response.json();
+        } catch (error) {
+            lastError = error;
+            console.warn(`Backend GET failed (attempt ${i + 1}/${attempts}): ${url.split('?')[1] || url}`);
+        }
+    }
+    throw lastError;
+};
+
 export const loginWithGoogle = async (credentialToken: string): Promise<{ status: string, message?: string, user?: User }> => {
     try {
         const response = await fetch('/api/login-google', {
@@ -93,8 +112,7 @@ export const loginWithGoogle = async (credentialToken: string): Promise<{ status
 
 export const fetchPackingData = async (referenceCode: string): Promise<any[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getPackingData&referenceCode=${encodeURIComponent(referenceCode)}`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getPackingData&referenceCode=${encodeURIComponent(referenceCode)}`);
         return json.status === 'success' ? json.data : [];
     } catch (error) { return []; }
 };
@@ -129,8 +147,7 @@ export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: strin
 
 export const fetchUploadMetadata = async (): Promise<UploadMetadata[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getUploadMetadata`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getUploadMetadata`);
         return json.status === 'success' ? json.data : [];
     } catch (error) { return []; }
 };
@@ -141,8 +158,7 @@ export const updatePOPickupDate = async (eeReferenceCode: string, pickupDate: st
 
 export const fetchQuotations = async (): Promise<Quotation[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getQuotations`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getQuotations`);
         if (json.status === 'success' && Array.isArray(json.data)) {
             const groups: Record<string, Quotation> = {};
 
@@ -203,8 +219,7 @@ export const refreshQuotationsFromBackend = async () => {
 
 export const fetchUsers = async (): Promise<User[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getUsers`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getUsers`);
         if (json.status === 'success' && Array.isArray(json.data)) {
             return json.data.map((row: any, index: number) => ({
                 id: String(row['ID'] || index),
@@ -230,8 +245,7 @@ export const deleteUserFromSheet = async (userId: string) => {
 
 export const fetchInventoryFromSheet = async (): Promise<InventoryItem[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getInventory`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getInventory`);
         if (json.status === 'success') return transformSheetDataToInventory(json.data);
         return [];
     } catch (error) { return []; }
@@ -250,8 +264,7 @@ export const fetchPurchaseOrders = async (poNumber?: string): Promise<PurchaseOr
         const url = poNumber
             ? `${API_URL}?action=getPurchaseOrders&poNumber=${encodeURIComponent(poNumber)}`
             : `${API_URL}?action=getPurchaseOrders`;
-        const response = await fetch(url, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(url);
         if (json.status === 'success' && Array.isArray(json.data)) return transformSheetDataToPOs(json.data);
         return [];
     } catch (error) { return []; }
@@ -267,8 +280,7 @@ export const fetchSalesOrders = async (referenceCode?: string): Promise<Purchase
         const url = referenceCode
             ? `${API_URL}?action=getSalesOrders&referenceCode=${encodeURIComponent(referenceCode)}`
             : `${API_URL}?action=getSalesOrders`;
-        const response = await fetch(url, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(url);
         if (json.status === 'success' && Array.isArray(json.data)) return transformSheetDataToPOs(json.data);
         return [];
     } catch (error) { return []; }
@@ -280,8 +292,7 @@ export const fetchSalesOrder = async (referenceCode: string): Promise<PurchaseOr
 
 export const fetchStorePocMappings = async (): Promise<StorePocMapping[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getStorePocMappings`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getStorePocMappings`);
         return json.status === 'success' ? json.data : [];
     } catch (error) { return []; }
 };
@@ -292,8 +303,7 @@ export const sendAppointmentEmail = async (params: any) => {
 
 export const fetchChannelConfigs = async (): Promise<ChannelConfig[]> => {
     try {
-        const response = await fetch(`${API_URL}?action=getChannelConfigs`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getChannelConfigs`);
         if (json.status === 'success' && Array.isArray(json.data)) return transformSheetDataToChannelConfigs(json.data);
         return [];
     } catch (error) { return []; }
@@ -301,8 +311,7 @@ export const fetchChannelConfigs = async (): Promise<ChannelConfig[]> => {
 
 export const fetchSystemConfig = async (): Promise<any> => {
     try {
-        const response = await fetch(`${API_URL}?action=getSystemConfig`, { redirect: 'follow' });
-        const json = await response.json();
+        const json = await getFromScript(`${API_URL}?action=getSystemConfig`);
         return json.status === 'success' ? json.data : {};
     } catch (error) { return {}; }
 };
