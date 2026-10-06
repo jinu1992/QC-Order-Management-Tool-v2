@@ -614,14 +614,18 @@ export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{ status
     return await postToScript({ action: 'FETCH_BOX_DETAILS', eeReferenceCode });
 };
 
-export const selfShipOrder = async (data: {
-    eeReferenceCode: string;
-    awb?: string;
-    courier: string;
-    trackingUrl?: string;
-    labelUrl?: string;
-}): Promise<{ status: string, message: string }> => {
-    return await postToScript({ action: 'SELF_SHIP_ORDER', ...data });
+// Posts an invoiced order to the Delhivery or other-logistics self-ship tracker sheet
+export const createSelfShipBooking = async (
+    eeReferenceCode: string,
+    provider: 'delhivery' | 'other',
+    courierName?: string
+): Promise<{ status: string, message: string }> => {
+    return await postToScript({ action: 'createSelfShipBooking', eeReferenceCode, provider, courierName });
+};
+
+// Pulls AWBs / tracking links typed into the self-ship trackers into PO_Database
+export const syncSelfShipTrackers = async (): Promise<{ status: string, message: string, updated?: string[] }> => {
+    return await postToScript({ action: 'syncSelfShipTrackers' });
 };
 export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ status: string, message?: string }> => {
     try {

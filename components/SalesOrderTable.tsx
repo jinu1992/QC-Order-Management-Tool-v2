@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, selfShipOrder, triggerEasyEcomFetch } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, syncSelfShipTrackers, triggerEasyEcomFetch } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -62,6 +62,10 @@ interface SalesOrderTableProps {
 // B2B_NIMBUS_CHANNELS_ in backend_code.txt). Their E-Way Bill is generated during
 // shipping (once the courier is known), not beforehand, so they skip the EWB gate below.
 const B2B_NIMBUS_CHANNELS = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
+
+const isSelfShipCarrier = (carrier?: string) => /\(self\)/i.test(carrier || '');
+// Posted to a self-ship tracker sheet, but ops hasn't filled in the AWB there yet
+const isAwaitingSelfShipAwb = (so: { carrier?: string, awb?: string }) => isSelfShipCarrier(so.carrier) && !so.awb;
 
 // --- Formatters ---
 
@@ -1361,107 +1365,90 @@ const ZeptoASNHelperModal: FC<{
     );
 };
 
-const SelfShipModal: FC<{
+// Lets the user pick how an invoiced order ships: through NimbusPost (the existing
+// courier booking), or self-shipped, which posts the order to the Delhivery or
+// other-logistics tracker sheet; the AWB typed there later syncs back to the tool.
+const ShipFlowModal: FC<{
     so: GroupedSalesOrder,
     onClose: () => void,
-    addNotification: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void,
-    onComplete: () => void
-}> = ({ so, onClose, addNotification, onComplete }) => {
+    onChooseNimbus: () => void,
+    onChooseSelfShip: (provider: 'delhivery' | 'other', courierName?: string) => Promise<void>
+}> = ({ so, onClose, onChooseNimbus, onChooseSelfShip }) => {
+    const [showOther, setShowOther] = useState(false);
     const [courier, setCourier] = useState('');
-    const [awb, setAwb] = useState('');
-    const [trackingUrl, setTrackingUrl] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitting, setSubmitting] = useState<'delhivery' | 'other' | null>(null);
 
-    const handleSubmit = async () => {
-        if (!courier.trim()) {
-            addNotification("Courier Name is required", "error");
-            return;
-        }
-
-        setIsSubmitting(true);
+    const submit = async (provider: 'delhivery' | 'other') => {
+        setSubmitting(provider);
         try {
-            const res = await selfShipOrder({
-                eeReferenceCode: so.id,
-                courier: courier.trim(),
-                awb: awb.trim() || undefined,
-                trackingUrl: trackingUrl.trim() || undefined
-            });
-
-            if (res.status === 'success') {
-                addNotification(res.message, "success");
-                onComplete();
-                onClose();
-            } else {
-                addNotification(res.message || "Failed to submit self ship details", "error");
-            }
-        } catch (error) {
-            console.error("Self Ship Error:", error);
-            addNotification("Error submitting self ship details", "error");
+            await onChooseSelfShip(provider, provider === 'other' ? courier.trim() : undefined);
         } finally {
-            setIsSubmitting(false);
+            setSubmitting(null);
         }
     };
 
-    return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[150] p-4">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 flex flex-col animate-in fade-in zoom-in-95 duration-200">
-                <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gray-800 rounded-xl flex items-center justify-center text-white shadow-lg">
-                            <TruckIcon className="h-6 w-6" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-800">Self Ship Order</h3>
-                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{so.id}</p>
-                        </div>
-                    </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                        <XCircleIcon className="h-6 w-6 text-gray-400" />
-                    </button>
-                </div>
+    const optionClass = "w-full p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl transition-all group text-left flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed";
 
-                <div className="p-6 space-y-4">
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Courier Name *</label>
-                        <input
-                            type="text"
-                            value={courier}
-                            onChange={(e) => setCourier(e.target.value)}
-                            placeholder="e.g. Local Delivery, Store Pickup, etc."
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm"
-                        />
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[200] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+                <div className="p-6 bg-gray-900 flex flex-col items-center text-center">
+                    <div className="w-14 h-14 bg-white/10 rounded-full flex items-center justify-center mb-3">
+                        <TruckIcon className="h-8 w-8 text-white" />
                     </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Tracking Number / AWB (Optional)</label>
-                        <input
-                            type="text"
-                            value={awb}
-                            onChange={(e) => setAwb(e.target.value)}
-                            placeholder="e.g. AWB12345678"
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm font-mono"
-                        />
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">Tracking URL (Optional)</label>
-                        <input
-                            type="text"
-                            value={trackingUrl}
-                            onChange={(e) => setTrackingUrl(e.target.value)}
-                            placeholder="https://test.com/track"
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-800 text-sm"
-                        />
-                    </div>
-                    
-                    <div className="pt-2">
-                        <button
-                            onClick={handleSubmit}
-                            disabled={isSubmitting || !courier.trim()}
-                            className="w-full py-3.5 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                            {isSubmitting ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
-                            Submit Self Ship Details
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Choose Shipping Flow</h3>
+                    <p className="text-xs text-gray-300 mt-1">Channel: <span className="font-bold text-white">{so.channel}</span> | Ref: <span className="font-bold text-white">{so.id}</span> | Boxes: <span className="font-bold text-white">{so.boxCount}</span></p>
+                </div>
+                <div className="p-6 space-y-3">
+                    <button onClick={onChooseNimbus} disabled={!!submitting} className={`${optionClass} hover:border-blue-500 hover:bg-blue-50`}>
+                        <div>
+                            <p className="text-base font-black text-gray-900 group-hover:text-blue-700">NimbusPost (NP) Flow</p>
+                            <p className="text-xs text-gray-500">Book via aggregator: AWB, label and pickup are generated automatically</p>
+                        </div>
+                        <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
+                    </button>
+
+                    <button onClick={() => submit('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
+                        <div>
+                            <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Delhivery</p>
+                            <p className="text-xs text-gray-500">Posts to the Delhivery tracker; AWB and tracking link sync back once filled</p>
+                        </div>
+                        {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
+                    </button>
+
+                    {!showOther ? (
+                        <button onClick={() => setShowOther(true)} disabled={!!submitting} className={`${optionClass} hover:border-purple-500 hover:bg-purple-50`}>
+                            <div>
+                                <p className="text-base font-black text-gray-900 group-hover:text-purple-700">Self Ship: Other Logistics</p>
+                                <p className="text-xs text-gray-500">Posts to the other-logistics tracker with the courier you name</p>
+                            </div>
+                            <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-purple-600" />
                         </button>
-                    </div>
+                    ) : (
+                        <div className="p-5 bg-purple-50 border-2 border-purple-200 rounded-2xl space-y-3">
+                            <p className="text-base font-black text-purple-800">Self Ship: Other Logistics</p>
+                            <input
+                                type="text"
+                                autoFocus
+                                value={courier}
+                                onChange={(e) => setCourier(e.target.value)}
+                                placeholder="Courier name, e.g. Xpressbees, DTDC"
+                                className="w-full px-4 py-3 rounded-xl border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-600 text-sm bg-white"
+                            />
+                            <button
+                                onClick={() => submit('other')}
+                                disabled={!!submitting || !courier.trim()}
+                                className="w-full py-3 bg-purple-700 text-white font-bold rounded-xl hover:bg-purple-800 transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                {submitting === 'other' ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
+                                Post to Tracker
+                            </button>
+                        </div>
+                    )}
+
+                    <button onClick={onClose} disabled={!!submitting} className="w-full py-2 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors">
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>
@@ -1807,7 +1794,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isUpdatingRTD, setIsUpdatingRTD] = useState<string | null>(null);
     const [isUpdatingDispatched, setIsUpdatingDispatched] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
-    const [selfShipOrderData, setSelfShipOrderData] = useState<GroupedSalesOrder | null>(null);
+    const [shipFlowOrder, setShipFlowOrder] = useState<GroupedSalesOrder | null>(null);
+    const [isSyncingSelfShip, setIsSyncingSelfShip] = useState(false);
     const [actionModal, setActionModal] = useState<{
         isOpen: boolean;
         title: string;
@@ -3131,6 +3119,43 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
+    // Self ship: posts the order to the Delhivery / other-logistics tracker sheet. The order
+    // then waits for ops to type the AWB there, which syncSelfShipTrackers copies back.
+    const handleSelfShipBooking = async (so: GroupedSalesOrder, provider: 'delhivery' | 'other', courierName?: string) => {
+        try {
+            const res = await createSelfShipBooking(so.id, provider, courierName);
+            if (res.status === 'success') {
+                addNotification(res.message || 'Posted to self-ship tracker.', 'success');
+                addLog('Self Ship', `EE Ref: ${so.id} via ${provider === 'delhivery' ? 'Delhivery' : courierName}`);
+                setShipFlowOrder(null);
+                await refreshSingleSOState(so.id, so.poReference);
+            } else {
+                addNotification(res.message || 'Failed to post to self-ship tracker.', 'error');
+            }
+        } catch (error) {
+            console.error('Self ship booking error:', error);
+            addNotification('Failed to post to self-ship tracker. Check console for details.', 'error');
+        }
+    };
+
+    const handleSyncSelfShip = async () => {
+        setIsSyncingSelfShip(true);
+        try {
+            const res = await syncSelfShipTrackers();
+            if (res.status === 'success') {
+                addNotification(res.message || 'Self-ship trackers synced.', (res.updated?.length ? 'success' : 'info'));
+                if (res.updated?.length) onSync();
+            } else {
+                addNotification(res.message || 'Self-ship sync failed.', 'error');
+            }
+        } catch (error) {
+            console.error('Self ship sync error:', error);
+            addNotification('Self-ship sync failed. Check console for details.', 'error');
+        } finally {
+            setIsSyncingSelfShip(false);
+        }
+    };
+
     // Opens the courier picker for an order that's already been shipped, so it can be
     // rebooked with a different courier (e.g. the original courier can't service it).
     const handleReassignCourierClick = (so: GroupedSalesOrder) => {
@@ -3552,14 +3577,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 };
             }
 
-            const isSelfShipOnly = so.orderNotes?.toLowerCase().includes('self ship');
-
-            if (isSelfShipOnly) {
+            if (isAwaitingSelfShipAwb(so)) {
                 return {
-                    label: 'Self Ship Only',
-                    color: 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed',
-                    onClick: () => {},
-                    disabled: true
+                    label: isSyncingSelfShip ? 'Syncing...' : 'Awaiting AWB',
+                    color: 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100',
+                    onClick: handleSyncSelfShip,
+                    disabled: isSyncingSelfShip
                 };
             }
 
@@ -3570,7 +3593,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     if (isInstamart) {
                         setShippingConfirm({ isOpen: true, so });
                     } else {
-                        handlePushToShippingAction(so.id, so.poReference);
+                        setShipFlowOrder(so);
                     }
                 },
                 disabled: isExecuting
@@ -3699,7 +3722,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onConfirm={() => {
                         const so = shippingConfirm.so!;
                         setShippingConfirm({ isOpen: false, so: null });
-                        handlePushToShippingAction(so.id, so.poReference);
+                        setShipFlowOrder(so);
                     }}
                     onPrint={() => {
                         const so = shippingConfirm.so!;
@@ -3815,6 +3838,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     >
                         <GlobeIcon className={`h-3.5 w-3.5 ${isUpdatingSheet ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} />
                         <span>{isUpdatingSheet ? 'Updating...' : 'Update Sheet'}</span>
+                    </button>
+                    <button
+                        onClick={handleSyncSelfShip}
+                        disabled={isSyncingSelfShip}
+                        title="Pull AWBs filled in the Delhivery / other-logistics self-ship trackers"
+                        className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all active:scale-95 group disabled:opacity-50"
+                    >
+                        <TruckIcon className={`h-3.5 w-3.5 ${isSyncingSelfShip ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />
+                        <span>{isSyncingSelfShip ? 'Syncing...' : 'Sync Self-Ship'}</span>
                     </button>
                 </div>
             </div>
@@ -4054,15 +4086,6 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                         >
                                                             {isFetchingBoxDetails === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : <CubeIcon className="h-3.5 w-3.5" />}
                                                             {isFetchingBoxDetails === so.id ? 'Fetching...' : 'Box Details'}
-                                                        </button>
-                                                    )}
-                                                    {so.status === 'Invoiced' && so.orderNotes?.toLowerCase().includes('self ship') && (
-                                                        <button
-                                                            onClick={(e: any) => { e.stopPropagation(); setSelfShipOrderData(so); }}
-                                                            className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 flex items-center gap-1.5"
-                                                            title="Add manual shipment details"
-                                                        >
-                                                            <TruckIcon className="h-3.5 w-3.5" /> Self Ship
                                                         </button>
                                                     )}
                                                     {(isFlipkart || isFlipkartMinutes) && canInvoice && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
@@ -4439,7 +4462,18 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             </button>
                                                                         </div>
                                                                     )}
-                                                                    {(so.invoiceNumber && !so.awb) && (
+                                                                    {(so.invoiceNumber && isAwaitingSelfShipAwb(so)) && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); handleSyncSelfShip(); }}
+                                                                            disabled={isSyncingSelfShip}
+                                                                            title={`Posted to the self-ship tracker (${so.carrier}). Click to pull the AWB now.`}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-purple-600 hover:bg-purple-700 active:scale-95 shadow-md text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none"
+                                                                        >
+                                                                            <RefreshIcon className={`h-3 w-3 ${isSyncingSelfShip ? 'animate-spin' : ''}`} />
+                                                                            {isSyncingSelfShip ? 'Syncing...' : `Awaiting AWB · ${so.carrier}`}
+                                                                        </button>
+                                                                    )}
+                                                                    {(so.invoiceNumber && !so.awb && !isAwaitingSelfShipAwb(so)) && (
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <button
                                                                                 onClick={(e: any) => {
@@ -4452,21 +4486,21 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                     if (so.channel.toLowerCase().includes('instamart')) {
                                                                                         setShippingConfirm({ isOpen: true, so });
                                                                                     } else {
-                                                                                        handlePushToShippingAction(so.id, so.poReference);
+                                                                                        setShipFlowOrder(so);
                                                                                     }
                                                                                 }}
-                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb && !B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase())) || (apptRequired && !hasAppt) || (so.orderNotes?.toLowerCase().includes('self ship'))))}
+                                                                                disabled={(!isAmazonFBA && !isFlipkart) && (so.boxCount === 0 ? isFetchingEasyEcomBoxData === so.id : (!!isPushingPartner || isApptPending || ((so.invoiceTotal || 0) >= 50000 && !so.ewb && !B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase())) || (apptRequired && !hasAppt)))}
                                                                                 className={`flex items-center gap-2 px-6 py-2 ${isAmazonFBA ? 'bg-amber-900 border border-amber-800 cursor-default' : isFlipkart ? 'bg-indigo-950 border border-indigo-900 cursor-default' : so.boxCount === 0 ? 'bg-red-600 hover:bg-red-700 active:scale-95 shadow-md' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 shadow-md'} text-white text-[11px] font-bold rounded-lg transition-all disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed`}
                                                                             >
                                                                                 {(isFetchingEasyEcomBoxData === so.id || isPushingPartner === so.id) ? <RefreshIcon className="h-3 w-3 animate-spin" /> : (isAmazonFBA || isFlipkart) ? <ShieldCheckIcon className="h-3 w-3" /> : so.boxCount === 0 ? <CloudDownloadIcon className="h-3 w-3" /> : <SendIcon className="h-3 w-3" />}
-                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (so.orderNotes?.toLowerCase().includes('self ship') ? 'Self Ship Only' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship with Partner'))))}
+                                                                                {isFetchingEasyEcomBoxData === so.id ? 'Fetching Box Data...' : isAmazonFBA ? 'Amazon Handled' : isFlipkart ? 'Flipkart Handled' : (isPushingPartner === so.id ? 'Shipping...' : (isApptPending ? 'Appt. Pending' : (so.boxCount === 0 ? 'Fetch Box Data' : 'Ship Order')))}
                                                                             </button>
                                                                             {((so.invoiceTotal || 0) >= 50000 && !so.ewb && !isAmazonFBA && !isFlipkart && !B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase())) && (
                                                                                 <p className="text-[10px] text-red-600 font-black animate-pulse uppercase tracking-tighter">EWB Missing</p>
                                                                             )}
                                                                         </div>
                                                                     )}
-                                                                    {(so.awb && B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase()) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned') && (
+                                                                    {(so.awb && !isSelfShipCarrier(so.carrier) && B2B_NIMBUS_CHANNELS.includes(so.channel.toLowerCase()) && so.status !== 'Shipped' && so.status !== 'Delivered' && so.status !== 'Returned') && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleReassignCourierClick(so); }}
                                                                             disabled={isReassigningCourier === so.id}
@@ -4635,12 +4669,16 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     onClose={() => setCourierModal({ isOpen: false, eeRef: '', poRef: '', channel: '', mode: 'assign' })}
                 />
             )}
-            {selfShipOrderData && (
-                <SelfShipModal 
-                    so={selfShipOrderData} 
-                    onClose={() => setSelfShipOrderData(null)}
-                    addNotification={addNotification}
-                    onComplete={() => onSync()}
+            {shipFlowOrder && (
+                <ShipFlowModal
+                    so={shipFlowOrder}
+                    onClose={() => setShipFlowOrder(null)}
+                    onChooseNimbus={() => {
+                        const so = shipFlowOrder;
+                        setShipFlowOrder(null);
+                        handlePushToShippingAction(so.id, so.poReference);
+                    }}
+                    onChooseSelfShip={(provider, courierName) => handleSelfShipBooking(shipFlowOrder, provider, courierName)}
                 />
             )}
             <ActionConfirmationModal 

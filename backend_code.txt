@@ -214,6 +214,8 @@ function doPost(e) {
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
     else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
     else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
+    else if (action === 'createSelfShipBooking') result = createSelfShipBooking(data);
+    else if (action === 'syncSelfShipTrackers') result = syncSelfShipTrackers();
     else if (action === 'sendBBOrderConfirmationEmail') 
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
@@ -14504,13 +14506,406 @@ function testAddInventory() {
 
 
 
+self ship.gs
 
+/**
+ * Self-Ship Flow
+ * Alternative to the NimbusPost booking flow (createShipment). When the user picks
+ * "Self Ship" in the tool, createSelfShipBooking posts the order as a row in the
+ * matching self-ship tracker sheet; ops books the shipment and types the AWB into
+ * that row; syncSelfShipTrackers (15-minute time-driven trigger, plus the tool's
+ * "Sync Self-Ship" button) copies the AWB and tracking link back to PO_Database.
+ *
+ * Both trackers have the Delhivery tracker's layout (see delhivery email.js); the
+ * "other logistics" one also gets a Courier column, added on first use.
+ */
 
+const SELF_SHIP_TRACKERS_ = {
+  delhivery: {
+    label: "Delhivery",
+    // Same sheet as DELHIVERY_TRACKER_* in delhivery email.js; literal here because
+    // top-level consts from other files may not be initialised yet when this file loads
+    spreadsheetId: "1pvpg71Z6WNrYh5GsDO2BHix2o0xDReRaBrqcIdncoZ8",
+    sheetGid: "1014733683",
+    trackingUrlBase: "https://www.delhivery.com/track-v2/lr/"
+  },
+  other: {
+    label: "Other logistics",
+    spreadsheetId: "1XcwS4E5d8azeR1O7aRSyJZhcrvO0Dk1FX1b_II4iz9o",
+    sheetGid: "1014733683",
+    trackingUrlBase: "" // varies by courier; ops pastes the Tracking Link by hand
+  }
+};
 
+const SELF_SHIP_DELHIVERY_COURIER_ID_ = 110; // EWB transporter mapping, see COURIER_TRANSPORTER_MAP_
 
+// PO_Database statuses at or past "Label Generated" that an AWB sync must not move back
+const SELF_SHIP_NO_ADVANCE_STATUSES_ = [
+  "label generated", "rtd", "ready to dispatch", "dispatched", "shipped", "delivered",
+  "grn pending", "grn updated", "closed", "rto", "rto initiated", "returned", "cancelled"
+];
 
+function getSelfShipTrackerSheet_(cfg) {
+  const ss = SpreadsheetApp.openById(cfg.spreadsheetId);
+  const sheet = getSheetById(ss, cfg.sheetGid) || ss.getSheetByName("Action Required");
+  if (!sheet) throw new Error(`${cfg.label} self-ship tracker tab not found`);
+  return sheet;
+}
 
+// Header name -> 0-based index (exact, then case-insensitive), -1 if missing
+function selfShipHeaderIndex_(headers) {
+  return (name) => {
+    const idx = headers.indexOf(name);
+    if (idx !== -1) return idx;
+    const lower = name.toLowerCase();
+    return headers.findIndex(h => String(h).trim().toLowerCase() === lower);
+  };
+}
 
+function columnLetter_(colNumber) {
+  let letters = "";
+  while (colNumber > 0) {
+    const rem = (colNumber - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    colNumber = Math.floor((colNumber - 1) / 26);
+  }
+  return letters;
+}
 
+function hyperlinkFormula_(url, label) {
+  if (!url || !/^https?:\/\//i.test(url)) return url || "";
+  return `=HYPERLINK("${url.replace(/"/g, '%22')}", "${String(label).replace(/"/g, "'")}")`;
+}
 
+// Saves the Zoho invoice PDF to the PO Drive folder and returns a link-shareable URL.
+// Falls back to the Zoho portal link (PO_Database "Invoice Url") if Drive or Zoho fail,
+// since the tracker row matters more than where the invoice link points.
+function getSelfShipInvoiceLink_(invoiceId, invoiceNumber, zohoPortalUrl) {
+  if (!invoiceId) return zohoPortalUrl || "";
+  try {
+    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    const fileName = `${invoiceNumber || invoiceId}_Invoice.pdf`;
+    const existing = folder.getFilesByName(fileName);
+    let file = existing.hasNext() ? existing.next() : null;
 
+    if (!file) {
+      const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+      const res = UrlFetchApp.fetch(
+        `https://www.zohoapis.in/books/v3/invoices/${invoiceId}?organization_id=${orgId}&accept=pdf`,
+        { method: "get", headers: { Authorization: `Zoho-oauthtoken ${getZohoAccessToken()}` }, muteHttpExceptions: true }
+      );
+      if (res.getResponseCode() !== 200) {
+        throw new Error(`Zoho PDF fetch failed (${res.getResponseCode()}): ${res.getContentText().slice(0, 200)}`);
+      }
+      file = folder.createFile(res.getBlob().setName(fileName));
+    }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      Logger.log(`getSelfShipInvoiceLink_: could not make ${fileName} link-shareable: ${shareErr.message}`);
+    }
+    return file.getUrl();
+  } catch (e) {
+    Logger.log(`getSelfShipInvoiceLink_: Drive copy failed for invoice ${invoiceNumber}, using Zoho link. ${e.message}`);
+    return zohoPortalUrl || "";
+  }
+}
+
+/**
+ * Posts an invoiced order to a self-ship tracker and marks it in PO_Database as
+ * awaiting an AWB. data: { eeReferenceCode, provider: "delhivery" | "other", courierName }
+ */
+function createSelfShipBooking(data) {
+  const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
+  const provider = String((data && data.provider) || "").trim().toLowerCase();
+  const cfg = SELF_SHIP_TRACKERS_[provider];
+  const courierName = provider === "delhivery" ? "Delhivery" : String((data && data.courierName) || "").trim();
+
+  if (!eeReferenceCode) return { status: "error", message: "No EE Reference Code provided" };
+  if (!cfg) return { status: "error", message: `Unknown self-ship provider: ${provider}` };
+  if (!courierName) return { status: "error", message: "Courier name is required for other logistics" };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { status: "error", message: "Another booking is in progress, please retry in a moment." };
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const dbData = dbSheet.getDataRange().getValues();
+    const headers = dbData.shift();
+    const idx = selfShipHeaderIndex_(headers);
+
+    const refIdx = idx("EE_reference_code");
+    if (refIdx === -1) return { status: "error", message: "EE_reference_code column not found" };
+
+    const orderRows = [];
+    dbData.forEach((row, i) => {
+      if (String(row[refIdx]).trim() === eeReferenceCode) orderRows.push({ row: row, sheetRow: i + 2 });
+    });
+    if (!orderRows.length) return { status: "error", message: "Order not found in database: " + eeReferenceCode };
+
+    const first = (name) => {
+      const c = idx(name);
+      if (c === -1) return "";
+      const hit = orderRows.find(r => r.row[c] !== "" && r.row[c] !== null);
+      return hit ? hit.row[c] : "";
+    };
+
+    const existingAwb = String(first("AWB") || "").trim();
+    if (existingAwb && existingAwb !== "PROCESSING") {
+      return { status: "error", message: `Order already has a shipment (AWB ${existingAwb}, ${first("Carrier") || "unknown carrier"}).` };
+    }
+
+    const invoiceNumber = String(first("Invoice Number") || "").trim();
+    if (!invoiceNumber) return { status: "error", message: "Order has no invoice yet — create the invoice first." };
+
+    const poIdx = idx("PO Number");
+    const poNumbers = Array.from(new Set(orderRows.map(r => String(r.row[poIdx] || "").trim()).filter(Boolean)));
+    const channel = String(first("Channel Name") || "").trim();
+    const boxIdx = idx("Box Data");
+    const boxes = boxIdx === -1 ? 0 : Math.max(0, ...orderRows.map(r => Number(r.row[boxIdx]) || 0));
+    const sheetRows = orderRows.map(r => r.sheetRow);
+
+    // E-Way Bill with Delhivery as transporter, same as the NP flow does for B2B
+    // channels. A failure is a warning only; the booking still goes ahead.
+    let ewbWarning = "";
+    if (provider === "delhivery" && B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
+      try {
+        ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, sheetRows, SELF_SHIP_DELHIVERY_COURIER_ID_, false);
+      } catch (ewbErr) {
+        Logger.log(`createSelfShipBooking: EWB step failed for ${eeReferenceCode}: ${ewbErr.message}`);
+        ewbWarning = ` (Warning: E-Way Bill could not be generated — ${ewbErr.message}. Please fix it in Zoho.)`;
+      }
+    }
+
+    // ---- Tracker row ----
+    const trackerSheet = getSelfShipTrackerSheet_(cfg);
+    let lastCol = trackerSheet.getLastColumn();
+    let trackerHeaders = trackerSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    let tIdx = selfShipHeaderIndex_(trackerHeaders);
+
+    if (provider === "other" && tIdx("Courier") === -1) {
+      const newHeader = trackerSheet.getRange(1, lastCol + 1);
+      trackerSheet.getRange(1, lastCol).copyTo(newHeader, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      newHeader.setValue("Courier");
+      lastCol += 1;
+      trackerHeaders = trackerSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      tIdx = selfShipHeaderIndex_(trackerHeaders);
+    }
+
+    // Don't post the same invoice twice (double click, or re-choosing the flow)
+    const invCol = tIdx("Invoice Number");
+    if (invCol !== -1 && trackerSheet.getLastRow() > 1) {
+      const invoices = trackerSheet.getRange(2, invCol + 1, trackerSheet.getLastRow() - 1, 1).getValues();
+      const dupAt = invoices.findIndex(r => String(r[0]).trim() === invoiceNumber);
+      if (dupAt !== -1) {
+        markSelfShipBooked_(dbSheet, idx, sheetRows, courierName);
+        return {
+          status: "success",
+          message: `${eeReferenceCode} is already in the ${cfg.label} tracker (row ${dupAt + 2}). Waiting for AWB.`
+        };
+      }
+    }
+
+    const invoiceLink = getSelfShipInvoiceLink_(String(first("Invoice Id") || "").trim(), invoiceNumber, String(first("Invoice Url") || "").trim());
+    const poPdf = String(first("PO PDF") || "").trim();
+    const newRow = trackerSheet.getLastRow() + 1;
+
+    const out = new Array(lastCol).fill("");
+    const put = (name, value) => { const c = tIdx(name); if (c !== -1) out[c] = value; };
+
+    put("Booked Date", new Date());
+    put("PO Number", poNumbers.join(", "));
+    put("Channel", channel);
+    put("Invoice Number", invoiceNumber);
+    put("No. of Boxes", boxes || "");
+    put("Appointment Date", first("Appointment Date"));
+    put("Appointment Time", first("Appointment Time"));
+    put("Appointment ID", first("Appointment ID"));
+    put("PO PDF", hyperlinkFormula_(poPdf, `${poNumbers[0] || eeReferenceCode}_PO`));
+    put("Invoice Url", hyperlinkFormula_(invoiceLink, `${invoiceNumber}_Invoice`));
+    put("Courier", provider === "other" ? courierName : "");
+
+    // Delhivery: the link appears as soon as ops types the AWB in the sheet
+    const awbCol = tIdx("AWB");
+    if (cfg.trackingUrlBase && awbCol !== -1) {
+      const awbRef = `${columnLetter_(awbCol + 1)}${newRow}`;
+      put("Tracking Link", `=IF(${awbRef}="","","${cfg.trackingUrlBase}"&${awbRef})`);
+    }
+
+    trackerSheet.getRange(newRow, 1, 1, lastCol).setValues([out]);
+
+    markSelfShipBooked_(dbSheet, idx, sheetRows, courierName);
+    SpreadsheetApp.flush();
+
+    return {
+      status: "success",
+      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. AWB will sync once it is filled in.${ewbWarning}`,
+      courier: courierName,
+      trackerRow: newRow
+    };
+  } catch (e) {
+    Logger.log(`createSelfShipBooking error for ${eeReferenceCode}: ${e.message}`);
+    return { status: "error", message: "Self-ship booking failed: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function markSelfShipBooked_(dbSheet, idx, sheetRows, courierName) {
+  const carrierIdx = idx("Carrier");
+  const trackingIdx = idx("Tracking Status");
+  const bookedIdx = idx("Booked Date");
+  const awbIdx = idx("AWB");
+  const now = new Date();
+  sheetRows.forEach(r => {
+    if (carrierIdx !== -1) dbSheet.getRange(r, carrierIdx + 1).setValue(`${courierName} (Self)`);
+    if (trackingIdx !== -1) dbSheet.getRange(r, trackingIdx + 1).setValue("Awaiting AWB");
+    if (bookedIdx !== -1) dbSheet.getRange(r, bookedIdx + 1).setValue(now);
+    if (awbIdx !== -1 && String(dbSheet.getRange(r, awbIdx + 1).getValue()).trim() === "PROCESSING") {
+      dbSheet.getRange(r, awbIdx + 1).setValue("");
+    }
+  });
+}
+
+/**
+ * Copies AWBs (and tracking links) typed into the self-ship trackers back to
+ * PO_Database. Runs from a 15-minute time-driven trigger and from the tool's
+ * "Sync Self-Ship" button. Rows are matched by Invoice Number, falling back to
+ * the PO Number(s) in the row.
+ */
+function syncSelfShipTrackers() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another sync is in progress, please retry." };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const dbData = dbSheet.getDataRange().getValues();
+    const headers = dbData.shift();
+    const idx = selfShipHeaderIndex_(headers);
+
+    const col = {
+      ref: idx("EE_reference_code"), po: idx("PO Number"), inv: idx("Invoice Number"),
+      awb: idx("AWB"), carrier: idx("Carrier"), tracking: idx("Tracking Status"),
+      trackingUrl: idx("Tracking URL"), pickup: idx("Pickup Date"), status: idx("Status")
+    };
+    if (col.awb === -1 || col.inv === -1) return { status: "error", message: "PO_Database is missing AWB / Invoice Number columns" };
+
+    const byInvoice = {};
+    const byPo = {};
+    dbData.forEach((row, i) => {
+      const inv = String(row[col.inv] || "").trim();
+      const po = col.po !== -1 ? String(row[col.po] || "").trim() : "";
+      if (inv) (byInvoice[inv] = byInvoice[inv] || []).push(i);
+      if (po) (byPo[po] = byPo[po] || []).push(i);
+    });
+
+    const updated = [];
+    const errors = [];
+
+    Object.keys(SELF_SHIP_TRACKERS_).forEach(key => {
+      const cfg = SELF_SHIP_TRACKERS_[key];
+      let sheet;
+      try {
+        sheet = getSelfShipTrackerSheet_(cfg);
+      } catch (e) {
+        errors.push(e.message);
+        return;
+      }
+      const range = sheet.getDataRange();
+      const values = range.getValues();
+      const formulas = range.getFormulas();
+      if (values.length <= 1) return;
+
+      const tIdx = selfShipHeaderIndex_(values[0]);
+      const t = {
+        po: tIdx("PO Number"), inv: tIdx("Invoice Number"), awb: tIdx("AWB"),
+        link: tIdx("Tracking Link"), courier: tIdx("Courier")
+      };
+      if (t.awb === -1) { errors.push(`${cfg.label} tracker has no AWB column`); return; }
+
+      for (let r = 1; r < values.length; r++) {
+        const awb = String(values[r][t.awb] || "").trim();
+        if (!awb || awb.toUpperCase() === "N/A") continue;
+
+        let trackingUrl = "";
+        if (cfg.trackingUrlBase) {
+          trackingUrl = cfg.trackingUrlBase + encodeURIComponent(awb);
+          // Rows typed in by hand have no link formula; fill it in
+          if (t.link !== -1 && !String(values[r][t.link] || "").trim() && !formulas[r][t.link]) {
+            sheet.getRange(r + 1, t.link + 1).setValue(trackingUrl);
+          }
+        } else if (t.link !== -1) {
+          const link = extractUrlFromCell(values[r][t.link], formulas[r][t.link]);
+          trackingUrl = link && link !== "N/A" ? link : "";
+        }
+
+        const courier = key === "delhivery" ? "Delhivery"
+          : (t.courier !== -1 ? String(values[r][t.courier] || "").trim() : "") || "Other";
+
+        const inv = t.inv !== -1 ? String(values[r][t.inv] || "").trim() : "";
+        let rowIdxs = inv && byInvoice[inv] ? byInvoice[inv] : [];
+        if (!rowIdxs.length && t.po !== -1) {
+          String(values[r][t.po] || "").split(",").map(p => p.trim()).filter(Boolean)
+            .forEach(p => { rowIdxs = rowIdxs.concat(byPo[p] || []); });
+        }
+        if (!rowIdxs.length) continue;
+
+        let changed = false;
+        rowIdxs.forEach(i => {
+          const row = dbData[i];
+          const sheetRow = i + 2;
+          const dbAwb = String(row[col.awb] || "").trim();
+          const dbCarrier = col.carrier !== -1 ? String(row[col.carrier] || "") : "";
+
+          // Never overwrite a shipment booked through NimbusPost / Shiprocket
+          if (dbAwb && dbAwb !== awb && /\((NP|SR)\)/i.test(dbCarrier)) return;
+
+          const set = (c, v) => { if (c !== -1 && row[c] !== v) { dbSheet.getRange(sheetRow, c + 1).setValue(v); row[c] = v; changed = true; } };
+
+          if (dbAwb !== awb) {
+            set(col.awb, awb);
+            set(col.tracking, "AWB Assigned");
+            if (col.pickup !== -1 && !row[col.pickup]) set(col.pickup, selfShipPickupDate_());
+            const status = col.status !== -1 ? String(row[col.status] || "").trim().toLowerCase() : "";
+            if (col.status !== -1 && !SELF_SHIP_NO_ADVANCE_STATUSES_.includes(status)) set(col.status, "Label Generated");
+          }
+          if (!/\(self\)/i.test(dbCarrier)) set(col.carrier, `${courier} (Self)`);
+          if (trackingUrl && col.trackingUrl !== -1 && String(row[col.trackingUrl] || "").trim() !== trackingUrl) {
+            set(col.trackingUrl, trackingUrl);
+          }
+        });
+
+        if (changed) updated.push(`${(col.ref !== -1 && dbData[rowIdxs[0]][col.ref]) || inv} → ${awb} (${cfg.label})`);
+      }
+    });
+
+    SpreadsheetApp.flush();
+    Logger.log(`syncSelfShipTrackers: ${updated.length} updated. ${updated.join("; ")} ${errors.join("; ")}`);
+
+    return {
+      status: errors.length && !updated.length ? "error" : "success",
+      message: (updated.length ? `Synced ${updated.length} self-ship order(s).` : "No new AWBs in the self-ship trackers.") +
+        (errors.length ? ` Issues: ${errors.join("; ")}` : ""),
+      updated: updated
+    };
+  } catch (e) {
+    Logger.log("syncSelfShipTrackers error: " + e.message);
+    return { status: "error", message: "Self-ship sync failed: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Same pickup rule as the NP flow: after 2 PM IST -> next day, skip Sunday
+function selfShipPickupDate_() {
+  const now = new Date();
+  const pickup = new Date(now);
+  if (parseInt(Utilities.formatDate(now, "Asia/Kolkata", "HH"), 10) >= 14) pickup.setDate(pickup.getDate() + 1);
+  if (pickup.getDay() === 0) pickup.setDate(pickup.getDate() + 1);
+  return pickup;
+}
