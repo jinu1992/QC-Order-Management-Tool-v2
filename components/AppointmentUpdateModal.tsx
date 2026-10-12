@@ -72,6 +72,28 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
     const [appointmentDate, setAppointmentDate] = useState(formatDateForInput(so.appointmentDate));
     const [appointmentTime, setAppointmentTime] = useState(formatTimeForInput(so.appointmentTime));
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [qrFile, setQrFile] = useState<{ name: string, type: string, base64: string, previewUrl: string } | null>(null);
+
+    const handleQrFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            addNotification("Please choose an image file (JPG or PNG) of the QR code", "error");
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            addNotification("QR image is too large (max 5 MB)", "error");
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const dataUrl = String(reader.result || '');
+            setQrFile({ name: file.name, type: file.type, base64: dataUrl.split(',')[1] || '', previewUrl: dataUrl });
+        };
+        reader.onerror = () => addNotification("Could not read the QR image", "error");
+        reader.readAsDataURL(file);
+    };
 
     const channelLower = so.channel.toLowerCase();
     const isZepto = channelLower.includes('zepto');
@@ -166,7 +188,8 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
                 eeReferenceCode: so.id,
                 appointmentId: appointmentId.trim(),
                 appointmentDate: appointmentDate.trim(),
-                appointmentTime: appointmentTime.trim()
+                appointmentTime: appointmentTime.trim(),
+                ...(qrFile ? { qrFileData: qrFile.base64, qrFileName: qrFile.name, qrMimeType: qrFile.type } : {})
             });
 
             if (response.status === 'success') {
@@ -181,6 +204,9 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
                     }
                     if (appointmentTime.trim() !== formatTimeForInput(so.appointmentTime)) {
                         changes.push(`Appointment Time: ${formatTimeForInput(so.appointmentTime) || 'None'} -> ${appointmentTime.trim()}`);
+                    }
+                    if (qrFile) {
+                        changes.push(`QR image uploaded (${qrFile.name})`);
                     }
 
                     if (changes.length > 0) {
@@ -254,6 +280,25 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
                                 />
                             </div>
                         </div>
+                        {isBlinkit && (
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                                    QR Code Image {so.qrCodeUrl && !qrFile ? '(already saved — upload to replace)' : '(optional)'}
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    {qrFile && (
+                                        <img src={qrFile.previewUrl} alt="QR preview" className="h-16 w-16 object-contain rounded-lg border border-gray-200 bg-white" />
+                                    )}
+                                    <label className={`flex-1 cursor-pointer px-4 py-3 bg-gray-50 border border-dashed border-gray-300 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 transition-all truncate`}>
+                                        {qrFile ? qrFile.name : 'Choose the QR image from the appointment pass email'}
+                                        <input type="file" accept="image/*" onChange={handleQrFileChange} className="hidden" />
+                                    </label>
+                                    {qrFile && (
+                                        <button type="button" onClick={() => setQrFile(null)} className="text-[10px] font-bold text-gray-400 hover:text-red-500">Remove</button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className={`${brand.bg} border ${brand.border} p-4 rounded-2xl flex gap-3`}>

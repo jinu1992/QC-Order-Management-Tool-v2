@@ -201,7 +201,7 @@ function doPost(e) {
     else if (action === 'sendAppointmentEmail') result = { status: 'success', message: 'Appointment email sent' };
     else if (action === 'updateZeptoOrderStatus') result = { status: 'success', message: 'Zepto order status updated.' };
     else if (action === 'updateZeptoAppointmentDetails') result = { status: 'success', message: 'Zepto appointment details updated.' };
-    else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses(data.force);
+    else if (action === 'processBlinkitAppointmentPasses') result = processBlinkitAppointmentPasses(data.force, data.dryRun);
     else if (action === 'backfillBlinkitAppointments') result = extractAppointmentPassDetails();
     else if (action === 'debugBlinkitRepoRows') result = debugBlinkitRepoRows(data.limit);
     else if (action === 'debugFindRecentBlinkitEmail') result = debugFindRecentBlinkitEmail();
@@ -11238,7 +11238,7 @@ function debugBlinkitRepoRows(limit) {
   return { status: "success", data: rows.slice(-n) };
 }
 
-function processBlinkitAppointmentPasses(force) {
+function processBlinkitAppointmentPasses(force, dryRun) {
 
   try {
 
@@ -11313,15 +11313,103 @@ function processBlinkitAppointmentPasses(force) {
       logSheet.getRange(2, MSG_ID_COL, repoLastRow - 1, 1).getValues()
         .forEach(r => { if (r[0]) processedMessageIds.add(String(r[0])); });
     }
-    if (!logSheet.getRange(1, MSG_ID_COL).getValue()) {
+    if (!dryRun && !logSheet.getRange(1, MSG_ID_COL).getValue()) {
       logSheet.getRange(1, MSG_ID_COL).setValue('Message ID');
     }
+
+    // Appointment IDs already logged. A forwarded pass is usually a copy of
+    // one that also arrived directly (or was forwarded twice), and a copy
+    // has its own message ID, so forwards are deduped on Appointment ID too.
+    const loggedAppointmentIds = new Set();
+    const repoHeaders = logSheet.getRange(1, 1, 1, logSheet.getLastColumn()).getValues()[0];
+    const repoApptIdCol = repoHeaders.indexOf("Appointment ID") + 1;
+    if (repoApptIdCol > 0 && repoLastRow > 1) {
+      logSheet.getRange(2, repoApptIdCol, repoLastRow - 1, 1).getValues()
+        .forEach(r => { if (r[0]) loggedAppointmentIds.add(String(r[0]).trim()); });
+    }
+
+    // PartnersBiz subject formats that carry a pass: "... | Appointment Pass
+    // | ..." for the original, "Courier Appointment Summary" for updates
+    // (e.g. after a courier reassignment), and "Courier Appointment
+    // Schedule" when the slot is booked from another vendor login or by
+    // Blinkit itself. Cancellations reuse the same body layout - never log
+    // those as a pass.
+    const isAppointmentSubject = subject => {
+      const upper = String(subject || '').toUpperCase();
+      if (upper.includes('CANCEL')) return false;
+      return upper.includes('APPOINTMENT PASS') ||
+        upper.includes('COURIER APPOINTMENT SUMMARY') ||
+        upper.includes('COURIER APPOINTMENT SCHEDULE');
+    };
 
     const configData = configSheet.getDataRange().getValues();
     const newLogs = [];
     let processedCount = 0;
     let alreadyProcessedCount = 0;
     const debug = [];
+
+    const logPass = (message, channelName, rowDebug, isForward) => {
+      const messageTime = Math.floor(message.getDate().getTime() / 1000);
+      if (messageTime <= startTime) return;
+
+      rowDebug.messagesSeen++;
+
+      const sender = message.getFrom().toLowerCase();
+      const subject = message.getSubject();
+      if (!isAppointmentSubject(subject)) { rowDebug.skippedSubject++; return; }
+      // Forwards are only "Fwd:/Fw:" copies - a "Re:" reply quotes the pass
+      // too, but it's a conversation about it, not a copy of it.
+      if (isForward && !/^\s*fwd?:/i.test(subject)) { rowDebug.skippedSubject++; return; }
+
+      const messageId = message.getId();
+      if (processedMessageIds.has(messageId)) { alreadyProcessedCount++; rowDebug.skippedAlreadyProcessed++; return; }
+
+      let appointmentDetails;
+      let dateReceived = message.getDate();
+      if (isForward) {
+        // Parse the text first and only save the QR once the forward is known
+        // to be a new, complete pass - an unlogged forward is re-seen every
+        // run, and must not create a Drive file each time.
+        appointmentDetails = _parseBlinkitAppointmentPass(message, folder, { skipQr: true });
+        if (appointmentDetails.appointmentId === "Not Found" || !appointmentDetails.poNumbers) {
+          rowDebug.skippedUnparsed++;
+          return;
+        }
+        if (loggedAppointmentIds.has(appointmentDetails.appointmentId)) {
+          rowDebug.skippedDuplicateAppointment++;
+          return;
+        }
+        appointmentDetails.qrCodeUrl = _saveBlinkitAppointmentQr_(message, folder, appointmentDetails.appointmentId, dryRun);
+        // Order by when PartnersBiz sent the pass, not when it was forwarded,
+        // so a late forward of an old pass can't outrank a newer appointment.
+        dateReceived = _forwardedOriginalDate_(message.getPlainBody()) || dateReceived;
+      } else {
+        appointmentDetails = _parseBlinkitAppointmentPass(message, folder, { dryRun: dryRun });
+      }
+
+      rowDebug.matched++;
+
+      newLogs.push([
+        dateReceived,
+        channelName,
+        sender,
+        subject,
+        `QR Pass - ${appointmentDetails.appointmentId}`,
+        appointmentDetails.qrCodeUrl,
+        "Appointment Pass",
+        appointmentDetails.poNumbers,
+        "",
+        appointmentDetails.appointmentId,
+        appointmentDetails.appointmentDate,
+        appointmentDetails.reportingTime,
+        "",       // col 13 "Status" - left blank; extractAppointmentPassDetails() below owns this column
+        messageId // col 14 "Message ID" (MSG_ID_COL) - was wrongly landing in col 13/"Status" before, see MSG_ID_COL comment
+      ]);
+      processedMessageIds.add(messageId);
+      if (appointmentDetails.appointmentId !== "Not Found") loggedAppointmentIds.add(appointmentDetails.appointmentId);
+
+      processedCount++;
+    };
 
     configData.forEach(row => {
 
@@ -11337,6 +11425,11 @@ function processBlinkitAppointmentPasses(force) {
 
       if (!emailList.length) return;
 
+      const isBlinkitSender = message => {
+        const sender = message.getFrom().toLowerCase();
+        return emailList.some(e => sender.includes(e));
+      };
+
       const fromClause = `from:(${emailList.join(' OR ')})`;
       let query = `${fromClause} -from:me after:${startTime}`;
       if (subjectKeyword) query += ` subject:("${subjectKeyword}")`;
@@ -11344,60 +11437,52 @@ function processBlinkitAppointmentPasses(force) {
       const threads = GmailApp.search(query);
       const rowDebug = { channelName, query, threadsFound: threads.length, messagesSeen: 0, skippedSender: 0, skippedSubject: 0, skippedAlreadyProcessed: 0, matched: 0 };
       debug.push(rowDebug);
-      if (!threads.length) return;
-
-      const threadMessages = GmailApp.getMessagesForThreads(threads);
-
-      threadMessages.forEach(messages => {
-        messages.forEach(message => {
-
-          const messageTime = Math.floor(message.getDate().getTime() / 1000);
-          if (messageTime <= startTime) return;
-
-          rowDebug.messagesSeen++;
-
-          const sender = message.getFrom().toLowerCase();
-          if (!emailList.some(e => sender.includes(e))) { rowDebug.skippedSender++; return; }
-
-          // PartnersBiz sends two subject formats: "... | Appointment Pass | ..."
-          // for the original appointment, and "Courier Appointment Summary"
-          // for updates (e.g. after a courier reassignment triggers a fresh
-          // appointment on the same PO/thread).
-          const subject = message.getSubject();
-          const subjectUpper = subject.toUpperCase();
-          const isAppointmentEmail = subjectUpper.includes('APPOINTMENT PASS') || subjectUpper.includes('COURIER APPOINTMENT SUMMARY');
-          if (!isAppointmentEmail) { rowDebug.skippedSubject++; return; }
-
-          const messageId = message.getId();
-          if (processedMessageIds.has(messageId)) { alreadyProcessedCount++; rowDebug.skippedAlreadyProcessed++; return; }
-
-          rowDebug.matched++;
-
-          const appointmentDetails = _parseBlinkitAppointmentPass(message, folder);
-
-          newLogs.push([
-            message.getDate(),
-            channelName,
-            sender,
-            subject,
-            `QR Pass - ${appointmentDetails.appointmentId}`,
-            appointmentDetails.qrCodeUrl,
-            "Appointment Pass",
-            appointmentDetails.poNumbers,
-            "",
-            appointmentDetails.appointmentId,
-            appointmentDetails.appointmentDate,
-            appointmentDetails.reportingTime,
-            "",       // col 13 "Status" - left blank; extractAppointmentPassDetails() below owns this column
-            messageId // col 14 "Message ID" (MSG_ID_COL) - was wrongly landing in col 13/"Status" before, see MSG_ID_COL comment
-          ]);
-          processedMessageIds.add(messageId);
-
-          processedCount++;
+      if (threads.length) {
+        GmailApp.getMessagesForThreads(threads).forEach(messages => {
+          messages.forEach(message => {
+            if (!isBlinkitSender(message)) {
+              if (Math.floor(message.getDate().getTime() / 1000) > startTime) rowDebug.skippedSender++;
+              return;
+            }
+            logPass(message, channelName, rowDebug, false);
+          });
         });
-      });
+      }
+
+      // Passes booked from another vendor login, or scheduled by Blinkit
+      // itself, reach this mailbox only as a forward from a colleague (or
+      // from this mailbox to itself), so the sender is a person, not
+      // PartnersBiz. Find them by the original sender quoted in the body.
+      const forwardQuery = `"noreply@partnersbiz.com" "Appointment ID" -from:partnersbiz.com after:${startTime}`;
+      const forwardThreads = GmailApp.search(forwardQuery);
+      const forwardDebug = { channelName: `${channelName} (forwarded)`, query: forwardQuery, threadsFound: forwardThreads.length, messagesSeen: 0, skippedSubject: 0, skippedAlreadyProcessed: 0, skippedUnparsed: 0, skippedDuplicateAppointment: 0, matched: 0 };
+      debug.push(forwardDebug);
+      if (forwardThreads.length) {
+        GmailApp.getMessagesForThreads(forwardThreads).forEach(messages => {
+          messages.forEach(message => {
+            // Direct PartnersBiz messages in these threads belong to the search above.
+            if (isBlinkitSender(message)) return;
+            logPass(message, channelName, forwardDebug, true);
+          });
+        });
+      }
 
     });
+
+    if (dryRun) {
+      return {
+        status: "success",
+        dryRun: true,
+        message: `${processedCount} Blinkit appointment pass(es) would be logged.`,
+        processedCount: processedCount,
+        alreadyProcessedCount: alreadyProcessedCount,
+        preview: newLogs.map(r => ({
+          dateReceived: r[0], sender: r[2], subject: r[3], qr: r[5],
+          poNumber: r[7], appointmentId: r[9], appointmentDate: r[10], reportingTime: r[11]
+        })),
+        debug: debug
+      };
+    }
 
     // Write logs
     if (newLogs.length) {
@@ -11411,7 +11496,7 @@ function processBlinkitAppointmentPasses(force) {
       // An empty run (e.g. under a mailbox that doesn't receive this mail,
       // or a stray manual/diagnostic call) must NOT push the cutoff forward,
       // or a different mailbox's later, legitimate run would skip mail that
-      // arrived before this run but hasn't been scanned under it yet.
+      // arrived before this run but hasn't been scanned yet under it.
       scriptProperties.setProperty(LAST_RUN_KEY, String(currentRunTime));
     }
 
@@ -11474,8 +11559,8 @@ function updateZeptoASN(data) {
 }
 
 function updateInstamartAppointmentDetails(data) {
-  const { eeReferenceCode, appointmentId, appointmentDate, appointmentTime } = data;
-  if (!eeReferenceCode || (!appointmentId && !appointmentDate && !appointmentTime)) {
+  const { eeReferenceCode, appointmentId, appointmentDate, appointmentTime, qrFileData, qrFileName, qrMimeType } = data;
+  if (!eeReferenceCode || (!appointmentId && !appointmentDate && !appointmentTime && !qrFileData)) {
     return { status: 'error', message: 'Missing required fields' };
   }
 
@@ -11493,12 +11578,31 @@ function updateInstamartAppointmentDetails(data) {
     return { status: 'error', message: 'Required columns not found in PO_Database' };
   }
 
+  // Optional QR image (manual Blinkit entry, when the pass email never
+  // synced) - saved like a synced pass's QR so Print Appt Pass shows it.
+  let qrCodeUrl = "";
+  const qrIdx = headers.indexOf("QR Code URL");
+  if (qrFileData) {
+    if (qrIdx === -1) return { status: 'error', message: 'QR Code URL column not found in PO_Database' };
+    try {
+      const blob = Utilities.newBlob(
+        Utilities.base64Decode(qrFileData),
+        qrMimeType || 'image/jpeg',
+        `QR_APPT_${appointmentId || eeReferenceCode}_manual_${qrFileName || 'upload.jpeg'}`
+      );
+      qrCodeUrl = DriveApp.getFolderById(DRIVE_FOLDER_ID).createFile(blob).getUrl();
+    } catch (qrErr) {
+      return { status: 'error', message: `Could not save QR image to Drive: ${qrErr.message}` };
+    }
+  }
+
   let updated = false;
   for (let i = 1; i < rows.length; i++) {
     if (String(rows[i][eeRefIdx]).trim() === String(eeReferenceCode).trim()) {
       if (appointmentId) sheet.getRange(i + 1, apptIdIdx + 1).setValue(appointmentId);
       if (appointmentDate) sheet.getRange(i + 1, apptDateIdx + 1).setValue(appointmentDate);
       if (appointmentTime) sheet.getRange(i + 1, apptTimeIdx + 1).setValue(appointmentTime);
+      if (qrCodeUrl) sheet.getRange(i + 1, qrIdx + 1).setValue(qrCodeUrl);
       updated = true;
     }
   }
@@ -11574,6 +11678,21 @@ function extractAppointmentPassDetails() {
   // marked "Superseded" instead of written, so a stale appointment/QR can
   // never win just because of loop/processing order.
   const retryableByPo = {};
+  // Newest pass already applied to PO_Database per PO ("Extracted", or a
+  // later reschedule "Updated → ..."). A retryable row older than that is an
+  // old pass logged late (e.g. a forward of a superseded pass) - applying it
+  // would roll the PO back to a stale appointment.
+  const latestAppliedByPo = {};
+  dataRows.forEach(row => {
+    const category = String(row[categoryIndex] || "").trim().toLowerCase();
+    const currentStatus = String(row[statusIndex] || "").trim();
+    if (category !== "appointment pass") return;
+    if (currentStatus === "" || currentStatus.indexOf("Skipped") === 0 || currentStatus.indexOf("Superseded") === 0) return;
+    const poNumber = String(row[poNumIndex] || "").trim();
+    const received = new Date(row[dateReceivedIndex] || 0).getTime();
+    if (poNumber && (!latestAppliedByPo[poNumber] || received > latestAppliedByPo[poNumber])) latestAppliedByPo[poNumber] = received;
+  });
+
   dataRows.forEach((row, index) => {
     const category = String(row[categoryIndex] || "").trim().toLowerCase();
     const currentStatus = String(row[statusIndex] || "").trim();
@@ -11605,6 +11724,12 @@ function extractAppointmentPassDetails() {
       rowsToUpdate[e.rowIndexInSheet] = "Superseded (newer appointment received)";
       supersededCount++;
     });
+
+    if (latestAppliedByPo[poNumber] && latest.dateReceived < latestAppliedByPo[poNumber]) {
+      rowsToUpdate[latest.rowIndexInSheet] = "Superseded (newer appointment received)";
+      supersededCount++;
+      return;
+    }
 
     const dbRowIndexes = findRowIndexesByPoNumber(dbSheet, poNumber);
 
@@ -11674,9 +11799,11 @@ function extractAppointmentPassDetails() {
  * @return {object} An object containing all extracted appointment details, including the qrCodeUrl.
  */
 
-function _parseBlinkitAppointmentPass(message, folder) {
-  const emailBody = message.getPlainBody(); // Text
-  const emailHtml = message.getBody();      // HTML (QR lives here)
+function _parseBlinkitAppointmentPass(message, folder, options) {
+  const opts = options || {};
+  // Outlook-style forwards prefix the quoted original with "> " - strip it so
+  // the label/value line layout below is the same as in a direct email.
+  const emailBody = message.getPlainBody().replace(/^[ \t]*>+[ \t]?/gm, '');
 
   const details = {
     appointmentId: "Not Found",
@@ -11689,18 +11816,30 @@ function _parseBlinkitAppointmentPass(message, folder) {
   // ----------------------------------------------------
   // TEXT PARSING
   // ----------------------------------------------------
-  const idMatch = emailBody.match(/Appointment ID\s*\n\s*(\d+)/i);
+  const idMatch = emailBody.match(/Appointment ID\s*:?\s*\n\s*(\d+)/i);
   if (idMatch) details.appointmentId = idMatch[1].trim();
 
-  const dateMatch = emailBody.match(/Appointment Date\s*\n\s*(\d{4}-\d{2}-\d{2})/i);
+  const dateMatch = emailBody.match(/Appointment Date\s*:?\s*\n\s*(\d{4}-\d{2}-\d{2})/i);
   if (dateMatch) details.appointmentDate = dateMatch[1].trim();
 
-  const timeMatch = emailBody.match(/Reporting Time\s*\n\s*(\d{2}:\d{2}\s*(?:AM|PM))/i);
+  const timeMatch = emailBody.match(/Reporting Time\s*:?\s*\n\s*(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
   if (timeMatch) details.reportingTime = timeMatch[1].trim();
 
   const poMatch = emailBody.match(/following POs:[\s\S]*?(\d+)/i);
   if (poMatch) details.poNumbers = poMatch[1];
 
+  if (opts.skipQr) return details;
+
+  details.qrCodeUrl = _saveBlinkitAppointmentQr_(message, folder, details.appointmentId, opts.dryRun);
+  return details;
+}
+
+/**
+ * Saves a Blinkit appointment pass's QR image to Drive and returns its URL
+ * ("NOT FOUND" / "SAVE FAILED" on failure). With dryRun, saves nothing and
+ * returns which image would have been used.
+ */
+function _saveBlinkitAppointmentQr_(message, folder, appointmentId, dryRun) {
   // ----------------------------------------------------
   // QR CODE EXTRACTION (FIXED)
   // Blinkit sometimes sends the QR inline in the HTML (qr-section <img>)
@@ -11709,7 +11848,7 @@ function _parseBlinkitAppointmentPass(message, folder) {
   // inline <img> parsing for backward compatibility.
   // ----------------------------------------------------
   try {
-    const imageName = `QR_APPT_${details.appointmentId || 'UNKNOWN'}.jpeg`;
+    const imageName = `QR_APPT_${appointmentId || 'UNKNOWN'}.jpeg`;
     let imageBlob = null;
 
     // 1. Try QR code as an email attachment (image files only). Must
@@ -11719,26 +11858,33 @@ function _parseBlinkitAppointmentPass(message, folder) {
     // which is how newer Blinkit appointment emails send the QR.
     const attachments = message.getAttachments({ includeAttachments: true, includeInlineImages: true });
     // Match by content type only (not filename) - inline/CID images from
-    // some senders don't carry a normal .jpg/.png filename.
-    const qrAttachment = attachments.find(att => att.getContentType().indexOf('image/') === 0);
+    // some senders don't carry a normal .jpg/.png filename. PartnersBiz names
+    // the QR file after the Appointment ID (e.g. 734422614386.jpeg), so prefer
+    // that one: a forward can carry other images too (the forwarder's
+    // signature logo).
+    const images = attachments.filter(att => att.getContentType().indexOf('image/') === 0);
+    const qrAttachment =
+      images.find(att => appointmentId && appointmentId !== "Not Found" && String(att.getName()).indexOf(appointmentId) !== -1) ||
+      images[0];
 
     if (qrAttachment) {
+      if (dryRun) return `DRY RUN: would save attachment ${qrAttachment.getName()}`;
       imageBlob = qrAttachment.copyBlob();
       Logger.log(`QR image found as attachment: ${qrAttachment.getName()}`);
     } else {
       // 2. Fall back to inline <img> inside the qr-section div
-      const qrImgMatch = emailHtml.match(
+      const qrImgMatch = message.getBody().match(
         /<div class="qr-section">[\s\S]*?<img[^>]+src="([^"]+)"/i
       );
 
       if (!qrImgMatch || !qrImgMatch[1]) {
         Logger.log("QR image not found in HTML or attachments");
-        details.qrCodeUrl = "NOT FOUND";
-        return details;
+        return "NOT FOUND";
       }
 
       // HTML entities decode (&amp; → &)
       const qrImageUrl = qrImgMatch[1].replace(/&amp;/g, '&');
+      if (dryRun) return `DRY RUN: would fetch inline QR ${qrImageUrl}`;
 
       imageBlob = UrlFetchApp.fetch(qrImageUrl, {
         followRedirects: true,
@@ -11748,15 +11894,33 @@ function _parseBlinkitAppointmentPass(message, folder) {
 
     const file = folder.createFile(imageBlob).setName(imageName);
 
-    details.qrCodeUrl = file.getUrl();
     Logger.log(`QR code saved successfully: ${imageName}`);
+    return file.getUrl();
 
   } catch (err) {
     Logger.log(`QR extraction failed: ${err.message}`);
-    details.qrCodeUrl = "SAVE FAILED";
+    return "SAVE FAILED";
   }
+}
 
-  return details;
+/**
+ * The original send date from a forwarded email's quoted header (Gmail:
+ * "Date: Mon, Oct 12, 2026 at 3:19 PM", Outlook: "Sent: Monday, October 12,
+ * 2026 3:19 PM"), or null if it can't be read.
+ */
+function _forwardedOriginalDate_(plainBody) {
+  const body = String(plainBody || '');
+  const markerIdx = body.search(/Forwarded message|Original Message|^\s*From:/im);
+  const header = markerIdx === -1 ? body : body.slice(markerIdx);
+  const m = header.match(/^[ \t>]*(?:Date|Sent):\s*(.+)$/im);
+  if (!m) return null;
+  const cleaned = m[1]
+    .replace(/[  ]/g, ' ')
+    .replace(/^[A-Za-z]+,\s*/, '')
+    .replace(/\s+at\s+/i, ' ')
+    .trim();
+  const d = new Date(cleaned);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 

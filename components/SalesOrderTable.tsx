@@ -4041,6 +4041,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                     {hasAppointmentId ? 'Print Appt Pass' : 'Take Appointment'}
                                                                 </button>
                                                             )}
+                                                            {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && hasAppointmentId && !/^https?:\/\//i.test(so.qrCodeUrl || '') && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); setInstamartApptModal({ isOpen: true, so }); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 bg-yellow-50 text-yellow-800 border border-yellow-200 hover:bg-yellow-100"
+                                                                    title="This appointment has no QR image - upload it from the appointment pass email"
+                                                                >
+                                                                    <PlusIcon className="h-3.5 w-3.5" /> Add QR
+                                                                </button>
+                                                            )}
                                                             {showFlipkartTakeApptBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
                                                                 <button
                                                                     onClick={(e: any) => {
