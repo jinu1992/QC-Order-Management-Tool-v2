@@ -81,8 +81,11 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
     const isBlinkit = channelLower.includes('blinkit');
     const isFlipkartMinutes = channelLower.includes('minute');
     
-    // Most quick commerce channels don't need a manually entered ID as they use portal logic
-    const hideIdField = isZepto || isInstamart || isBB || isRBL || isBlinkit;
+    // Most quick commerce channels don't need a manually entered ID as they use portal logic.
+    // Blinkit does: its ID normally comes from the appointment-pass email sync, but passes
+    // booked from another login or scheduled by Blinkit itself never reach that sync, and
+    // Mark as RTD is blocked until an Appointment ID exists.
+    const hideIdField = isZepto || isInstamart || isBB || isRBL;
 
     const getBrandDetails = () => {
         if (isZepto) return {
@@ -143,6 +146,11 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
         const hasId = !hideIdField && appointmentId.trim();
         const hasDate = appointmentDate.trim();
         const hasTime = appointmentTime.trim();
+
+        if (isBlinkit && !appointmentId.trim()) {
+            addNotification("Please enter the Appointment ID from the Blinkit appointment pass", "error");
+            return;
+        }
 
         if (!hasId && !hasDate && !hasTime) {
             const msg = hideIdField

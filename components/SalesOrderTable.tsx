@@ -1056,7 +1056,7 @@ const CopyField = ({ label, value, icon, copyValue }: { label: string, value: st
     );
 };
 
-const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNotification: any }> = ({ so, onClose, addNotification }) => {
+const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNotification: any, onEnterManually?: () => void }> = ({ so, onClose, addNotification, onEnterManually }) => {
     const [showHelp, setShowHelp] = useState(false);
     const isZepto = so.channel.toLowerCase().includes('zepto');
     const isBlinkit = so.channel.toLowerCase().includes('blinkit');
@@ -1154,6 +1154,15 @@ const PortalHelperModal: FC<{ so: GroupedSalesOrder, onClose: () => void, addNot
                     </div>
                     <div className="flex flex-col items-center pt-2">
                         <button onClick={handleOpenPortal} className={`w-full py-4 ${brandColor} text-white font-bold rounded-2xl shadow-xl ${shadowColor} hover:brightness-95 transition-all flex items-center justify-center gap-3 active:scale-95`}><ExternalLinkIcon className="h-5 w-5" /> Open {portalName} Portal</button>
+                        {isBlinkit && onEnterManually && (
+                            <button
+                                onClick={onEnterManually}
+                                className="mt-3 text-xs font-bold text-gray-500 hover:text-partners-green underline transition-colors"
+                                title="Use when the appointment pass didn't sync (booked from another login, scheduled by Blinkit, or forwarded email)"
+                            >
+                                Already booked? Enter appointment details manually
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -3620,6 +3629,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     so={portalHelper.so}
                     onClose={() => setPortalHelper({ isOpen: false, so: null })}
                     addNotification={addNotification}
+                    onEnterManually={() => {
+                        const so = portalHelper.so;
+                        setPortalHelper({ isOpen: false, so: null });
+                        setInstamartApptModal({ isOpen: true, so });
+                    }}
                 />
             )}
 
