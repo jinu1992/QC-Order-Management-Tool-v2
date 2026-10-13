@@ -1420,7 +1420,7 @@ const ShipFlowModal: FC<{
                     <button onClick={() => submit('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
                         <div>
                             <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Delhivery</p>
-                            <p className="text-xs text-gray-500">Posts to the Delhivery tracker; AWB and tracking link sync back once filled</p>
+                            <p className="text-xs text-gray-500">Sends a request to Delhivery's partner portal; AWB syncs back once their label passes verification</p>
                         </div>
                         {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
                     </button>

@@ -623,13 +623,26 @@ export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{ status
     return await postToScript({ action: 'FETCH_BOX_DETAILS', eeReferenceCode });
 };
 
-// Posts an invoiced order to the Delhivery or other-logistics self-ship tracker sheet
+// Posts an invoiced order to the Delhivery or other-logistics self-ship tracker sheet.
+// Apps Script sometimes drops the response (the browser sees "Failed to fetch" or its
+// HTML error page) even when the script ran. The backend skips an invoice that's already
+// in the tracker, so retrying is safe and returns the real outcome.
 export const createSelfShipBooking = async (
     eeReferenceCode: string,
     provider: 'delhivery' | 'other',
     courierName?: string
 ): Promise<{ status: string, message: string }> => {
-    return await postToScript({ action: 'createSelfShipBooking', eeReferenceCode, provider, courierName });
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
+        try {
+            return await postToScript({ action: 'createSelfShipBooking', eeReferenceCode, provider, courierName });
+        } catch (err) {
+            lastError = err;
+            console.warn(`createSelfShipBooking attempt ${attempt + 1} failed:`, err);
+        }
+    }
+    throw lastError;
 };
 
 // Pulls AWBs / tracking links typed into the self-ship trackers into PO_Database

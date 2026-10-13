@@ -10,6 +10,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import { chromium } from "playwright";
 import { registerApiV2Routes } from "./server/routes/index";
+import { createPartnerRouter } from "./server/routes/partner";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -343,6 +344,11 @@ async function startServer() {
   // hardcoded-Admin stub) plus the new Tier 1 CRUD endpoints (users, channel configs,
   // inventory, system config, store/POC mappings, upload logs, PO actions, packing data).
   registerApiV2Routes(app, oauth2Client);
+
+  // Delhivery partner portal (/partner): its own Google sign-in, checked against the
+  // tracker sheet's "Portal Access" tab. Registered before the internal OAuth callback,
+  // which it shares.
+  app.use(createPartnerRouter(getRedirectUri()));
 
   app.get("/api/auth/google/url", (req: Request, res: Response) => {
     const url = oauth2Client.generateAuthUrl({

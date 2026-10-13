@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { registerApiV2Routes } from "../server/routes/index.js";
+import { createPartnerRouter } from "../server/routes/partner.js";
 
 dotenv.config();
 
@@ -30,6 +31,11 @@ const oauth2Client = new google.auth.OAuth2(
 // hardcoded-Admin stub) plus the new Tier 1 CRUD endpoints (users, channel configs,
 // inventory, system config, store/POC mappings, upload logs, PO actions, packing data).
 registerApiV2Routes(app, oauth2Client);
+
+// Delhivery partner portal (/partner): its own Google sign-in, checked against the
+// tracker sheet's "Portal Access" tab. Registered before the internal OAuth callback,
+// which it shares.
+app.use(createPartnerRouter(getRedirectUri()));
 
 app.get("/api/auth/google/url", (req: Request, res: Response) => {
   const url = oauth2Client.generateAuthUrl({

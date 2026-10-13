@@ -167,7 +167,11 @@ function doPost(e) {
     }
 
     const action = data.action;
-    
+
+    // Partner portal calls carry the shared secret and label PDFs, so they are routed
+    // before debugLog writes the raw payload to the debug sheet
+    if (String(action || "").indexOf("partner") === 0) return responseJSON(handlePartnerPortalAction_(data));
+
     debugLog(action || "UNKNOWN_ACTION", data);
 
     let result;
@@ -14726,6 +14730,66 @@ function selfShipHeaderIndex_(headers) {
   };
 }
 
+// Appends any missing headers to the tracker's header row (formatted like the last
+// existing header) and returns the full header row
+function ensureSelfShipColumns_(sheet, names) {
+  let lastCol = sheet.getLastColumn();
+  let headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const idx = selfShipHeaderIndex_(headers);
+  const missing = names.filter(n => idx(n) === -1);
+  if (!missing.length) return headers;
+
+  const needed = lastCol + missing.length - sheet.getMaxColumns();
+  if (needed > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), needed);
+  missing.forEach((name, i) => {
+    const cell = sheet.getRange(1, lastCol + 1 + i);
+    sheet.getRange(1, lastCol).copyTo(cell, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    cell.setValue(name);
+  });
+  return headers.concat(missing);
+}
+
+// Consignee block for the partner: the same EE customer billing address the NP flow
+// books as the consignee address
+function selfShipShipToText_(ss, customerId, storeCode) {
+  try {
+    const c = _loadEECustomerData(ss).get(String(customerId || "").trim());
+    if (!c) return storeCode ? `Store: ${storeCode}` : "";
+    const place = [c['Billing City'], c['Billing State']].filter(Boolean).join(", ");
+    return [
+      c['Company Name'],
+      c['Billing Street'],
+      [place, c['Billing Zip']].filter(Boolean).join(" - "),
+      c['Support Contact'] ? `Ph: ${c['Support Contact']}` : "",
+      c['GST'] && String(c['GST']).toUpperCase() !== "URP" ? `GSTIN: ${c['GST']}` : "",
+      storeCode ? `Store: ${storeCode}` : ""
+    ].map(s => String(s || "").trim()).filter(Boolean).join("\n");
+  } catch (e) {
+    Logger.log(`selfShipShipToText_: ${e.message}`);
+    return storeCode ? `Store: ${storeCode}` : "";
+  }
+}
+
+// One line per box: "Box 1: 40x30x30 cm, 8.2 kg" (packing data weights are in grams)
+function selfShipBoxDetailsText_(ss, eeReferenceCode) {
+  try {
+    const boxes = {};
+    _loadPackingData(ss, eeReferenceCode).forEach(item => {
+      const id = String(item['Box ID'] || "").trim();
+      if (!id || boxes[id]) return;
+      boxes[id] = item;
+    });
+    return Object.keys(boxes).map(id => {
+      const b = boxes[id];
+      const kg = Number(b['Box Weight']) ? `, ${(Number(b['Box Weight']) / 1000).toFixed(1)} kg` : "";
+      return `Box ${id}: ${b['Box Length']}x${b['Box Width']}x${b['Box Height']} cm${kg}`;
+    }).join("\n");
+  } catch (e) {
+    Logger.log(`selfShipBoxDetailsText_: ${e.message}`);
+    return "";
+  }
+}
+
 function columnLetter_(colNumber) {
   let letters = "";
   while (colNumber > 0) {
@@ -14833,34 +14897,20 @@ function createSelfShipBooking(data) {
     const boxes = boxIdx === -1 ? 0 : Math.max(0, ...orderRows.map(r => Number(r.row[boxIdx]) || 0));
     const sheetRows = orderRows.map(r => r.sheetRow);
 
-    // E-Way Bill with Delhivery as transporter, same as the NP flow does for B2B
-    // channels. A failure is a warning only; the booking still goes ahead.
-    let ewbWarning = "";
-    if (provider === "delhivery" && B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
-      try {
-        ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, sheetRows, SELF_SHIP_DELHIVERY_COURIER_ID_, false);
-      } catch (ewbErr) {
-        Logger.log(`createSelfShipBooking: EWB step failed for ${eeReferenceCode}: ${ewbErr.message}`);
-        ewbWarning = ` (Warning: E-Way Bill could not be generated — ${ewbErr.message}. Please fix it in Zoho.)`;
-      }
+    // The Delhivery partner verifies the label's box count against this, so it must exist
+    if (provider === "delhivery" && !boxes) {
+      return { status: "error", message: "No box count on this order yet. Fetch the box details before sending it to Delhivery." };
     }
 
     // ---- Tracker row ----
     const trackerSheet = getSelfShipTrackerSheet_(cfg);
-    let lastCol = trackerSheet.getLastColumn();
-    let trackerHeaders = trackerSheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    let tIdx = selfShipHeaderIndex_(trackerHeaders);
+    const trackerHeaders = ensureSelfShipColumns_(trackerSheet,
+      provider === "delhivery" ? PARTNER_REQUEST_COLUMNS_ : ["Courier"]);
+    const lastCol = trackerHeaders.length;
+    const tIdx = selfShipHeaderIndex_(trackerHeaders);
 
-    if (provider === "other" && tIdx("Courier") === -1) {
-      const newHeader = trackerSheet.getRange(1, lastCol + 1);
-      trackerSheet.getRange(1, lastCol).copyTo(newHeader, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-      newHeader.setValue("Courier");
-      lastCol += 1;
-      trackerHeaders = trackerSheet.getRange(1, 1, 1, lastCol).getValues()[0];
-      tIdx = selfShipHeaderIndex_(trackerHeaders);
-    }
-
-    // Don't post the same invoice twice (double click, or re-choosing the flow)
+    // Don't post the same invoice twice (double click, a retried request, or re-choosing
+    // the flow). Checked before the EWB step so a retry is cheap and returns the same answer.
     const invCol = tIdx("Invoice Number");
     if (invCol !== -1 && trackerSheet.getLastRow() > 1) {
       const invoices = trackerSheet.getRange(2, invCol + 1, trackerSheet.getLastRow() - 1, 1).getValues();
@@ -14871,6 +14921,19 @@ function createSelfShipBooking(data) {
           status: "success",
           message: `${eeReferenceCode} is already in the ${cfg.label} tracker (row ${dupAt + 2}). Waiting for AWB.`
         };
+      }
+    }
+
+    // E-Way Bill with Delhivery as transporter, same as the NP flow does for B2B
+    // channels. A failure is a warning only; the booking still goes ahead.
+    let ewbWarning = "";
+    let ewbNumber = String(first("EWB") || "").trim();
+    if (provider === "delhivery" && B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
+      try {
+        ewbNumber = String(ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, sheetRows, SELF_SHIP_DELHIVERY_COURIER_ID_, false) || ewbNumber);
+      } catch (ewbErr) {
+        Logger.log(`createSelfShipBooking: EWB step failed for ${eeReferenceCode}: ${ewbErr.message}`);
+        ewbWarning = ` (Warning: E-Way Bill could not be generated — ${ewbErr.message}. Please fix it in Zoho.)`;
       }
     }
 
@@ -14893,6 +14956,16 @@ function createSelfShipBooking(data) {
     put("Invoice Url", hyperlinkFormula_(invoiceLink, `${invoiceNumber}_Invoice`));
     put("Courier", provider === "other" ? courierName : "");
 
+    // What the Delhivery partner needs to book it, shown on the partner portal
+    if (provider === "delhivery") {
+      put("Status", PARTNER_STATUS_.PENDING);
+      put("EE Reference", eeReferenceCode);
+      put("Ship To", selfShipShipToText_(ss, first("EE Customer ID"), first("Store Code")));
+      put("Box Details", selfShipBoxDetailsText_(ss, eeReferenceCode));
+      put("Invoice Value", first("Invoice Total"));
+      put("EWB", ewbNumber);
+    }
+
     // Delhivery: the link appears as soon as ops types the AWB in the sheet
     const awbCol = tIdx("AWB");
     if (cfg.trackingUrlBase && awbCol !== -1) {
@@ -14905,9 +14978,12 @@ function createSelfShipBooking(data) {
     markSelfShipBooked_(dbSheet, idx, sheetRows, courierName);
     SpreadsheetApp.flush();
 
+    const nextStep = provider === "delhivery"
+      ? "The AWB syncs back once Delhivery uploads a label that passes verification on the partner portal."
+      : "AWB will sync once it is filled in.";
     return {
       status: "success",
-      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. AWB will sync once it is filled in.${ewbWarning}`,
+      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. ${nextStep}${ewbWarning}`,
       courier: courierName,
       trackerRow: newRow
     };
@@ -14988,13 +15064,20 @@ function syncSelfShipTrackers() {
       const tIdx = selfShipHeaderIndex_(values[0]);
       const t = {
         po: tIdx("PO Number"), inv: tIdx("Invoice Number"), awb: tIdx("AWB"),
-        link: tIdx("Tracking Link"), courier: tIdx("Courier")
+        link: tIdx("Tracking Link"), courier: tIdx("Courier"), // Only the Delhivery tracker's Status column is the portal request status
+        requestStatus: key === "delhivery" ? tIdx("Status") : -1
       };
       if (t.awb === -1) { errors.push(`${cfg.label} tracker has no AWB column`); return; }
 
       for (let r = 1; r < values.length; r++) {
         const awb = String(values[r][t.awb] || "").trim();
         if (!awb || awb.toUpperCase() === "N/A") continue;
+
+        // Partner-portal requests only sync once their label has passed verification:
+        // an AWB typed straight into a Pending row is ignored. Rows from before the portal
+        // (no Status) and rows ops moved on (Accepted, Delivered, ...) sync as before.
+        const requestStatus = t.requestStatus !== -1 ? partnerRowStatus_(values[r][t.requestStatus], awb) : "";
+        if (requestStatus === PARTNER_STATUS_.PENDING || requestStatus === PARTNER_STATUS_.CANCELLED) continue;
 
         let trackingUrl = "";
         if (cfg.trackingUrlBase) {
@@ -15072,4 +15155,338 @@ function selfShipPickupDate_() {
   if (parseInt(Utilities.formatDate(now, "Asia/Kolkata", "HH"), 10) >= 14) pickup.setDate(pickup.getDate() + 1);
   if (pickup.getDay() === 0) pickup.setDate(pickup.getDate() + 1);
   return pickup;
+}
+
+
+
+
+
+partner portal.gs
+
+/**
+ * Delhivery partner portal backend
+ * The portal (/partner on the Vercel app) reaches these only through its server, never
+ * straight from the browser: every action needs PARTNER_PORTAL_SECRET (Script Property,
+ * also set on Vercel) plus the signed-in user's email. The email is re-checked against
+ * the tracker's "Portal Access" tab on every call, so deleting a row there cuts access
+ * immediately. @cubelelo.com accounts are always allowed in, to monitor the queue.
+ *
+ * The Delhivery self-ship tracker is the database: one row per request, keyed by Invoice
+ * Number. createSelfShipBooking (self ship.js) adds rows as "Pending"; the partner books
+ * the shipment, then submits the AWB and the Delhivery label PDF. The Vercel server reads
+ * the label text and partnerSubmitShipment_ checks it against the row. Only a label that
+ * passes every check is accepted, and the AWB then syncs to PO_Database.
+ */
+
+const PARTNER_PORTAL_ACCESS_TAB_ = "Portal Access";
+const PARTNER_PORTAL_INTERNAL_DOMAIN_ = "@cubelelo.com";
+const PARTNER_LABEL_FOLDER_NAME_ = "Self Ship Labels";
+const PARTNER_STATUS_ = { PENDING: "Pending", ACCEPTED: "Accepted", CANCELLED: "Cancelled" };
+const PARTNER_REQUEST_COLUMNS_ = [
+  "Status", "EE Reference", "Ship To", "Box Details", "Invoice Value", "EWB",
+  "Box Label", "Verification", "Submitted By", "Submitted At"
+];
+
+function handlePartnerPortalAction_(data) {
+  try {
+    const secret = PropertiesService.getScriptProperties().getProperty("PARTNER_PORTAL_SECRET");
+    if (!secret) return { status: "error", message: "Partner portal is not configured (PARTNER_PORTAL_SECRET is not set)." };
+    if (!data || data.secret !== secret) return { status: "error", code: "forbidden", message: "Not authorised." };
+
+    const access = partnerCheckAccess_(data.actorEmail);
+    if (data.action === "partnerCheckAccess") {
+      return { status: "success", allowed: access.allowed, internal: access.internal, name: access.name };
+    }
+    if (!access.allowed) return { status: "error", code: "forbidden", message: "This account does not have portal access." };
+
+    if (data.action === "partnerListRequests") return partnerListRequests_();
+    if (data.action === "partnerSubmitShipment") return partnerSubmitShipment_(data, access);
+    return { status: "error", message: "Invalid partner action: " + data.action };
+  } catch (e) {
+    Logger.log(`handlePartnerPortalAction_ ${data && data.action}: ${e.message}`);
+    return { status: "error", message: "Partner portal error: " + e.message };
+  }
+}
+
+function partnerCheckAccess_(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return { allowed: false, internal: false, name: "" };
+  if (e.endsWith(PARTNER_PORTAL_INTERNAL_DOMAIN_)) return { allowed: true, internal: true, name: "" };
+
+  const sheet = SpreadsheetApp.openById(SELF_SHIP_TRACKERS_.delhivery.spreadsheetId).getSheetByName(PARTNER_PORTAL_ACCESS_TAB_);
+  if (!sheet || sheet.getLastRow() < 2) return { allowed: false, internal: false, name: "" };
+
+  const values = sheet.getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values[0]);
+  const emailCol = idx("Email");
+  const nameCol = idx("Username") !== -1 ? idx("Username") : idx("Name");
+  if (emailCol === -1) return { allowed: false, internal: false, name: "" };
+
+  for (let r = 1; r < values.length; r++) {
+    if (String(values[r][emailCol]).trim().toLowerCase() !== e) continue;
+    const name = nameCol !== -1 ? String(values[r][nameCol] || "").trim() : "";
+    return { allowed: true, internal: false, name: name === "-" ? "" : name };
+  }
+  return { allowed: false, internal: false, name: "" };
+}
+
+// Rows from before the portal have no Status: done if they have an AWB
+function partnerRowStatus_(requestStatus, awb) {
+  const s = String(requestStatus || "").trim();
+  if (!s) return awb ? PARTNER_STATUS_.ACCEPTED : PARTNER_STATUS_.PENDING;
+  const known = Object.keys(PARTNER_STATUS_).map(k => PARTNER_STATUS_[k]);
+  return known.find(k => k.toLowerCase() === s.toLowerCase()) || s;
+}
+
+function partnerFormatCell_(value, pattern) {
+  if (value instanceof Date) return Utilities.formatDate(value, "Asia/Kolkata", pattern);
+  return String(value === null || value === undefined ? "" : value).trim();
+}
+
+function partnerCellUrl_(value, formula) {
+  const url = extractUrlFromCell(value, formula);
+  return url && url !== "N/A" && /^https?:\/\//i.test(url) ? url : "";
+}
+
+function partnerListRequests_() {
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const formulas = range.getFormulas();
+  if (values.length <= 1) return { status: "success", requests: [] };
+
+  const idx = selfShipHeaderIndex_(values[0]);
+  const requests = [];
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const cell = (name) => { const c = idx(name); return c === -1 ? "" : row[c]; };
+    const text = (name) => partnerFormatCell_(cell(name), "yyyy-MM-dd");
+    const link = (name) => { const c = idx(name); return c === -1 ? "" : partnerCellUrl_(row[c], formulas[r][c]); };
+
+    const invoiceNumber = text("Invoice Number");
+    if (!invoiceNumber) continue;
+    const awb = text("AWB");
+
+    requests.push({
+      row: r + 1,
+      invoiceNumber: invoiceNumber,
+      status: partnerRowStatus_(cell("Status"), awb),
+      poNumbers: text("PO Number").split(",").map(s => s.trim()).filter(Boolean),
+      channel: text("Channel"),
+      eeReference: text("EE Reference"),
+      boxes: Number(cell("No. of Boxes")) || 0,
+      bookedDate: partnerFormatCell_(cell("Booked Date"), "yyyy-MM-dd HH:mm"),
+      appointmentDate: partnerFormatCell_(cell("Appointment Date"), "yyyy-MM-dd"),
+      appointmentTime: partnerFormatCell_(cell("Appointment Time"), "HH:mm"),
+      appointmentId: text("Appointment ID"),
+      shipTo: text("Ship To"),
+      boxDetails: text("Box Details"),
+      invoiceValue: Number(cell("Invoice Value")) || 0,
+      ewb: text("EWB"),
+      awb: awb,
+      poPdfUrl: link("PO PDF"),
+      invoiceUrl: link("Invoice Url"),
+      labelUrl: link("Box Label"),
+      trackingUrl: link("Tracking Link"),
+      verification: text("Verification"),
+      submittedBy: text("Submitted By"),
+      submittedAt: partnerFormatCell_(cell("Submitted At"), "yyyy-MM-dd HH:mm")
+    });
+  }
+  return { status: "success", requests: requests };
+}
+
+// Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
+function partnerNormRef_(s) {
+  return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+/**
+ * Checks the label facts read by the Vercel server against the request row.
+ * label: { textFound, pageCount, mawbs[], boxPages[], boxTotals[], oids[], lrn, pincode, consignee }
+ * Returns [{ key, label, ok, blocking, detail }]; the label is accepted only when every
+ * blocking check is ok.
+ */
+function partnerVerifyLabel_(label, req) {
+  const checks = [];
+  const add = (key, name, ok, detail, blocking) =>
+    checks.push({ key: key, label: name, ok: !!ok, blocking: blocking !== false, detail: detail });
+
+  const mawbs = (label.mawbs || []).map(String);
+  const readable = !!label.textFound && mawbs.length > 0;
+  add("readable", "Label readable", readable, readable
+    ? `${label.pageCount || "?"} page(s) read`
+    : "Could not read the label text. Upload the original label PDF downloaded from Delhivery, not a scan or photo.");
+  if (!readable) return checks;
+
+  // AWB
+  const awbOk = mawbs.length === 1 && mawbs[0] === req.awb;
+  add("awb", "AWB matches label", awbOk, awbOk
+    ? `MAWB ${mawbs[0]}`
+    : mawbs.length > 1
+      ? `Label has more than one MAWB (${mawbs.join(", ")}). Upload the label for this shipment only.`
+      : `You entered ${req.awb}, but the label's MAWB is ${mawbs[0]}.`);
+
+  // Box count: every box page "Box : n/N" must agree on N, cover 1..N, and N must be the request's box count
+  const totals = (label.boxTotals || []).map(Number);
+  const pages = Array.from(new Set((label.boxPages || []).map(Number)));
+  const total = totals.length ? totals[0] : 0;
+  let boxDetail;
+  let boxOk = false;
+  if (!totals.length) boxDetail = "No 'Box : n/N' marking found on the label.";
+  else if (new Set(totals).size > 1) boxDetail = `Label pages disagree on the box total (${Array.from(new Set(totals)).join(", ")}).`;
+  else if (pages.length !== total) boxDetail = `Label says ${total} boxes but contains ${pages.length} box page(s).`;
+  else if (!req.boxes) boxDetail = "This request has no box count. Contact Cubelelo.";
+  else if (total !== req.boxes) boxDetail = `Label is for ${total} box(es), but this request is for ${req.boxes}.`;
+  else { boxOk = true; boxDetail = `${total} of ${req.boxes} box(es)`; }
+  add("boxes", "Box count matches", boxOk, boxDetail);
+
+  // Order reference: the label's OID must be one of the request's POs / invoice / order ref
+  const refs = req.poNumbers.concat([req.invoiceNumber, req.eeReference]).map(partnerNormRef_).filter(Boolean);
+  const oids = (label.oids || []).map(String).filter(Boolean);
+  const oidMatches = (oid) => {
+    const n = partnerNormRef_(oid);
+    return !!n && refs.some(ref => ref === n || (Math.min(ref.length, n.length) >= 6 && (ref.indexOf(n) !== -1 || n.indexOf(ref) !== -1)));
+  };
+  const badOids = oids.filter(o => !oidMatches(o));
+  const refOk = oids.length > 0 && badOids.length === 0;
+  add("reference", "PO / invoice matches label", refOk, refOk
+    ? `OID ${oids.join(", ")}`
+    : !oids.length
+      ? "No order ID (OID) found on the label."
+      : `Label OID ${badOids.join(", ")} is not this request's PO (${req.poNumbers.join(", ") || "-"}) or invoice (${req.invoiceNumber}).`);
+
+  // AWB used on another request
+  add("unique", "AWB not used on another request", !req.awbUsedOnRow, req.awbUsedOnRow
+    ? `AWB ${req.awb} is already on tracker row ${req.awbUsedOnRow}.`
+    : "Not used elsewhere");
+
+  // Destination pincode: shown for information, not blocking, since the customer
+  // master's billing pincode can legitimately differ from the delivery DC
+  const shipPins = String(req.shipTo || "").match(/\b\d{6}\b/g) || [];
+  if (label.pincode && shipPins.length) {
+    const pinOk = shipPins.indexOf(String(label.pincode)) !== -1;
+    add("pincode", "Destination pincode", pinOk, pinOk
+      ? `Pin ${label.pincode}`
+      : `Label pin ${label.pincode}, request address pin ${shipPins.join("/")}. Please double-check the destination.`, false);
+  }
+  return checks;
+}
+
+function partnerSaveLabel_(base64, fileName) {
+  const parent = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  const found = parent.getFoldersByName(PARTNER_LABEL_FOLDER_NAME_);
+  const folder = found.hasNext() ? found.next() : parent.createFolder(PARTNER_LABEL_FOLDER_NAME_);
+  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), "application/pdf", fileName));
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (shareErr) {
+    Logger.log(`partnerSaveLabel_: could not make ${fileName} link-shareable: ${shareErr.message}`);
+  }
+  return file.getUrl();
+}
+
+/**
+ * data: { invoiceNumber, awb, label (parsed by the Vercel server), labelBase64, actorEmail }
+ * Accepts the shipment only if every blocking check passes; otherwise records the
+ * failed attempt in the row's Verification cell and returns the checks.
+ */
+function partnerSubmitShipment_(data, access) {
+  const invoiceNumber = String(data.invoiceNumber || "").trim();
+  const awb = String(data.awb || "").replace(/\s+/g, "");
+  if (!invoiceNumber) return { status: "error", message: "No request selected." };
+  if (!/^\d{8,20}$/.test(awb)) return { status: "error", message: "Enter the numeric MAWB / waybill number printed on the label." };
+  if (!data.labelBase64) return { status: "error", message: "Upload the label PDF." };
+
+  const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
+  const who = access.name ? `${access.name} <${actorEmail}>` : actorEmail;
+  const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HH:mm");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another submission is in progress, please retry in a moment." };
+
+  let response;
+  try {
+    const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+    const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
+    const idx = selfShipHeaderIndex_(headers);
+    const values = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), headers.length).getValues();
+    const invCol = idx("Invoice Number");
+    const awbCol = idx("AWB");
+
+    const r = values.findIndex((row, i) => i > 0 && String(row[invCol]).trim() === invoiceNumber);
+    if (r === -1) return { status: "error", message: `Request ${invoiceNumber} not found. It may have been removed; refresh the list.` };
+
+    const row = values[r];
+    const sheetRow = r + 1;
+    const cell = (name) => { const c = idx(name); return c === -1 ? "" : row[c]; };
+    const put = (name, value) => { const c = idx(name); if (c !== -1) sheet.getRange(sheetRow, c + 1).setValue(value); };
+
+    const currentAwb = String(cell("AWB") || "").trim();
+    const status = partnerRowStatus_(cell("Status"), currentAwb);
+    if (status === PARTNER_STATUS_.CANCELLED) return { status: "error", message: "This request was cancelled by Cubelelo." };
+    if (status !== PARTNER_STATUS_.PENDING) {
+      // Already done (Accepted, or moved on by ops). A retried submit of the same
+      // shipment is fine; a different AWB needs Cubelelo.
+      if (currentAwb === awb) return { status: "success", accepted: true, message: `Already accepted with AWB ${awb}.` };
+      return { status: "error", message: `This request was already completed with AWB ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
+    }
+
+    const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === awb);
+    const req = {
+      awb: awb,
+      invoiceNumber: invoiceNumber,
+      poNumbers: String(cell("PO Number") || "").split(",").map(s => s.trim()).filter(Boolean),
+      eeReference: String(cell("EE Reference") || "").trim(),
+      boxes: Number(cell("No. of Boxes")) || 0,
+      shipTo: String(cell("Ship To") || ""),
+      awbUsedOnRow: usedAt === -1 ? 0 : usedAt + 1
+    };
+    const checks = partnerVerifyLabel_(data.label || {}, req);
+    const failed = checks.filter(c => c.blocking && !c.ok);
+
+    if (failed.length) {
+      put("Verification", `✗ ${stamp} ${who} (AWB ${awb}): ${failed.map(c => c.detail).join(" | ")}`);
+      SpreadsheetApp.flush();
+      return { status: "rejected", message: "The label did not pass verification. Nothing was saved; fix the issues below and submit again.", checks: checks };
+    }
+
+    const safeInvoice = invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
+    const labelUrl = partnerSaveLabel_(data.labelBase64, `${awb}_${safeInvoice}_label.pdf`);
+
+    sheet.getRange(sheetRow, awbCol + 1).setNumberFormat("@").setValue(awb);
+    const linkCol = idx("Tracking Link");
+    if (linkCol !== -1 && !sheet.getRange(sheetRow, linkCol + 1).getFormula()) {
+      sheet.getRange(sheetRow, linkCol + 1).setValue(SELF_SHIP_TRACKERS_.delhivery.trackingUrlBase + awb);
+    }
+    const notes = checks.filter(c => !c.blocking && !c.ok).map(c => c.detail);
+    put("Box Label", hyperlinkFormula_(labelUrl, `${awb}_label`));
+    put("Status", PARTNER_STATUS_.ACCEPTED);
+    put("Verification", `✓ ${stamp}: ${checks.filter(c => c.ok).map(c => c.detail).join(" | ")}` +
+      (notes.length ? ` | Note: ${notes.join(" | ")}` : ""));
+    put("Submitted By", who);
+    put("Submitted At", new Date());
+    SpreadsheetApp.flush();
+
+    response = {
+      status: "success",
+      accepted: true,
+      message: `Accepted. AWB ${awb} is linked to invoice ${invoiceNumber}.`,
+      checks: checks,
+      labelUrl: labelUrl
+    };
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Push the AWB to PO_Database now instead of waiting for the 15-minute trigger.
+  // If this fails, the trigger picks it up, so the partner still sees success.
+  try {
+    const sync = syncSelfShipTrackers();
+    response.syncMessage = sync && sync.message;
+  } catch (e) {
+    Logger.log(`partnerSubmitShipment_: immediate sync failed, trigger will retry. ${e.message}`);
+  }
+  return response;
 }
