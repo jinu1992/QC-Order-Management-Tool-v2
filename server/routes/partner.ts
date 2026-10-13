@@ -79,8 +79,11 @@ async function callAppsScript(action: string, actorEmail: string, payload: Recor
         return JSON.parse(text);
       } catch {
         // Keep what Google actually sent, so the error says which page it was
-        const title = text.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim() || text.slice(0, 120);
-        throw new Error(`HTTP ${res.status} from ${new URL(res.url).host}: ${title}`);
+        const title = text.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim() || '';
+        const bodyText = (text.match(/<body[^>]*>([\s\S]*)<\/body>/i)?.[1] || text)
+          .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+        throw new Error(`HTTP ${res.status} from ${new URL(res.url).host}: ${title} ${bodyText}`.trim());
       }
     } catch (e) {
       lastError = e;
