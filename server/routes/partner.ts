@@ -75,7 +75,13 @@ async function callAppsScript(action: string, actorEmail: string, payload: Recor
     try {
       const res = await fetch(url, { method: 'POST', body, redirect: 'follow' });
       const text = await res.text();
-      return JSON.parse(text);
+      try {
+        return JSON.parse(text);
+      } catch {
+        // Keep what Google actually sent, so the error says which page it was
+        const title = text.match(/<title>([^<]*)<\/title>/i)?.[1]?.trim() || text.slice(0, 120);
+        throw new Error(`HTTP ${res.status} from ${new URL(res.url).host}: ${title}`);
+      }
     } catch (e) {
       lastError = e;
     }
@@ -134,6 +140,18 @@ export function createPartnerRouter(redirectUri: string): Router {
     } catch (error: any) {
       console.error('Partner portal login error:', error);
       popupResponse(res, appOrigin, { type: 'PARTNER_AUTH_ERROR', message: `Sign-in failed: ${error.message}` });
+    }
+  });
+
+  // Whether this server can reach the Apps Script backend with the shared secret.
+  // Uses a placeholder email that is never on the access list, so it reveals nothing.
+  router.get('/api/partner/health', async (_req: Request, res: Response) => {
+    try {
+      const result = await callAppsScript('partnerCheckAccess', 'healthcheck@invalid');
+      const ok = result.status === 'success';
+      res.status(ok ? 200 : 502).json({ status: ok ? 'success' : 'error', message: ok ? 'Backend reachable' : result.message });
+    } catch (error: any) {
+      res.status(502).json({ status: 'error', message: error.message });
     }
   });
 
