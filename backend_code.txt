@@ -14476,22 +14476,24 @@ const DELHIVERY_EMAIL_COLUMNS_ = [
   { header: "Invoice URL", cell: s => docLink_(s.invoiceUrl, `${s.awb}_Invoice`) }
 ];
 
+// Own recipients, not the NimbusPost ones (comma-separated)
+const DELHIVERY_EMAIL_TO_ = "avinav@cubelelo.com,shivani@cubelelo.com";
+const DELHIVERY_EMAIL_CC_ = "";
+
 function processDelhiveryAndSendEmail() {
-  const props = PropertiesService.getScriptProperties();
-  // Falls back to the Nimbus recipients until Delhivery-specific ones are set
   sendTrackerSummaryEmail_({
     label: "Delhivery",
     trackerSpreadsheetId: DELHIVERY_TRACKER_SPREADSHEET_ID,
     trackerSheetGid: DELHIVERY_TRACKER_SHEET_GID,
     trackerSheetNames: ["Action Required"],
-    toEmail: props.getProperty('DELHIVERY_NOTIFICATION_EMAIL') || props.getProperty('NIMBUS_NOTIFICATION_EMAIL'),
-    ccEmail: props.getProperty('DELHIVERY_CC_EMAILS') || props.getProperty('NIMBUS_CC_EMAILS'),
+    toEmail: DELHIVERY_EMAIL_TO_,
+    ccEmail: DELHIVERY_EMAIL_CC_,
     subjectTitle: "📦 Delhivery Self-Ship | Delivery Alignment Confirmation Report",
     skipClosedPos: true,
     readRow: readDelhiveryTrackerRow_,
     template: {
       title: "Delivery Alignment Confirmation Report | Delhivery Self-Ship",
-      trackingUrlBase: "https://www.delhivery.com/track-v2/package/",
+      trackingUrlBase: "https://www.delhivery.com/track-v2/lr/", // the AWB column holds the LRN
       sheetUrl: `https://docs.google.com/spreadsheets/d/${DELHIVERY_TRACKER_SPREADSHEET_ID}/edit?gid=${DELHIVERY_TRACKER_SHEET_GID}#gid=${DELHIVERY_TRACKER_SHEET_GID}`,
       columns: DELHIVERY_EMAIL_COLUMNS_
     }
@@ -15031,7 +15033,8 @@ function syncSelfShipTrackers() {
     const col = {
       ref: idx("EE_reference_code"), po: idx("PO Number"), inv: idx("Invoice Number"),
       awb: idx("AWB"), carrier: idx("Carrier"), tracking: idx("Tracking Status"),
-      trackingUrl: idx("Tracking URL"), pickup: idx("Pickup Date"), status: idx("Status")
+      trackingUrl: idx("Tracking URL"), pickup: idx("Pickup Date"), status: idx("Status"),
+      label: idx("Label URL")
     };
     if (col.awb === -1 || col.inv === -1) return { status: "error", message: "PO_Database is missing AWB / Invoice Number columns" };
 
@@ -15065,7 +15068,8 @@ function syncSelfShipTrackers() {
       const t = {
         po: tIdx("PO Number"), inv: tIdx("Invoice Number"), awb: tIdx("AWB"),
         link: tIdx("Tracking Link"), courier: tIdx("Courier"), // Only the Delhivery tracker's Status column is the portal request status
-        requestStatus: key === "delhivery" ? tIdx("Status") : -1
+        requestStatus: key === "delhivery" ? tIdx("Status") : -1,
+        label: tIdx("Box Label") // label PDF the partner uploaded
       };
       if (t.awb === -1) { errors.push(`${cfg.label} tracker has no AWB column`); return; }
 
@@ -15090,6 +15094,9 @@ function syncSelfShipTrackers() {
           const link = extractUrlFromCell(values[r][t.link], formulas[r][t.link]);
           trackingUrl = link && link !== "N/A" ? link : "";
         }
+
+        // Goes to PO_Database "Label URL", which shows the same print-label button as NP orders
+        const labelUrl = t.label !== -1 ? partnerCellUrl_(values[r][t.label], formulas[r][t.label]) : "";
 
         const courier = key === "delhivery" ? "Delhivery"
           : (t.courier !== -1 ? String(values[r][t.courier] || "").trim() : "") || "Other";
@@ -15125,6 +15132,7 @@ function syncSelfShipTrackers() {
           if (trackingUrl && col.trackingUrl !== -1 && String(row[col.trackingUrl] || "").trim() !== trackingUrl) {
             set(col.trackingUrl, trackingUrl);
           }
+          if (labelUrl && col.label !== -1 && String(row[col.label] || "").trim() !== labelUrl) set(col.label, labelUrl);
         });
 
         if (changed) updated.push(`${(col.ref !== -1 && dbData[rowIdxs[0]][col.ref]) || inv} → ${awb} (${cfg.label})`);
