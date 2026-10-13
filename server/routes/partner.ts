@@ -173,9 +173,9 @@ export function createPartnerRouter(redirectUri: string): Router {
   });
 
   router.post('/api/partner/submit', requirePartner, async (req: PartnerRequest, res: Response) => {
-    const { invoiceNumber, awb, labelBase64 } = req.body || {};
-    if (!invoiceNumber || !awb || !labelBase64) {
-      return res.status(400).json({ status: 'error', message: 'Request, AWB and label PDF are all required.' });
+    const { invoiceNumber, lrn, labelBase64 } = req.body || {};
+    if (!invoiceNumber || !lrn || !labelBase64) {
+      return res.status(400).json({ status: 'error', message: 'Request, LRN and label PDF are all required.' });
     }
 
     const pdf = Buffer.from(String(labelBase64), 'base64');
@@ -190,7 +190,7 @@ export function createPartnerRouter(redirectUri: string): Router {
       const label = await parseDelhiveryLabel(new Uint8Array(pdf));
       const result = await callAppsScript('partnerSubmitShipment', req.partner!.email, {
         invoiceNumber: String(invoiceNumber),
-        awb: String(awb),
+        lrn: String(lrn),
         label,
         labelBase64: pdf.toString('base64'),
       });

@@ -5,8 +5,8 @@ import {
 } from './icons/Icons';
 
 // Delhivery partner portal, served at /partner. Shows the self-ship requests from the
-// Delhivery tracker sheet; the partner books each one in Delhivery, then submits the AWB
-// and the label PDF. The server reads the label and only accepts it when the AWB, box
+// Delhivery tracker sheet; the partner books each one in Delhivery, then submits the LRN
+// and the label PDF. The server reads the label and only accepts it when the LRN, box
 // count and PO / invoice all match the request (see server/routes/partner.ts).
 
 interface PartnerUser {
@@ -222,14 +222,14 @@ const SubmitModal: React.FC<{
     onAccepted: () => void;
     onSessionExpired: () => void;
 }> = ({ request, token, onClose, onAccepted, onSessionExpired }) => {
-    const [awb, setAwb] = useState('');
+    const [lrn, setLrn] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState<{ status: string; message: string; checks?: Check[] } | null>(null);
 
     const accepted = result?.status === 'success';
-    const awbClean = awb.replace(/\s+/g, '');
-    const canSubmit = /^\d{8,20}$/.test(awbClean) && !!file && !isSubmitting && !accepted;
+    const lrnClean = lrn.replace(/\s+/g, '');
+    const canSubmit = /^\d{6,20}$/.test(lrnClean) && !!file && !isSubmitting && !accepted;
 
     const handleFile = (f: File | null) => {
         setResult(null);
@@ -254,7 +254,7 @@ const SubmitModal: React.FC<{
             const res = await fetch('/api/partner/submit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ invoiceNumber: request.invoiceNumber, awb: awbClean, labelBase64: await fileToBase64(file) }),
+                body: JSON.stringify({ invoiceNumber: request.invoiceNumber, lrn: lrnClean, labelBase64: await fileToBase64(file) }),
             });
             if (res.status === 401) return onSessionExpired();
             const data = await res.json().catch(() => ({ status: 'error', message: `Server error (${res.status}). Please try again.` }));
@@ -286,12 +286,12 @@ const SubmitModal: React.FC<{
                         <>
                             <div className="text-xs text-gray-500 bg-gray-50 rounded-xl p-3 leading-relaxed">
                                 Book this as <b>one shipment of {request.boxes} box(es)</b> with order ID <b>{request.poNumbers[0] || request.invoiceNumber}</b>,
-                                then enter the MAWB and upload the label PDF exactly as downloaded from Delhivery.
+                                then enter the <b>LRN</b> and upload the label PDF exactly as downloaded from Delhivery.
                             </div>
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">MAWB / AWB number</span>
-                                <input value={awb} onChange={e => { setAwb(e.target.value); setResult(null); }} inputMode="numeric"
-                                    placeholder="e.g. 52091310352564" disabled={isSubmitting}
+                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">LRN</span>
+                                <input value={lrn} onChange={e => { setLrn(e.target.value); setResult(null); }} inputMode="numeric"
+                                    placeholder="e.g. 320862936" disabled={isSubmitting}
                                     className="mt-1.5 w-full px-4 py-3 rounded-xl border-2 border-gray-100 focus:border-partners-green focus:outline-none font-mono text-lg tracking-wider" />
                             </label>
                             <label className="block">
@@ -380,7 +380,7 @@ const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({
 
             {!pending && request.awb && (
                 <div className="mt-4 p-3 rounded-xl bg-green-50 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span className="text-green-800">AWB <b className="font-mono">{request.awb}</b></span>
+                    <span className="text-green-800">LRN <b className="font-mono">{request.awb}</b></span>
                     {request.submittedAt && <span className="text-xs text-green-700">Submitted {request.submittedAt}{request.submittedBy ? ` by ${request.submittedBy}` : ''}</span>}
                 </div>
             )}
@@ -399,7 +399,7 @@ const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({
                 {pending && (
                     <button onClick={onSubmit}
                         className="ml-auto px-5 py-2.5 rounded-full bg-partners-green text-white text-sm font-bold shadow-lg shadow-green-500/20 hover:bg-green-600 transition-colors">
-                        Submit AWB & label
+                        Submit LRN & label
                     </button>
                 )}
             </div>
@@ -530,7 +530,7 @@ const PartnerPortal: React.FC = () => {
                     </div>
                     <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3">
                         <SearchIcon className="h-4 w-4 text-gray-400" />
-                        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, invoice or AWB"
+                        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, invoice or LRN"
                             className="flex-1 py-2.5 text-sm bg-transparent focus:outline-none" />
                     </div>
                 </div>

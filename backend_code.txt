@@ -15173,9 +15173,9 @@ partner portal.gs
  *
  * The Delhivery self-ship tracker is the database: one row per request, keyed by Invoice
  * Number. createSelfShipBooking (self ship.js) adds rows as "Pending"; the partner books
- * the shipment, then submits the AWB and the Delhivery label PDF. The Vercel server reads
+ * the shipment, then submits the LRN and the Delhivery label PDF. The Vercel server reads
  * the label text and partnerSubmitShipment_ checks it against the row. Only a label that
- * passes every check is accepted, and the AWB then syncs to PO_Database.
+ * passes every check is accepted, and the LRN then syncs to PO_Database (AWB column).
  */
 
 const PARTNER_PORTAL_ACCESS_TAB_ = "Portal Access";
@@ -15304,7 +15304,7 @@ function partnerNormRef_(s) {
 
 /**
  * Checks the label facts read by the Vercel server against the request row.
- * label: { textFound, pageCount, mawbs[], boxPages[], boxTotals[], oids[], lrn, pincode, consignee }
+ * label: { textFound, pageCount, mawbs[], boxPages[], boxTotals[], oids[], lrns[], lrn, pincode, consignee }
  * Returns [{ key, label, ok, blocking, detail }]; the label is accepted only when every
  * blocking check is ok.
  */
@@ -15313,20 +15313,21 @@ function partnerVerifyLabel_(label, req) {
   const add = (key, name, ok, detail, blocking) =>
     checks.push({ key: key, label: name, ok: !!ok, blocking: blocking !== false, detail: detail });
 
+  const lrns = (label.lrns || (label.lrn ? [label.lrn] : [])).map(String);
   const mawbs = (label.mawbs || []).map(String);
-  const readable = !!label.textFound && mawbs.length > 0;
+  const readable = !!label.textFound && lrns.length > 0;
   add("readable", "Label readable", readable, readable
     ? `${label.pageCount || "?"} page(s) read`
     : "Could not read the label text. Upload the original label PDF downloaded from Delhivery, not a scan or photo.");
   if (!readable) return checks;
 
-  // AWB
-  const awbOk = mawbs.length === 1 && mawbs[0] === req.awb;
-  add("awb", "AWB matches label", awbOk, awbOk
-    ? `MAWB ${mawbs[0]}`
-    : mawbs.length > 1
-      ? `Label has more than one MAWB (${mawbs.join(", ")}). Upload the label for this shipment only.`
-      : `You entered ${req.awb}, but the label's MAWB is ${mawbs[0]}.`);
+  // LRN: Delhivery B2B tracks the shipment by its LRN, so that's what the partner enters
+  const lrnOk = lrns.length === 1 && lrns[0] === req.lrn;
+  add("lrn", "LRN matches label", lrnOk, lrnOk
+    ? `LRN ${lrns[0]}` + (mawbs.length ? ` (MAWB ${mawbs.join(", ")})` : "")
+    : lrns.length > 1
+      ? `Label has more than one LRN (${lrns.join(", ")}). Upload the label for this shipment only.`
+      : `You entered ${req.lrn}, but the label's LRN is ${lrns[0]}.`);
 
   // Box count: every box page "Box : n/N" must agree on N, cover 1..N, and N must be the request's box count
   const totals = (label.boxTotals || []).map(Number);
@@ -15357,9 +15358,9 @@ function partnerVerifyLabel_(label, req) {
       ? "No order ID (OID) found on the label."
       : `Label OID ${badOids.join(", ")} is not this request's PO (${req.poNumbers.join(", ") || "-"}) or invoice (${req.invoiceNumber}).`);
 
-  // AWB used on another request
-  add("unique", "AWB not used on another request", !req.awbUsedOnRow, req.awbUsedOnRow
-    ? `AWB ${req.awb} is already on tracker row ${req.awbUsedOnRow}.`
+  // LRN used on another request
+  add("unique", "LRN not used on another request", !req.lrnUsedOnRow, req.lrnUsedOnRow
+    ? `LRN ${req.lrn} is already on tracker row ${req.lrnUsedOnRow}.`
     : "Not used elsewhere");
 
   // Destination pincode: shown for information, not blocking, since the customer
@@ -15388,15 +15389,17 @@ function partnerSaveLabel_(base64, fileName) {
 }
 
 /**
- * data: { invoiceNumber, awb, label (parsed by the Vercel server), labelBase64, actorEmail }
+ * data: { invoiceNumber, lrn, label (parsed by the Vercel server), labelBase64, actorEmail }
  * Accepts the shipment only if every blocking check passes; otherwise records the
  * failed attempt in the row's Verification cell and returns the checks.
  */
 function partnerSubmitShipment_(data, access) {
   const invoiceNumber = String(data.invoiceNumber || "").trim();
-  const awb = String(data.awb || "").replace(/\s+/g, "");
+  // The partner enters the LRN; it goes in the tracker's AWB column, whose tracking link is
+  // Delhivery's /track-v2/lr/ page. "awb" is the key the Vercel server sent before 2026-10-13.
+  const lrn = String(data.lrn || data.awb || "").replace(/\s+/g, "");
   if (!invoiceNumber) return { status: "error", message: "No request selected." };
-  if (!/^\d{8,20}$/.test(awb)) return { status: "error", message: "Enter the numeric MAWB / waybill number printed on the label." };
+  if (!/^\d{6,20}$/.test(lrn)) return { status: "error", message: "Enter the numeric LRN printed on the label." };
   if (!data.labelBase64) return { status: "error", message: "Upload the label PDF." };
 
   const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
@@ -15428,40 +15431,40 @@ function partnerSubmitShipment_(data, access) {
     if (status === PARTNER_STATUS_.CANCELLED) return { status: "error", message: "This request was cancelled by Cubelelo." };
     if (status !== PARTNER_STATUS_.PENDING) {
       // Already done (Accepted, or moved on by ops). A retried submit of the same
-      // shipment is fine; a different AWB needs Cubelelo.
-      if (currentAwb === awb) return { status: "success", accepted: true, message: `Already accepted with AWB ${awb}.` };
-      return { status: "error", message: `This request was already completed with AWB ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
+      // shipment is fine; a different LRN needs Cubelelo.
+      if (currentAwb === lrn) return { status: "success", accepted: true, message: `Already accepted with LRN ${lrn}.` };
+      return { status: "error", message: `This request was already completed with LRN ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
     }
 
-    const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === awb);
+    const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === lrn);
     const req = {
-      awb: awb,
+      lrn: lrn,
       invoiceNumber: invoiceNumber,
       poNumbers: String(cell("PO Number") || "").split(",").map(s => s.trim()).filter(Boolean),
       eeReference: String(cell("EE Reference") || "").trim(),
       boxes: Number(cell("No. of Boxes")) || 0,
       shipTo: String(cell("Ship To") || ""),
-      awbUsedOnRow: usedAt === -1 ? 0 : usedAt + 1
+      lrnUsedOnRow: usedAt === -1 ? 0 : usedAt + 1
     };
     const checks = partnerVerifyLabel_(data.label || {}, req);
     const failed = checks.filter(c => c.blocking && !c.ok);
 
     if (failed.length) {
-      put("Verification", `✗ ${stamp} ${who} (AWB ${awb}): ${failed.map(c => c.detail).join(" | ")}`);
+      put("Verification", `✗ ${stamp} ${who} (LRN ${lrn}): ${failed.map(c => c.detail).join(" | ")}`);
       SpreadsheetApp.flush();
       return { status: "rejected", message: "The label did not pass verification. Nothing was saved; fix the issues below and submit again.", checks: checks };
     }
 
     const safeInvoice = invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
-    const labelUrl = partnerSaveLabel_(data.labelBase64, `${awb}_${safeInvoice}_label.pdf`);
+    const labelUrl = partnerSaveLabel_(data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
 
-    sheet.getRange(sheetRow, awbCol + 1).setNumberFormat("@").setValue(awb);
+    sheet.getRange(sheetRow, awbCol + 1).setNumberFormat("@").setValue(lrn);
     const linkCol = idx("Tracking Link");
     if (linkCol !== -1 && !sheet.getRange(sheetRow, linkCol + 1).getFormula()) {
-      sheet.getRange(sheetRow, linkCol + 1).setValue(SELF_SHIP_TRACKERS_.delhivery.trackingUrlBase + awb);
+      sheet.getRange(sheetRow, linkCol + 1).setValue(SELF_SHIP_TRACKERS_.delhivery.trackingUrlBase + lrn);
     }
     const notes = checks.filter(c => !c.blocking && !c.ok).map(c => c.detail);
-    put("Box Label", hyperlinkFormula_(labelUrl, `${awb}_label`));
+    put("Box Label", hyperlinkFormula_(labelUrl, `${lrn}_label`));
     put("Status", PARTNER_STATUS_.ACCEPTED);
     put("Verification", `✓ ${stamp}: ${checks.filter(c => c.ok).map(c => c.detail).join(" | ")}` +
       (notes.length ? ` | Note: ${notes.join(" | ")}` : ""));
@@ -15472,7 +15475,7 @@ function partnerSubmitShipment_(data, access) {
     response = {
       status: "success",
       accepted: true,
-      message: `Accepted. AWB ${awb} is linked to invoice ${invoiceNumber}.`,
+      message: `Accepted. LRN ${lrn} is linked to invoice ${invoiceNumber}.`,
       checks: checks,
       labelUrl: labelUrl
     };
@@ -15480,7 +15483,7 @@ function partnerSubmitShipment_(data, access) {
     lock.releaseLock();
   }
 
-  // Push the AWB to PO_Database now instead of waiting for the 15-minute trigger.
+  // Push the LRN to PO_Database now instead of waiting for the 15-minute trigger.
   // If this fails, the trigger picks it up, so the partner still sees success.
   try {
     const sync = syncSelfShipTrackers();
