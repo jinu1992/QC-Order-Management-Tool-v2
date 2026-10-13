@@ -14840,6 +14840,45 @@ function getSelfShipInvoiceLink_(invoiceId, invoiceNumber, zohoPortalUrl) {
   }
 }
 
+// Bulk orders come from Zoho quotations (QT/...) and have no PO PDF, so the tracker
+// links the quotation PDF instead. Saved to the PO Drive folder; "" if anything fails.
+function getSelfShipQuotationLink_(quoteNumber) {
+  const quote = String(quoteNumber || "").trim();
+  if (!/^QT\//i.test(quote)) return "";
+  try {
+    const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+    const options = { method: "get", headers: { Authorization: `Zoho-oauthtoken ${getZohoAccessToken()}` }, muteHttpExceptions: true };
+    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    const fileName = `${quote.replace(/[^A-Za-z0-9-]/g, "-")}_Quotation.pdf`;
+    const existing = folder.getFilesByName(fileName);
+    let file = existing.hasNext() ? existing.next() : null;
+
+    if (!file) {
+      const list = UrlFetchApp.fetch(
+        `https://www.zohoapis.in/books/v3/estimates?organization_id=${orgId}&estimate_number=${encodeURIComponent(quote)}`, options);
+      if (list.getResponseCode() !== 200) throw new Error(`estimate lookup failed (${list.getResponseCode()})`);
+      const est = (JSON.parse(list.getContentText()).estimates || [])
+        .find(e => String(e.estimate_number || "").trim() === quote);
+      if (!est) throw new Error("quotation not found in Zoho");
+
+      const pdf = UrlFetchApp.fetch(
+        `https://www.zohoapis.in/books/v3/estimates/${est.estimate_id}?organization_id=${orgId}&accept=pdf`, options);
+      if (pdf.getResponseCode() !== 200) throw new Error(`quotation PDF fetch failed (${pdf.getResponseCode()})`);
+      file = folder.createFile(pdf.getBlob().setName(fileName));
+    }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      Logger.log(`getSelfShipQuotationLink_: could not make ${fileName} link-shareable: ${shareErr.message}`);
+    }
+    return file.getUrl();
+  } catch (e) {
+    Logger.log(`getSelfShipQuotationLink_ ${quote}: ${e.message}`);
+    return "";
+  }
+}
+
 /**
  * Posts an invoiced order to a self-ship tracker and marks it in PO_Database as
  * awaiting an AWB. data: { eeReferenceCode, provider: "delhivery" | "other", courierName }
@@ -14938,7 +14977,12 @@ function createSelfShipBooking(data) {
     }
 
     const invoiceLink = getSelfShipInvoiceLink_(String(first("Invoice Id") || "").trim(), invoiceNumber, String(first("Invoice Url") || "").trim());
-    const poPdf = String(first("PO PDF") || "").trim();
+    let poPdf = String(first("PO PDF") || "").trim();
+    let poPdfLabel = `${poNumbers[0] || eeReferenceCode}_PO`;
+    if (!poPdf && poNumbers.length === 1) {
+      poPdf = getSelfShipQuotationLink_(poNumbers[0]);
+      if (poPdf) poPdfLabel = `${poNumbers[0]}_Quotation`;
+    }
     const newRow = trackerSheet.getLastRow() + 1;
 
     const out = new Array(lastCol).fill("");
@@ -14952,7 +14996,7 @@ function createSelfShipBooking(data) {
     put("Appointment Date", first("Appointment Date"));
     put("Appointment Time", first("Appointment Time"));
     put("Appointment ID", first("Appointment ID"));
-    put("PO PDF", hyperlinkFormula_(poPdf, `${poNumbers[0] || eeReferenceCode}_PO`));
+    put("PO PDF", hyperlinkFormula_(poPdf, poPdfLabel));
     put("Invoice Url", hyperlinkFormula_(invoiceLink, `${invoiceNumber}_Invoice`));
     put("Courier", provider === "other" ? courierName : "");
 
@@ -15064,12 +15108,23 @@ function syncSelfShipTrackers() {
       const tIdx = selfShipHeaderIndex_(values[0]);
       const t = {
         po: tIdx("PO Number"), inv: tIdx("Invoice Number"), awb: tIdx("AWB"),
-        link: tIdx("Tracking Link"), courier: tIdx("Courier"), // Only the Delhivery tracker's Status column is the portal request status
+        link: tIdx("Tracking Link"), courier: tIdx("Courier"), poPdf: tIdx("PO PDF"),
+        // Only the Delhivery tracker's Status column is the portal request status
         requestStatus: key === "delhivery" ? tIdx("Status") : -1
       };
       if (t.awb === -1) { errors.push(`${cfg.label} tracker has no AWB column`); return; }
 
       for (let r = 1; r < values.length; r++) {
+        // Pending Bulk requests posted without a PO PDF get their quotation PDF linked,
+        // so the partner can see it (covers rows posted before the quotation fallback)
+        if (t.requestStatus !== -1 && t.poPdf !== -1 && t.po !== -1 &&
+            partnerRowStatus_(values[r][t.requestStatus], "") === PARTNER_STATUS_.PENDING &&
+            !String(values[r][t.poPdf] || "").trim() && !formulas[r][t.poPdf]) {
+          const quote = String(values[r][t.po] || "").trim();
+          const quoteLink = getSelfShipQuotationLink_(quote);
+          if (quoteLink) sheet.getRange(r + 1, t.poPdf + 1).setFormula(hyperlinkFormula_(quoteLink, `${quote}_Quotation`));
+        }
+
         const awb = String(values[r][t.awb] || "").trim();
         if (!awb || awb.toUpperCase() === "N/A") continue;
 
