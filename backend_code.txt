@@ -172,7 +172,8 @@ function doPost(e) {
     // before debugLog writes the raw payload to the debug sheet
     if (String(action || "").indexOf("partner") === 0) return responseJSON(handlePartnerPortalAction_(data));
 
-    debugLog(action || "UNKNOWN_ACTION", data);
+    // Self-ship supporting documents arrive as base64; keep them out of the debug sheet
+    debugLog(action || "UNKNOWN_ACTION", data.docBase64 ? Object.assign({}, data, { docBase64: `<${String(data.docBase64).length} chars>` }) : data);
 
     let result;
 
@@ -220,6 +221,8 @@ function doPost(e) {
     else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
     else if (action === 'createSelfShipBooking') result = createSelfShipBooking(data);
     else if (action === 'syncSelfShipTrackers') result = syncSelfShipTrackers();
+    else if (action === 'recordOtherSelfShipment') result = recordOtherSelfShipment(data);
+    else if (action === 'cancelShipment') result = cancelShipment(data);
     else if (action === 'sendBBOrderConfirmationEmail') 
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
@@ -13627,154 +13630,119 @@ function updateAmazonPickup(shipmentId, pickupSlot)
   }
 }
 /**
- * Updates the "Pickup Date" column in the PO Database sheet
- * for ALL rows that match the given EE Reference Code.
+ * Updates the "Pickup Date" column in the PO Database sheet for ALL rows of an order
+ * (matched by EE Reference Code, or by PO Number for orders without one).
+ * data: { eeReferenceCode, pickupDate: "dd-MM-yyyy" (anything after a space is ignored) }
  *
- * Stores actual DATE format in Google Sheets.
+ * The date must fall in the order's pickup window (see pickupDateWindow_). Stores an
+ * actual date in the sheet.
  */
 function updatePOPickupDate(data) {
+  const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
+  const pickupDate = data && data.pickupDate;
+  const fail = (message) => {
+    Logger.log("updatePOPickupDate: " + message);
+    return { status: "error", success: false, message: message };
+  };
 
-  const { eeReferenceCode, pickupDate } = data;
-
-  if (!eeReferenceCode || !pickupDate) {
-
-    Logger.log("updatePOPickupDate: Missing arguments");
-
-    return {
-      success: false,
-      message: "Missing eeReferenceCode or pickupDate"
-    };
-  }
-
-  Logger.log("────────────────────────────");
-  Logger.log("updatePOPickupDate START");
-  Logger.log("EE Ref: " + eeReferenceCode);
-  Logger.log("Pickup Date Raw: " + pickupDate);
+  if (!eeReferenceCode || !pickupDate) return fail("Missing eeReferenceCode or pickupDate");
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dbSheet = ss.getSheetByName(SHEET_PO_DB);
-
-  if (!dbSheet) {
-
-    Logger.log("updatePOPickupDate: PO DB sheet not found");
-
-    return {
-      success: false,
-      message: "PO DB sheet not found"
-    };
-  }
+  if (!dbSheet) return fail("PO DB sheet not found");
 
   const db_data = dbSheet.getDataRange().getValues();
   const headers = db_data[0];
-
-  // ─── Column Helper ─────────────────────────────────────
   const col = (name) => headers.indexOf(name);
-
   const IDX = {
     EE_REF: col("EE_reference_code"),
+    PO: col("PO Number"),
     PICKUP: col("Pickup Date"),
+    BOOKED: col("Booked Date"),
+    INVOICE_DATE: col("Invoice Date"),
+    APPT: col("Appointment Date")
   };
+  if (IDX.EE_REF === -1 || IDX.PICKUP === -1) return fail("Required columns missing");
 
-  // ─── Validate Columns ──────────────────────────────────
-  if (IDX.EE_REF === -1 || IDX.PICKUP === -1) {
-
-    Logger.log("updatePOPickupDate: Required columns missing");
-
-    return {
-      success: false,
-      message: "Required columns missing"
-    };
+  // "15-05-2026" or "15-05-2026 02:00 PM" (day first)
+  const m = String(pickupDate).trim().match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+  const parsedDate = m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
+  if (!parsedDate || isNaN(parsedDate.getTime()) || parsedDate.getDate() !== Number(m[1])) {
+    return fail("Invalid pickup date: " + pickupDate);
   }
 
-  // ─── Convert To Actual Date Object ─────────────────────
-  let parsedDate = null;
-
-  try {
-
-    if (typeof pickupDate === "string") {
-
-      // Example:
-      // 15-05-2026 02:00 PM
-
-      const datePart = pickupDate.split(" ")[0];
-
-      const [dd, mm, yyyy] = datePart.split("-");
-
-      parsedDate = new Date(
-        Number(yyyy),
-        Number(mm) - 1,
-        Number(dd)
-      );
-    }
-
-  } catch (e) {
-
-    Logger.log("Date Parse Error: " + e);
-
-  }
-
-  // ─── Validate Date ─────────────────────────────────────
-  if (!parsedDate || isNaN(parsedDate.getTime())) {
-
-    Logger.log("Invalid pickup date received: " + pickupDate);
-
-    return {
-      success: false,
-      message: "Invalid pickup date"
-    };
-  }
-
-  Logger.log("Parsed Date: " + parsedDate);
-
-  let updatedCount = 0;
-
-  // ─── Update Matching Rows ──────────────────────────────
+  let rows = [];
   for (let i = 1; i < db_data.length; i++) {
-
-    const rowRef = String(db_data[i][IDX.EE_REF]).trim();
-
-    if (rowRef === String(eeReferenceCode).trim()) {
-
-      const cell = dbSheet.getRange(i + 1, IDX.PICKUP + 1);
-
-      // Ensure enough width if needed
-      cell.setValue(parsedDate);
-
-      // Set proper visible format
-      cell.setNumberFormat("dd/MM/yyyy");
-
-      Logger.log(
-        `Row ${i + 1}: Pickup Updated → ${eeReferenceCode} → ${pickupDate}`
-      );
-
-      updatedCount++;
+    if (String(db_data[i][IDX.EE_REF]).trim() === eeReferenceCode) rows.push(i);
+  }
+  if (!rows.length && IDX.PO !== -1) {
+    const pos = eeReferenceCode.split(",").map(p => p.trim()).filter(Boolean);
+    for (let i = 1; i < db_data.length; i++) {
+      if (pos.indexOf(String(db_data[i][IDX.PO]).trim()) !== -1) rows.push(i);
     }
   }
+  if (!rows.length) return fail(`No rows found for EE Ref: ${eeReferenceCode}`);
 
-  // ─── No Rows Found ─────────────────────────────────────
-  if (updatedCount === 0) {
-
-    Logger.log(
-      `updatePOPickupDate: No rows found for EE Ref: ${eeReferenceCode}`
-    );
-
-    return {
-      success: false,
-      message: `No rows found for EE Ref: ${eeReferenceCode}`
-    };
+  const first = (c) => {
+    if (c === -1) return "";
+    const hit = rows.find(i => db_data[i][c] !== "" && db_data[i][c] !== null);
+    return hit === undefined ? "" : db_data[hit][c];
+  };
+  const win = pickupDateWindow_(first(IDX.BOOKED), first(IDX.INVOICE_DATE), first(IDX.APPT));
+  const fmt = (d) => Utilities.formatDate(d, "Asia/Kolkata", "dd MMM yyyy");
+  if (parsedDate < win.min || parsedDate > win.max) {
+    return fail(`Pickup date must be between ${fmt(win.min)} and ${fmt(win.max)} (${win.rule}).`);
   }
 
-  Logger.log(
-    `updatePOPickupDate: Updated ${updatedCount} row(s) for ${eeReferenceCode}`
-  );
-
-  Logger.log("updatePOPickupDate END");
-  Logger.log("────────────────────────────");
+  rows.forEach(i => {
+    dbSheet.getRange(i + 1, IDX.PICKUP + 1).setValue(parsedDate).setNumberFormat("dd/MM/yyyy");
+  });
+  SpreadsheetApp.flush();
+  Logger.log(`updatePOPickupDate: Updated ${rows.length} row(s) for ${eeReferenceCode} -> ${fmt(parsedDate)}`);
 
   return {
+    status: "success",
     success: true,
-    updatedRows: updatedCount
+    updatedRows: rows.length,
+    message: `Pickup date set to ${fmt(parsedDate)}.`
   };
+}
+
+const PICKUP_WINDOW_DAYS_ = 5;
+
+/**
+ * Allowed pickup dates for an order: from the booking date up to 5 days before the
+ * appointment, or up to 5 days after booking when there's no appointment. If the
+ * appointment is less than 5 days after booking, only the booking date is allowed.
+ * Orders with no booking date (e.g. Flipkart / Amazon) start from the invoice date,
+ * then today. Mirrored by getPickupDateWindow in SalesOrderTable.tsx.
+ */
+function pickupDateWindow_(bookedVal, invoiceDateVal, apptVal) {
+  const today = new Date();
+  const base = pickupParseDay_(bookedVal) || pickupParseDay_(invoiceDateVal) ||
+    new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const appt = pickupParseDay_(apptVal);
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+  if (appt) {
+    const latest = addDays(appt, -PICKUP_WINDOW_DAYS_);
+    return { min: base, max: latest > base ? latest : base, rule: `booking date to ${PICKUP_WINDOW_DAYS_} days before the appointment` };
+  }
+  return { min: base, max: addDays(base, PICKUP_WINDOW_DAYS_), rule: `booking date + ${PICKUP_WINDOW_DAYS_} days, no appointment` };
+}
+
+// Date cell or text -> that day at local midnight, or null. Text dates in PO_Database
+// are written day first, so "05/11/2026" is 5 Nov, never 11 May.
+function pickupParseDay_(val) {
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : new Date(val.getFullYear(), val.getMonth(), val.getDate());
+  const s = String(val || "").trim();
+  if (!s || s === "N/A" || s === "TBD") return null;
+  let m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/);
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 
@@ -14490,6 +14458,8 @@ function processDelhiveryAndSendEmail() {
     ccEmail: DELHIVERY_EMAIL_CC_,
     subjectTitle: "📦 Delhivery Self-Ship | Delivery Alignment Confirmation Report",
     skipClosedPos: true,
+    // Requests whose shipment was cancelled from the tool
+    isClosedRow: (c) => c.has("Status") && String(c.raw("Status") || "").trim().toLowerCase() === "cancelled",
     readRow: readDelhiveryTrackerRow_,
     template: {
       title: "Delivery Alignment Confirmation Report | Delhivery Self-Ship",
@@ -14680,14 +14650,16 @@ self ship.gs
 
 /**
  * Self-Ship Flow
- * Alternative to the NimbusPost booking flow (createShipment). When the user picks
- * "Self Ship" in the tool, createSelfShipBooking posts the order as a row in the
- * matching self-ship tracker sheet; ops books the shipment and types the AWB into
- * that row; syncSelfShipTrackers (15-minute time-driven trigger, plus the tool's
- * "Sync Self-Ship" button) copies the AWB and tracking link back to PO_Database.
+ * Alternative to the NimbusPost booking flow (createShipment).
  *
- * Both trackers have the Delhivery tracker's layout (see delhivery email.js); the
- * "other logistics" one also gets a Courier column, added on first use.
+ * Delhivery: createSelfShipBooking posts the order as a row in the Delhivery tracker
+ * sheet; the partner books it and submits the LRN + label on the partner portal;
+ * syncSelfShipTrackers (15-minute time-driven trigger, plus the tool's "Sync
+ * Self-Ship" button) copies the LRN and tracking link back to PO_Database.
+ *
+ * Other logistics: recordOtherSelfShipment saves the courier, LRN and an optional
+ * supporting document straight to PO_Database. There is no tracker sheet for it
+ * any more (the old "other logistics" tracker is no longer read).
  */
 
 const SELF_SHIP_TRACKERS_ = {
@@ -14698,14 +14670,10 @@ const SELF_SHIP_TRACKERS_ = {
     spreadsheetId: "1pvpg71Z6WNrYh5GsDO2BHix2o0xDReRaBrqcIdncoZ8",
     sheetGid: "1014733683",
     trackingUrlBase: "https://www.delhivery.com/track-v2/lr/"
-  },
-  other: {
-    label: "Other logistics",
-    spreadsheetId: "1XcwS4E5d8azeR1O7aRSyJZhcrvO0Dk1FX1b_II4iz9o",
-    sheetGid: "1014733683",
-    trackingUrlBase: "" // varies by courier; ops pastes the Tracking Link by hand
   }
 };
+
+const SELF_SHIP_DOC_FOLDER_NAME_ = "Self Ship Labels";
 
 const SELF_SHIP_DELHIVERY_COURIER_ID_ = 110; // EWB transporter mapping, see COURIER_TRANSPORTER_MAP_
 
@@ -14843,18 +14811,19 @@ function getSelfShipInvoiceLink_(invoiceId, invoiceNumber, zohoPortalUrl) {
 }
 
 /**
- * Posts an invoiced order to a self-ship tracker and marks it in PO_Database as
- * awaiting an AWB. data: { eeReferenceCode, provider: "delhivery" | "other", courierName }
+ * Posts an invoiced order to the Delhivery self-ship tracker and marks it in PO_Database
+ * as awaiting an AWB. data: { eeReferenceCode, provider: "delhivery" }
+ * Other logistics no longer goes through a tracker: see recordOtherSelfShipment.
  */
 function createSelfShipBooking(data) {
   const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
   const provider = String((data && data.provider) || "").trim().toLowerCase();
   const cfg = SELF_SHIP_TRACKERS_[provider];
-  const courierName = provider === "delhivery" ? "Delhivery" : String((data && data.courierName) || "").trim();
+  const courierName = "Delhivery";
 
   if (!eeReferenceCode) return { status: "error", message: "No EE Reference Code provided" };
+  if (provider === "other") return { status: "error", message: "Other logistics now records the LRN directly. Refresh the app and try again." };
   if (!cfg) return { status: "error", message: `Unknown self-ship provider: ${provider}` };
-  if (!courierName) return { status: "error", message: "Courier name is required for other logistics" };
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
@@ -14900,23 +14869,26 @@ function createSelfShipBooking(data) {
     const sheetRows = orderRows.map(r => r.sheetRow);
 
     // The Delhivery partner verifies the label's box count against this, so it must exist
-    if (provider === "delhivery" && !boxes) {
+    if (!boxes) {
       return { status: "error", message: "No box count on this order yet. Fetch the box details before sending it to Delhivery." };
     }
 
     // ---- Tracker row ----
     const trackerSheet = getSelfShipTrackerSheet_(cfg);
-    const trackerHeaders = ensureSelfShipColumns_(trackerSheet,
-      provider === "delhivery" ? PARTNER_REQUEST_COLUMNS_ : ["Courier"]);
+    const trackerHeaders = ensureSelfShipColumns_(trackerSheet, PARTNER_REQUEST_COLUMNS_);
     const lastCol = trackerHeaders.length;
     const tIdx = selfShipHeaderIndex_(trackerHeaders);
 
     // Don't post the same invoice twice (double click, a retried request, or re-choosing
     // the flow). Checked before the EWB step so a retry is cheap and returns the same answer.
+    // A Cancelled row (shipment cancelled from the tool) doesn't count: the order can be
+    // sent to Delhivery again.
     const invCol = tIdx("Invoice Number");
+    const reqStatusCol = tIdx("Status");
     if (invCol !== -1 && trackerSheet.getLastRow() > 1) {
-      const invoices = trackerSheet.getRange(2, invCol + 1, trackerSheet.getLastRow() - 1, 1).getValues();
-      const dupAt = invoices.findIndex(r => String(r[0]).trim() === invoiceNumber);
+      const rows = trackerSheet.getRange(2, 1, trackerSheet.getLastRow() - 1, lastCol).getValues();
+      const dupAt = rows.findIndex(r => String(r[invCol]).trim() === invoiceNumber &&
+        (reqStatusCol === -1 || partnerRowStatus_(r[reqStatusCol], r[tIdx("AWB")]) !== PARTNER_STATUS_.CANCELLED));
       if (dupAt !== -1) {
         markSelfShipBooked_(dbSheet, idx, sheetRows, courierName);
         return {
@@ -14930,7 +14902,7 @@ function createSelfShipBooking(data) {
     // channels. A failure is a warning only; the booking still goes ahead.
     let ewbWarning = "";
     let ewbNumber = String(first("EWB") || "").trim();
-    if (provider === "delhivery" && B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
+    if (B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
       try {
         ewbNumber = String(ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, sheetRows, SELF_SHIP_DELHIVERY_COURIER_ID_, false) || ewbNumber);
       } catch (ewbErr) {
@@ -14956,19 +14928,16 @@ function createSelfShipBooking(data) {
     put("Appointment ID", first("Appointment ID"));
     put("PO PDF", hyperlinkFormula_(poPdf, `${poNumbers[0] || eeReferenceCode}_PO`));
     put("Invoice Url", hyperlinkFormula_(invoiceLink, `${invoiceNumber}_Invoice`));
-    put("Courier", provider === "other" ? courierName : "");
 
     // What the Delhivery partner needs to book it, shown on the partner portal
-    if (provider === "delhivery") {
-      put("Status", PARTNER_STATUS_.PENDING);
-      put("EE Reference", eeReferenceCode);
-      put("Ship To", selfShipShipToText_(ss, first("EE Customer ID"), first("Store Code")));
-      put("Box Details", selfShipBoxDetailsText_(ss, eeReferenceCode));
-      put("Invoice Value", first("Invoice Total"));
-      put("EWB", ewbNumber);
-    }
+    put("Status", PARTNER_STATUS_.PENDING);
+    put("EE Reference", eeReferenceCode);
+    put("Ship To", selfShipShipToText_(ss, first("EE Customer ID"), first("Store Code")));
+    put("Box Details", selfShipBoxDetailsText_(ss, eeReferenceCode));
+    put("Invoice Value", first("Invoice Total"));
+    put("EWB", ewbNumber);
 
-    // Delhivery: the link appears as soon as ops types the AWB in the sheet
+    // The link appears as soon as the LRN is in the sheet
     const awbCol = tIdx("AWB");
     if (cfg.trackingUrlBase && awbCol !== -1) {
       const awbRef = `${columnLetter_(awbCol + 1)}${newRow}`;
@@ -14980,12 +14949,9 @@ function createSelfShipBooking(data) {
     markSelfShipBooked_(dbSheet, idx, sheetRows, courierName);
     SpreadsheetApp.flush();
 
-    const nextStep = provider === "delhivery"
-      ? "The AWB syncs back once Delhivery uploads a label that passes verification on the partner portal."
-      : "AWB will sync once it is filled in.";
     return {
       status: "success",
-      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. ${nextStep}${ewbWarning}`,
+      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. The AWB syncs back once Delhivery uploads a label that passes verification on the partner portal.${ewbWarning}`,
       courier: courierName,
       trackerRow: newRow
     };
@@ -15014,8 +14980,8 @@ function markSelfShipBooked_(dbSheet, idx, sheetRows, courierName) {
 }
 
 /**
- * Copies AWBs (and tracking links) typed into the self-ship trackers back to
- * PO_Database. Runs from a 15-minute time-driven trigger and from the tool's
+ * Copies accepted LRNs (and tracking/label links) from the Delhivery self-ship tracker
+ * back to PO_Database. Runs from a 15-minute time-driven trigger and from the tool's
  * "Sync Self-Ship" button. Rows are matched by Invoice Number, falling back to
  * the PO Number(s) in the row.
  */
@@ -15165,6 +15131,273 @@ function selfShipPickupDate_() {
   return pickup;
 }
 
+const SELF_SHIP_DOC_MIME_TYPES_ = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+
+// Saves a base64 file to the Drive "Self Ship Labels" folder and returns a link-shareable URL
+function saveSelfShipDoc_(base64, fileName, mimeType) {
+  const parent = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  const found = parent.getFoldersByName(SELF_SHIP_DOC_FOLDER_NAME_);
+  const folder = found.hasNext() ? found.next() : parent.createFolder(SELF_SHIP_DOC_FOLDER_NAME_);
+  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), mimeType || "application/pdf", fileName));
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (shareErr) {
+    Logger.log(`saveSelfShipDoc_: could not make ${fileName} link-shareable: ${shareErr.message}`);
+  }
+  return file.getUrl();
+}
+
+/**
+ * Self Ship: Other logistics. Saves the courier, LRN and optional supporting document
+ * straight to PO_Database and moves the order to Label Generated. The document goes
+ * to "Label URL", which shows the Print Shipping Label button like NP orders.
+ * data: { eeReferenceCode, courierName, lrn, docBase64?, docName?, docMimeType? }
+ */
+function recordOtherSelfShipment(data) {
+  const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
+  const courierName = String((data && data.courierName) || "").trim();
+  const lrn = String((data && data.lrn) || "").replace(/\s+/g, "");
+  const docBase64 = String((data && data.docBase64) || "");
+  const docMimeType = String((data && data.docMimeType) || "application/pdf").toLowerCase();
+
+  if (!eeReferenceCode) return { status: "error", message: "No EE Reference Code provided" };
+  if (!courierName) return { status: "error", message: "Courier name is required." };
+  if (!lrn) return { status: "error", message: "LRN is required." };
+  if (!/^[A-Za-z0-9\/-]{4,40}$/.test(lrn)) return { status: "error", message: "LRN can only contain letters, digits, - and / (4 to 40 characters)." };
+  if (docBase64 && SELF_SHIP_DOC_MIME_TYPES_.indexOf(docMimeType) === -1) {
+    return { status: "error", message: "Supporting document must be a PDF or an image (PNG, JPG, WEBP)." };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another booking is in progress, please retry in a moment." };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const dbData = dbSheet.getDataRange().getValues();
+    const headers = dbData.shift();
+    const idx = selfShipHeaderIndex_(headers);
+    const col = {
+      ref: idx("EE_reference_code"), awb: idx("AWB"), inv: idx("Invoice Number"), carrier: idx("Carrier"),
+      tracking: idx("Tracking Status"), booked: idx("Booked Date"), pickup: idx("Pickup Date"),
+      label: idx("Label URL"), status: idx("Status")
+    };
+    if (col.ref === -1 || col.awb === -1) return { status: "error", message: "PO_Database is missing EE_reference_code / AWB columns" };
+
+    const rowIdxs = [];
+    dbData.forEach((row, i) => { if (String(row[col.ref]).trim() === eeReferenceCode) rowIdxs.push(i); });
+    if (!rowIdxs.length) return { status: "error", message: "Order not found in database: " + eeReferenceCode };
+    const first = (c) => {
+      if (c === -1) return "";
+      const hit = rowIdxs.find(i => dbData[i][c] !== "" && dbData[i][c] !== null);
+      return hit === undefined ? "" : dbData[hit][c];
+    };
+
+    const existingAwb = String(first(col.awb) || "").trim();
+    if (existingAwb && existingAwb !== "PROCESSING") {
+      if (existingAwb === lrn) return { status: "success", message: `${eeReferenceCode} already has LRN ${lrn}.` };
+      return { status: "error", message: `Order already has a shipment (AWB ${existingAwb}, ${first(col.carrier) || "unknown carrier"}).` };
+    }
+    if (!String(first(col.inv) || "").trim()) return { status: "error", message: "Order has no invoice yet — create the invoice first." };
+
+    const usedBy = dbData.find(row => String(row[col.awb]).trim() === lrn && String(row[col.ref]).trim() !== eeReferenceCode);
+    if (usedBy) return { status: "error", message: `LRN ${lrn} is already used on order ${usedBy[col.ref]}.` };
+
+    // Save the document before touching the sheet, so a Drive failure changes nothing
+    let docUrl = "";
+    if (docBase64) {
+      try {
+        const safeName = String(data.docName || "document").replace(/[^A-Za-z0-9._-]/g, "_").slice(-60);
+        docUrl = saveSelfShipDoc_(docBase64, `${lrn}_${eeReferenceCode.replace(/[^A-Za-z0-9-]/g, "-")}_${safeName}`, docMimeType);
+      } catch (docErr) {
+        Logger.log(`recordOtherSelfShipment: document save failed for ${eeReferenceCode}: ${docErr.message}`);
+        return { status: "error", message: `Could not save the supporting document (${docErr.message}). Nothing was saved; try again, or save without the document.` };
+      }
+    }
+
+    const now = new Date();
+    const pickup = selfShipPickupDate_();
+    rowIdxs.forEach(i => {
+      const sheetRow = i + 2;
+      const set = (c, v) => { if (c !== -1) dbSheet.getRange(sheetRow, c + 1).setValue(v); };
+      // Text format so a numeric LRN keeps its leading zeros and isn't shown in exponent form
+      dbSheet.getRange(sheetRow, col.awb + 1).setNumberFormat("@").setValue(lrn);
+      set(col.carrier, `${courierName} (Self)`);
+      set(col.tracking, "AWB Assigned");
+      set(col.booked, now);
+      set(col.pickup, pickup);
+      if (docUrl) set(col.label, docUrl);
+      const status = col.status !== -1 ? String(dbData[i][col.status] || "").trim().toLowerCase() : "";
+      if (col.status !== -1 && !SELF_SHIP_NO_ADVANCE_STATUSES_.includes(status)) set(col.status, "Label Generated");
+    });
+    SpreadsheetApp.flush();
+
+    return {
+      status: "success",
+      message: `${eeReferenceCode} saved as self-shipped via ${courierName}, LRN ${lrn}.${docUrl ? " Supporting document attached." : ""}`,
+      awb: lrn,
+      courier: courierName,
+      labelUrl: docUrl
+    };
+  } catch (e) {
+    Logger.log(`recordOtherSelfShipment error for ${eeReferenceCode}: ${e.message}`);
+    return { status: "error", message: "Saving the self-shipment failed: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// PO_Database Status values after which a shipment can no longer be cancelled from the tool
+const CANCEL_SHIPMENT_BLOCKED_STATUSES_ = [
+  "dispatched", "shipped", "delivered", "grn pending", "grn updated", "closed",
+  "rto", "rto initiated", "returned"
+];
+
+// Columns describing the booked shipment; cleared when it's cancelled
+const SHIPMENT_COLUMNS_ = [
+  "AWB", "Carrier", "Tracking Status", "Tracking URL", "Booked Date", "Pickup Date", "Label URL",
+  "EDD", "Latest Status", "Latest Status Date", "Current Location"
+];
+
+/**
+ * Cancels the booked shipment of an order at Ready to Dispatch and moves the order back
+ * to Invoiced. NimbusPost / Shiprocket shipments are cancelled through their API, and if
+ * the courier refuses, nothing is changed. A Delhivery self-ship request is marked
+ * Cancelled on the tracker (the partner cancels it with Delhivery). Other self-ship
+ * couriers have no API, so the user is reminded to cancel with them directly.
+ * data: { eeReferenceCode, userName? }
+ */
+function cancelShipment(data) {
+  const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
+  const userName = String((data && data.userName) || "").trim();
+  if (!eeReferenceCode) return { status: "error", message: "No EE Reference Code provided" };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another booking is in progress, please retry in a moment." };
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+    const dbData = dbSheet.getDataRange().getValues();
+    const headers = dbData.shift();
+    const idx = selfShipHeaderIndex_(headers);
+    const refIdx = idx("EE_reference_code");
+    const statusIdx = idx("Status");
+    if (refIdx === -1) return { status: "error", message: "EE_reference_code column not found" };
+
+    const rowIdxs = [];
+    dbData.forEach((row, i) => { if (String(row[refIdx]).trim() === eeReferenceCode) rowIdxs.push(i); });
+    if (!rowIdxs.length) return { status: "error", message: "Order not found in database: " + eeReferenceCode };
+    const first = (name) => {
+      const c = idx(name);
+      if (c === -1) return "";
+      const hit = rowIdxs.find(i => dbData[i][c] !== "" && dbData[i][c] !== null);
+      return hit === undefined ? "" : dbData[hit][c];
+    };
+
+    const awb = String(first("AWB") || "").trim();
+    const carrier = String(first("Carrier") || "").trim();
+    if (!awb || awb === "PROCESSING") return { status: "error", message: `${eeReferenceCode} has no booked shipment to cancel.` };
+
+    const statuses = statusIdx === -1 ? [] : rowIdxs.map(i => String(dbData[i][statusIdx] || "").trim().toLowerCase());
+    const blocked = statuses.find(s => CANCEL_SHIPMENT_BLOCKED_STATUSES_.includes(s));
+    if (blocked) return { status: "error", message: `${eeReferenceCode} is already ${blocked}; its shipment can't be cancelled from the tool.` };
+
+    let note;
+    if (/\(NP\)/i.test(carrier)) {
+      const res = cancelNimbusShipment_(awb) || {};
+      const msg = String(res.message || res.error || "");
+      if (!res.status && !/already\s+cancel/i.test(msg)) {
+        return { status: "error", message: `NimbusPost did not cancel AWB ${awb}: ${msg || "no response"}. Nothing was changed.` };
+      }
+      note = `AWB ${awb} cancelled on NimbusPost.`;
+    } else if (/\(SR\)/i.test(carrier)) {
+      const res = cancelShiprocketShipment_(awb);
+      if (!res.ok) return { status: "error", message: `Shiprocket did not cancel AWB ${awb}: ${res.message}. Nothing was changed.` };
+      note = `AWB ${awb} cancelled on Shiprocket.`;
+    } else if (/^delhivery\s*\(self\)$/i.test(carrier)) {
+      const n = cancelDelhiveryTrackerRequest_(String(first("Invoice Number") || "").trim(), awb, userName);
+      note = n
+        ? `The Delhivery request is marked Cancelled. Ask the Delhivery partner to cancel LRN ${awb} with Delhivery.`
+        : `No open Delhivery tracker request was found. Cancel LRN ${awb} with Delhivery directly.`;
+    } else {
+      const name = carrier.replace(/\s*\((self|np|sr)\)\s*$/i, "") || "the courier";
+      note = `Cancel AWB ${awb} with ${name} directly; it has no cancellation API.`;
+    }
+
+    SHIPMENT_COLUMNS_.forEach(name => {
+      const c = idx(name);
+      if (c !== -1) rowIdxs.forEach(i => dbSheet.getRange(i + 2, c + 1).setValue(""));
+    });
+    // Drop the RTD / Label Generated override so the order shows as Invoiced again
+    if (statusIdx !== -1) {
+      rowIdxs.forEach((i, k) => {
+        if (["rtd", "ready to dispatch", "label generated"].includes(statuses[k])) dbSheet.getRange(i + 2, statusIdx + 1).setValue("");
+      });
+    }
+    SpreadsheetApp.flush();
+    Logger.log(`cancelShipment: ${eeReferenceCode} AWB ${awb} (${carrier}) cancelled by ${userName || "unknown"}. ${note}`);
+
+    return { status: "success", message: `Shipment cancelled for ${eeReferenceCode}; the order is back at Invoiced. ${note}` };
+  } catch (e) {
+    Logger.log(`cancelShipment error for ${eeReferenceCode}: ${e.message}`);
+    return { status: "error", message: "Cancelling the shipment failed: " + e.message };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Shiprocket "Cancel a shipment": POST orders/cancel/shipment/awbs {"awbs": ["<awb>"]}.
+// Not yet tried on a live shipment (added 2026-10-16). cancelShipment changes nothing
+// unless this returns 2xx, so a wrong request shape fails safe.
+function cancelShiprocketShipment_(awb) {
+  try {
+    const res = UrlFetchApp.fetch("https://apiv2.shiprocket.in/v1/external/orders/cancel/shipment/awbs", {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: `Bearer ${getShiprocketToken()}` },
+      payload: JSON.stringify({ awbs: [String(awb)] }),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    Logger.log(`Shiprocket cancel (AWB ${awb}) ${code}: ${text}`);
+    return { ok: code >= 200 && code < 300, message: `HTTP ${code} ${text.slice(0, 200)}` };
+  } catch (e) {
+    return { ok: false, message: e.message };
+  }
+}
+
+// Marks the open Delhivery tracker request(s) for an invoice Cancelled, so the sync and
+// the partner portal stop acting on it. Returns how many rows were marked.
+function cancelDelhiveryTrackerRequest_(invoiceNumber, awb, userName) {
+  if (!invoiceNumber) return 0;
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
+  const idx = selfShipHeaderIndex_(headers);
+  if (sheet.getLastRow() < 2) return 0;
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  const invCol = idx("Invoice Number");
+  const awbCol = idx("AWB");
+  const statusCol = idx("Status");
+  const verCol = idx("Verification");
+  const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HH:mm");
+
+  let marked = 0;
+  values.forEach((row, i) => {
+    if (String(row[invCol]).trim() !== invoiceNumber) return;
+    if (partnerRowStatus_(row[statusCol], String(row[awbCol] || "").trim()) === PARTNER_STATUS_.CANCELLED) return;
+    sheet.getRange(i + 2, statusCol + 1).setValue(PARTNER_STATUS_.CANCELLED);
+    if (verCol !== -1) {
+      const prev = String(row[verCol] || "").trim();
+      const line = `✗ ${stamp} Shipment cancelled from the tool${userName ? " by " + userName : ""} (LRN ${awb || "-"})`;
+      sheet.getRange(i + 2, verCol + 1).setValue(prev ? `${prev}\n${line}` : line);
+    }
+    marked++;
+  });
+  return marked;
+}
+
 
 
 
@@ -15188,7 +15421,6 @@ partner portal.gs
 
 const PARTNER_PORTAL_ACCESS_TAB_ = "Portal Access";
 const PARTNER_PORTAL_INTERNAL_DOMAIN_ = "@cubelelo.com";
-const PARTNER_LABEL_FOLDER_NAME_ = "Self Ship Labels";
 const PARTNER_STATUS_ = { PENDING: "Pending", ACCEPTED: "Accepted", CANCELLED: "Cancelled" };
 const PARTNER_REQUEST_COLUMNS_ = [
   "Status", "EE Reference", "Ship To", "Box Details", "Invoice Value", "EWB",
@@ -15384,16 +15616,7 @@ function partnerVerifyLabel_(label, req) {
 }
 
 function partnerSaveLabel_(base64, fileName) {
-  const parent = DriveApp.getFolderById(DRIVE_FOLDER_ID);
-  const found = parent.getFoldersByName(PARTNER_LABEL_FOLDER_NAME_);
-  const folder = found.hasNext() ? found.next() : parent.createFolder(PARTNER_LABEL_FOLDER_NAME_);
-  const file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), "application/pdf", fileName));
-  try {
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  } catch (shareErr) {
-    Logger.log(`partnerSaveLabel_: could not make ${fileName} link-shareable: ${shareErr.message}`);
-  }
-  return file.getUrl();
+  return saveSelfShipDoc_(base64, fileName, "application/pdf");
 }
 
 /**
@@ -15425,9 +15648,16 @@ function partnerSubmitShipment_(data, access) {
     const values = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), headers.length).getValues();
     const invCol = idx("Invoice Number");
     const awbCol = idx("AWB");
+    const statusCol = idx("Status");
+    const isCancelledRow = (row) => partnerRowStatus_(row[statusCol], String(row[awbCol] || "").trim()) === PARTNER_STATUS_.CANCELLED;
 
-    const r = values.findIndex((row, i) => i > 0 && String(row[invCol]).trim() === invoiceNumber);
-    if (r === -1) return { status: "error", message: `Request ${invoiceNumber} not found. It may have been removed; refresh the list.` };
+    // An invoice can have a Cancelled row (shipment cancelled from the tool) and a newer
+    // request for the same invoice: use the newest open one
+    const matches = [];
+    values.forEach((row, i) => { if (i > 0 && String(row[invCol]).trim() === invoiceNumber) matches.push(i); });
+    if (!matches.length) return { status: "error", message: `Request ${invoiceNumber} not found. It may have been removed; refresh the list.` };
+    const open = matches.filter(i => !isCancelledRow(values[i]));
+    const r = open.length ? open[open.length - 1] : matches[0];
 
     const row = values[r];
     const sheetRow = r + 1;
@@ -15444,7 +15674,7 @@ function partnerSubmitShipment_(data, access) {
       return { status: "error", message: `This request was already completed with LRN ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
     }
 
-    const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === lrn);
+    const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === lrn && !isCancelledRow(other));
     const req = {
       lrn: lrn,
       invoiceNumber: invoiceNumber,

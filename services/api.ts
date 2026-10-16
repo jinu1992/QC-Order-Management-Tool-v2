@@ -152,6 +152,7 @@ export const fetchUploadMetadata = async (): Promise<UploadMetadata[]> => {
     } catch (error) { return []; }
 };
 
+// pickupDate is "dd-MM-yyyy"; the backend rejects dates outside the order's pickup window
 export const updatePOPickupDate = async (eeReferenceCode: string, pickupDate: string): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updatePOPickupDate', eeReferenceCode, pickupDate });
 };
@@ -623,29 +624,55 @@ export const fetchBoxDetails = async (eeReferenceCode: string): Promise<{ status
     return await postToScript({ action: 'FETCH_BOX_DETAILS', eeReferenceCode });
 };
 
-// Posts an invoiced order to the Delhivery or other-logistics self-ship tracker sheet.
 // Apps Script sometimes drops the response (the browser sees "Failed to fetch" or its
-// HTML error page) even when the script ran. The backend skips an invoice that's already
-// in the tracker, so retrying is safe and returns the real outcome.
-export const createSelfShipBooking = async (
-    eeReferenceCode: string,
-    provider: 'delhivery' | 'other',
-    courierName?: string
-): Promise<{ status: string, message: string }> => {
+// HTML error page) even when the script ran. Only for actions that are safe to repeat.
+const postToScriptWithRetry = async (payload: any) => {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
         try {
-            return await postToScript({ action: 'createSelfShipBooking', eeReferenceCode, provider, courierName });
+            return await postToScript(payload);
         } catch (err) {
             lastError = err;
-            console.warn(`createSelfShipBooking attempt ${attempt + 1} failed:`, err);
+            console.warn(`${payload.action} attempt ${attempt + 1} failed:`, err);
         }
     }
     throw lastError;
 };
 
-// Pulls AWBs / tracking links typed into the self-ship trackers into PO_Database
+// Posts an invoiced order to the Delhivery self-ship tracker sheet (partner portal).
+// The backend skips an invoice that's already in the tracker, so retrying is safe.
+export const createSelfShipBooking = async (eeReferenceCode: string): Promise<{ status: string, message: string }> => {
+    return await postToScriptWithRetry({ action: 'createSelfShipBooking', eeReferenceCode, provider: 'delhivery' });
+};
+
+// Self Ship: Other logistics. Saves the courier + LRN (and an optional supporting document,
+// base64) straight to PO_Database. A retry with the same LRN is answered as already saved.
+export const recordOtherSelfShipment = async (params: {
+    eeReferenceCode: string,
+    courierName: string,
+    lrn: string,
+    doc?: { base64: string, name: string, mimeType: string }
+}): Promise<{ status: string, message: string, awb?: string, labelUrl?: string }> => {
+    return await postToScriptWithRetry({
+        action: 'recordOtherSelfShipment',
+        eeReferenceCode: params.eeReferenceCode,
+        courierName: params.courierName,
+        lrn: params.lrn,
+        docBase64: params.doc?.base64,
+        docName: params.doc?.name,
+        docMimeType: params.doc?.mimeType
+    });
+};
+
+// Cancels the booked shipment of a Ready to Dispatch order (with the courier where it has
+// an API) and moves the order back to Invoiced. Not retried: a dropped response could hide
+// a cancellation that already happened, so the caller refreshes the order instead.
+export const cancelShipment = async (eeReferenceCode: string, userName?: string): Promise<{ status: string, message: string }> => {
+    return await postToScript({ action: 'cancelShipment', eeReferenceCode, userName });
+};
+
+// Pulls accepted LRNs from the Delhivery self-ship tracker into PO_Database
 export const syncSelfShipTrackers = async (): Promise<{ status: string, message: string, updated?: string[] }> => {
     return await postToScript({ action: 'syncSelfShipTrackers' });
 };

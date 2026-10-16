@@ -35,7 +35,7 @@ import {
     MessageIcon
 } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
-import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, syncSelfShipTrackers, triggerEasyEcomFetch } from '../services/api';
+import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, recordOtherSelfShipment, cancelShipment, syncSelfShipTrackers, triggerEasyEcomFetch } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
@@ -64,8 +64,61 @@ interface SalesOrderTableProps {
 const B2B_NIMBUS_CHANNELS = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
 
 const isSelfShipCarrier = (carrier?: string) => /\(self\)/i.test(carrier || '');
-// Posted to a self-ship tracker sheet, but ops hasn't filled in the AWB there yet
+// Marked self-ship, but no AWB / LRN yet
 const isAwaitingSelfShipAwb = (so: { carrier?: string, awb?: string }) => isSelfShipCarrier(so.carrier) && !so.awb;
+// Posted to the Delhivery tracker: the LRN syncs back once the partner's label is accepted.
+// Any other self-ship courier waiting for an LRN was posted to the old other-logistics
+// tracker, which is no longer read; the user enters its LRN in the tool instead.
+const isAwaitingDelhiveryAwb = (so: { carrier?: string, awb?: string }) => isAwaitingSelfShipAwb(so) && /^delhivery/i.test(so.carrier || '');
+
+// --- Pickup date window ---
+// Mirrors pickupDateWindow_ in backend_code.txt (which re-checks every save): from the
+// booking date up to 5 days before the appointment, or booking date + 5 days when there's
+// no appointment. Orders with no booking date start from the invoice date, then today.
+const PICKUP_WINDOW_DAYS = 5;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// "1 Nov 2026", "01-11-2026", "01/11/2026", "2026-11-01" -> local midnight. Sheet dates
+// are day first, so "05/11/2026" is 5 Nov, never 11 May.
+const parseDayFirst = (val?: string): Date | null => {
+    const s = String(val || '').trim();
+    if (!s || s === 'N/A' || s === 'TBD') return null;
+    let m = s.match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*,?\s+(\d{4})/);
+    if (m && MONTHS.includes(m[2].toLowerCase())) return new Date(Number(m[3]), MONTHS.indexOf(m[2].toLowerCase()), Number(m[1]));
+    m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
+    if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+};
+
+const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const toInputDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Same format formatSheetDate (services/api.ts) gives sheet dates
+const formatDay = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+const getPickupDateWindow = (so: GroupedSalesOrder) => {
+    const today = new Date();
+    const booked = parseDayFirst(so.bookedDate);
+    const base = booked || parseDayFirst(so.invoiceDate) || new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const appt = parseDayFirst(so.appointmentDate);
+    if (appt) {
+        const latest = addDays(appt, -PICKUP_WINDOW_DAYS);
+        return { min: base, max: latest > base ? latest : base, booked, appt, rule: `booking date to ${PICKUP_WINDOW_DAYS} days before the appointment` };
+    }
+    return { min: base, max: addDays(base, PICKUP_WINDOW_DAYS), booked, appt, rule: `booking date + ${PICKUP_WINDOW_DAYS} days (no appointment)` };
+};
+
+const SELF_SHIP_DOC_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+const SELF_SHIP_DOC_MAX_MB = 10;
+
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+});
 
 // --- Formatters ---
 
@@ -694,14 +747,12 @@ const FbaShipmentModal: FC<{ so: GroupedSalesOrder, onSave: (id: string) => void
 
 // --- Pickup Date Modal ---
 
-const PickupDateModal: FC<{ so: GroupedSalesOrder, onSave: (date: string) => void, onClose: () => void, isSaving: boolean }> = ({ so, onSave, onClose, isSaving }) => {
-    const today = new Date();
-    const dd = String(today.getDate()).padStart(2, '0');
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const yyyy = today.getFullYear();
-    const [dateVal, setDateVal] = useState(so.pickupDate || `${dd}-${mm}-${yyyy}`);
-    const [timeVal, setTimeVal] = useState('10:00 AM');
-    const combined = `${dateVal} ${timeVal}`;
+const PickupDateModal: FC<{ so: GroupedSalesOrder, onSave: (date: Date) => void, onClose: () => void, isSaving: boolean }> = ({ so, onSave, onClose, isSaving }) => {
+    const win = useMemo(() => getPickupDateWindow(so), [so]);
+    const current = parseDayFirst(so.pickupDate);
+    const [dateVal, setDateVal] = useState(toInputDate(current && current >= win.min && current <= win.max ? current : win.min));
+    const picked = /^\d{4}-\d{2}-\d{2}$/.test(dateVal) ? new Date(`${dateVal}T00:00:00`) : null;
+    const inRange = !!picked && picked >= win.min && picked <= win.max;
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[150] p-4">
@@ -710,51 +761,51 @@ const PickupDateModal: FC<{ so: GroupedSalesOrder, onSave: (date: string) => voi
                     <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4">
                         <CalendarIcon className="h-10 w-10 text-white" />
                     </div>
-                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Add Pickup Date & Time</h3>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Edit Pickup Date</h3>
                     <p className="text-xs text-indigo-200 mt-1">Order Ref: <span className="font-bold text-white">{so.id}</span></p>
                 </div>
                 <div className="p-8">
+                    <div className="grid grid-cols-3 gap-3 mb-6">
+                        <div className="bg-gray-50 rounded-xl border border-gray-100 px-3 py-2">
+                            <p className="text-[10px] uppercase font-bold text-gray-400">Booked</p>
+                            <p className="text-xs font-black text-gray-700">{win.booked ? formatDay(win.booked) : 'N/A'}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded-xl border border-gray-100 px-3 py-2">
+                            <p className="text-[10px] uppercase font-bold text-gray-400">Appointment</p>
+                            <p className="text-xs font-black text-gray-700">{win.appt ? formatDay(win.appt) : 'None'}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded-xl border border-gray-100 px-3 py-2">
+                            <p className="text-[10px] uppercase font-bold text-gray-400">Current</p>
+                            <p className="text-xs font-black text-gray-700">{so.pickupDate || 'N/A'}</p>
+                        </div>
+                    </div>
                     <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 mb-6 flex gap-3">
                         <CalendarIcon className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-                        <p className="text-xs text-indigo-800 leading-relaxed">Set the scheduled pickup date and time for this order. This will be saved to the PO database.</p>
+                        <p className="text-xs text-indigo-800 leading-relaxed">
+                            Allowed: <span className="font-black">{formatDay(win.min)}</span> to <span className="font-black">{formatDay(win.max)}</span> ({win.rule}). This only changes the date in the tool; reschedule with the courier separately if needed.
+                        </p>
                     </div>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Pickup Date (DD-MM-YYYY)</label>
-                            <input
-                                type="text"
-                                autoFocus
-                                value={dateVal}
-                                onChange={(e) => setDateVal(e.target.value)}
-                                placeholder="e.g. 07-04-2026"
-                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none font-mono font-bold"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Pickup Time</label>
-                            <select
-                                value={timeVal}
-                                onChange={(e) => setTimeVal(e.target.value)}
-                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none font-bold text-gray-700"
-                            >
-                                {['06:00 AM','07:00 AM','08:00 AM','09:00 AM','10:00 AM','11:00 AM','12:00 PM','01:00 PM','02:00 PM','03:00 PM','04:00 PM','05:00 PM','06:00 PM'].map(t => (
-                                    <option key={t} value={t}>{t}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3">
-                            <p className="text-[10px] uppercase font-bold text-gray-400 mb-0.5">Will be saved as</p>
-                            <p className="text-sm font-black text-indigo-700">{combined}</p>
-                        </div>
-                    </div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Pickup Date</label>
+                    <input
+                        type="date"
+                        autoFocus
+                        value={dateVal}
+                        min={toInputDate(win.min)}
+                        max={toInputDate(win.max)}
+                        onChange={(e) => setDateVal(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none font-bold"
+                    />
+                    {picked && !inRange && (
+                        <p className="text-[11px] font-bold text-red-600 mt-2 ml-1">Pick a date between {formatDay(win.min)} and {formatDay(win.max)}.</p>
+                    )}
                     <div className="flex flex-col gap-3 mt-8">
                         <button
-                            disabled={!dateVal.trim() || isSaving}
-                            onClick={() => onSave(combined)}
+                            disabled={!inRange || isSaving}
+                            onClick={() => picked && onSave(picked)}
                             className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-[0.98] text-sm uppercase flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                             {isSaving ? <RefreshIcon className="h-5 w-5 animate-spin" /> : <CheckCircleIcon className="h-5 w-5" />}
-                            {isSaving ? 'Saving...' : 'Confirm Pickup Date'}
+                            {isSaving ? 'Saving...' : 'Save Pickup Date'}
                         </button>
                         <button disabled={isSaving} onClick={onClose} className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors">
                             Cancel
@@ -1375,28 +1426,50 @@ const ZeptoASNHelperModal: FC<{
 };
 
 // Lets the user pick how an invoiced order ships: through NimbusPost (the existing
-// courier booking), or self-shipped, which posts the order to the Delhivery or
-// other-logistics tracker sheet; the AWB typed there later syncs back to the tool.
+// courier booking), self-shipped via Delhivery (posted to the partner portal tracker,
+// the LRN syncs back), or self-shipped via another courier, where the user enters the
+// LRN and an optional supporting document directly. otherOnly shows just that last form,
+// for orders already marked as self-shipped by another courier.
 const ShipFlowModal: FC<{
     so: GroupedSalesOrder,
+    otherOnly?: boolean,
     onClose: () => void,
     onChooseNimbus: () => void,
-    onChooseSelfShip: (provider: 'delhivery' | 'other', courierName?: string) => Promise<void>
-}> = ({ so, onClose, onChooseNimbus, onChooseSelfShip }) => {
-    const [showOther, setShowOther] = useState(false);
-    const [courier, setCourier] = useState('');
+    onChooseDelhivery: () => Promise<void>,
+    onSaveOther: (courierName: string, lrn: string, doc: File | null) => Promise<void>
+}> = ({ so, otherOnly, onClose, onChooseNimbus, onChooseDelhivery, onSaveOther }) => {
+    const [showOther, setShowOther] = useState(!!otherOnly);
+    const [courier, setCourier] = useState(otherOnly ? (so.carrier || '').replace(/\s*\(self\)\s*$/i, '') : '');
+    const [lrn, setLrn] = useState('');
+    const [doc, setDoc] = useState<File | null>(null);
+    const [docError, setDocError] = useState('');
     const [submitting, setSubmitting] = useState<'delhivery' | 'other' | null>(null);
 
-    const submit = async (provider: 'delhivery' | 'other') => {
-        setSubmitting(provider);
+    const lrnClean = lrn.replace(/\s+/g, '');
+    const lrnValid = /^[A-Za-z0-9/-]{4,40}$/.test(lrnClean);
+    const canSaveOther = !!courier.trim() && lrnValid && !docError;
+
+    const pickDoc = (file: File | null) => {
+        setDocError('');
+        setDoc(null);
+        if (!file) return;
+        if (!SELF_SHIP_DOC_TYPES.includes(file.type)) { setDocError('Upload a PDF or an image (PNG, JPG, WEBP).'); return; }
+        if (file.size > SELF_SHIP_DOC_MAX_MB * 1024 * 1024) { setDocError(`File is larger than ${SELF_SHIP_DOC_MAX_MB} MB.`); return; }
+        setDoc(file);
+    };
+
+    const run = async (which: 'delhivery' | 'other') => {
+        setSubmitting(which);
         try {
-            await onChooseSelfShip(provider, provider === 'other' ? courier.trim() : undefined);
+            if (which === 'delhivery') await onChooseDelhivery();
+            else await onSaveOther(courier.trim(), lrnClean, doc);
         } finally {
             setSubmitting(null);
         }
     };
 
     const optionClass = "w-full p-5 bg-gray-50 border-2 border-gray-100 rounded-2xl transition-all group text-left flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed";
+    const inputClass = "w-full px-4 py-3 rounded-xl border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-600 text-sm bg-white";
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[200] p-4">
@@ -1405,52 +1478,65 @@ const ShipFlowModal: FC<{
                     <div className="w-14 h-14 bg-white/10 rounded-full flex items-center justify-center mb-3">
                         <TruckIcon className="h-8 w-8 text-white" />
                     </div>
-                    <h3 className="text-xl font-black text-white uppercase tracking-tight">Choose Shipping Flow</h3>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tight">{otherOnly ? 'Enter Self-Ship LRN' : 'Choose Shipping Flow'}</h3>
                     <p className="text-xs text-gray-300 mt-1">Channel: <span className="font-bold text-white">{so.channel}</span> | Ref: <span className="font-bold text-white">{so.id}</span> | Boxes: <span className="font-bold text-white">{so.boxCount}</span></p>
                 </div>
                 <div className="p-6 space-y-3">
-                    <button onClick={onChooseNimbus} disabled={!!submitting} className={`${optionClass} hover:border-blue-500 hover:bg-blue-50`}>
-                        <div>
-                            <p className="text-base font-black text-gray-900 group-hover:text-blue-700">NimbusPost (NP) Flow</p>
-                            <p className="text-xs text-gray-500">Book via aggregator: AWB, label and pickup are generated automatically</p>
-                        </div>
-                        <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
-                    </button>
+                    {!otherOnly && (
+                        <>
+                            <button onClick={onChooseNimbus} disabled={!!submitting} className={`${optionClass} hover:border-blue-500 hover:bg-blue-50`}>
+                                <div>
+                                    <p className="text-base font-black text-gray-900 group-hover:text-blue-700">NimbusPost (NP) Flow</p>
+                                    <p className="text-xs text-gray-500">Book via aggregator: AWB, label and pickup are generated automatically</p>
+                                </div>
+                                <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-blue-600" />
+                            </button>
 
-                    <button onClick={() => submit('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
-                        <div>
-                            <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Delhivery</p>
-                            <p className="text-xs text-gray-500">Sends a request to Delhivery's partner portal; AWB syncs back once their label passes verification</p>
-                        </div>
-                        {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
-                    </button>
+                            <button onClick={() => run('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
+                                <div>
+                                    <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Delhivery</p>
+                                    <p className="text-xs text-gray-500">Sends a request to Delhivery's partner portal; AWB syncs back once their label passes verification</p>
+                                </div>
+                                {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
+                            </button>
+                        </>
+                    )}
 
                     {!showOther ? (
                         <button onClick={() => setShowOther(true)} disabled={!!submitting} className={`${optionClass} hover:border-purple-500 hover:bg-purple-50`}>
                             <div>
                                 <p className="text-base font-black text-gray-900 group-hover:text-purple-700">Self Ship: Other Logistics</p>
-                                <p className="text-xs text-gray-500">Posts to the other-logistics tracker with the courier you name</p>
+                                <p className="text-xs text-gray-500">Enter the courier's LRN and attach a supporting document</p>
                             </div>
                             <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-purple-600" />
                         </button>
                     ) : (
                         <div className="p-5 bg-purple-50 border-2 border-purple-200 rounded-2xl space-y-3">
                             <p className="text-base font-black text-purple-800">Self Ship: Other Logistics</p>
-                            <input
-                                type="text"
-                                autoFocus
-                                value={courier}
-                                onChange={(e) => setCourier(e.target.value)}
-                                placeholder="Courier name, e.g. Xpressbees, DTDC"
-                                className="w-full px-4 py-3 rounded-xl border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-600 text-sm bg-white"
-                            />
+                            <div>
+                                <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1 ml-1">Courier *</label>
+                                <input type="text" autoFocus={!courier} value={courier} onChange={(e) => setCourier(e.target.value)}
+                                    placeholder="e.g. Xpressbees, DTDC" className={inputClass} />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1 ml-1">LRN *</label>
+                                <input type="text" autoFocus={!!courier} value={lrn} onChange={(e) => setLrn(e.target.value)}
+                                    placeholder="LRN / docket number from the courier" className={`${inputClass} font-mono`} />
+                                {lrn && !lrnValid && <p className="text-[10px] font-bold text-red-600 mt-1 ml-1">Letters, digits, - and / only (4 to 40 characters).</p>}
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1 ml-1">Supporting document (optional)</label>
+                                <input type="file" accept={SELF_SHIP_DOC_TYPES.join(',')} onChange={(e) => pickDoc(e.target.files?.[0] || null)}
+                                    className="w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-purple-100 file:text-purple-800 file:font-bold hover:file:bg-purple-200" />
+                                <p className={`text-[10px] font-bold mt-1 ml-1 ${docError ? 'text-red-600' : 'text-purple-400'}`}>{docError || `Label, docket or receipt. PDF or image, up to ${SELF_SHIP_DOC_MAX_MB} MB.`}</p>
+                            </div>
                             <button
-                                onClick={() => submit('other')}
-                                disabled={!!submitting || !courier.trim()}
+                                onClick={() => run('other')}
+                                disabled={!!submitting || !canSaveOther}
                                 className="w-full py-3 bg-purple-700 text-white font-bold rounded-xl hover:bg-purple-800 transition-all active:scale-95 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
                             >
                                 {submitting === 'other' ? <RefreshIcon className="h-4 w-4 animate-spin" /> : <CheckCircleIcon className="h-4 w-4" />}
-                                Post to Tracker
+                                {submitting === 'other' ? 'Saving...' : 'Save Shipment'}
                             </button>
                         </div>
                     )}
@@ -1804,6 +1890,9 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isUpdatingDispatched, setIsUpdatingDispatched] = useState<string | null>(null);
     const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
     const [shipFlowOrder, setShipFlowOrder] = useState<GroupedSalesOrder | null>(null);
+    // Ship-flow chooser opened on just the Other-logistics LRN form
+    const [shipFlowOtherOnly, setShipFlowOtherOnly] = useState(false);
+    const [isCancellingShipment, setIsCancellingShipment] = useState<string | null>(null);
     const [isSyncingSelfShip, setIsSyncingSelfShip] = useState(false);
     const [actionModal, setActionModal] = useState<{
         isOpen: boolean;
@@ -1937,19 +2026,35 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         setPickupDateModal({ isOpen: true, so, isSaving: false });
     };
 
-    const handleConfirmPickupDate = async (dateInput: string) => {
+    const handleConfirmPickupDate = async (date: Date) => {
         if (!pickupDateModal.so) return;
         const so = pickupDateModal.so;
         setPickupDateModal(prev => ({ ...prev, isSaving: true }));
+        const ddmmyyyy = `${String(date.getDate()).padStart(2, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${date.getFullYear()}`;
         try {
-            await updatePOPickupDate(so.poReference, dateInput);
-            setPurchaseOrders(prev => prev.map(p => p.poNumber === so.poReference ? {...p, pickupDate: dateInput} : p));
-            addNotification(`Pickup Date/Time saved successfully`, "success");
-            onSync();
-        } catch {
-            addNotification("Failed to save pickup date", "error");
-        } finally {
+            const res = await updatePOPickupDate(so.id, ddmmyyyy);
+            if (res.status === 'error') {
+                // Keep the modal open so the user can pick another date
+                addNotification(res.message || 'Failed to save pickup date', 'error');
+                setPickupDateModal(prev => ({ ...prev, isSaving: false }));
+                return;
+            }
+            const display = formatDay(date);
+            const parentPoNumbers = so.poReference.split(',').map(s => s.trim());
+            setPurchaseOrders(prev => prev.map(p => {
+                if (!parentPoNumbers.includes(p.poNumber)) return p;
+                return {
+                    ...p,
+                    pickupDate: display,
+                    items: p.items?.map(item => item.eeReferenceCode === so.id ? { ...item, pickupDate: display } : item)
+                };
+            }));
+            addNotification(res.message || `Pickup date set to ${display}`, 'success');
+            addLog('Pickup Date', `EE Ref: ${so.id} -> ${display}`);
             setPickupDateModal({ isOpen: false, so: null, isSaving: false });
+        } catch {
+            addNotification('Failed to save pickup date', 'error');
+            setPickupDateModal(prev => ({ ...prev, isSaving: false }));
         }
     };
 
@@ -2151,6 +2256,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                         inboundPlanId: po.inboundPlanId,
                         carrier: carrier,
                         awb: awb,
+                        bookedDate: item.bookedDate || po.bookedDate,
                         trackingStatus: trackingStatus,
                         trackingUrl: trackingUrl,
                         edd: item.edd || po.edd,
@@ -2208,6 +2314,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
                     if (isPlaceholder(groups[refCode].invoiceNumber) && !isPlaceholder(invNum)) groups[refCode].invoiceNumber = invNum;
                     if (isPlaceholder(groups[refCode].awb) && awb) groups[refCode].awb = awb;
+                    if (!groups[refCode].bookedDate) groups[refCode].bookedDate = item.bookedDate || po.bookedDate;
                     if (isPlaceholder(groups[refCode].carrier) && carrier) groups[refCode].carrier = carrier;
                     if (isPlaceholder(groups[refCode].trackingStatus) && trackingStatus) groups[refCode].trackingStatus = trackingStatus;
                     if (isPlaceholder(groups[refCode].trackingUrl) && trackingUrl) groups[refCode].trackingUrl = trackingUrl;
@@ -3128,23 +3235,86 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    // Self ship: posts the order to the Delhivery / other-logistics tracker sheet. The order
-    // then waits for ops to type the AWB there, which syncSelfShipTrackers copies back.
-    const handleSelfShipBooking = async (so: GroupedSalesOrder, provider: 'delhivery' | 'other', courierName?: string) => {
+    // Self ship via Delhivery: posts the order to the Delhivery tracker / partner portal.
+    // The LRN syncs back (syncSelfShipTrackers) once the partner's label is accepted.
+    const handleDelhiveryBooking = async (so: GroupedSalesOrder) => {
         try {
-            const res = await createSelfShipBooking(so.id, provider, courierName);
+            const res = await createSelfShipBooking(so.id);
             if (res.status === 'success') {
-                addNotification(res.message || 'Posted to self-ship tracker.', 'success');
-                addLog('Self Ship', `EE Ref: ${so.id} via ${provider === 'delhivery' ? 'Delhivery' : courierName}`);
+                addNotification(res.message || 'Posted to the Delhivery tracker.', 'success');
+                addLog('Self Ship', `EE Ref: ${so.id} via Delhivery`);
                 setShipFlowOrder(null);
                 await refreshSingleSOState(so.id, so.poReference);
             } else {
-                addNotification(res.message || 'Failed to post to self-ship tracker.', 'error');
+                addNotification(res.message || 'Failed to post to the Delhivery tracker.', 'error');
             }
         } catch (error) {
             console.error('Self ship booking error:', error);
-            addNotification('Failed to post to self-ship tracker. Check console for details.', 'error');
+            addNotification('Failed to post to the Delhivery tracker. Check console for details.', 'error');
         }
+    };
+
+    // Self ship via another courier: the LRN (and optional document) go straight to the
+    // order, which moves to Label Generated
+    const handleSaveOtherSelfShip = async (so: GroupedSalesOrder, courierName: string, lrn: string, file: File | null) => {
+        try {
+            const doc = file ? { base64: await fileToBase64(file), name: file.name, mimeType: file.type } : undefined;
+            const res = await recordOtherSelfShipment({ eeReferenceCode: so.id, courierName, lrn, doc });
+            if (res.status === 'success') {
+                addNotification(res.message || 'Self-shipment saved.', 'success');
+                addLog('Self Ship', `EE Ref: ${so.id} via ${courierName}, LRN ${lrn}`);
+                setShipFlowOrder(null);
+                await refreshSingleSOState(so.id, so.poReference);
+            } else {
+                addNotification(res.message || 'Failed to save the self-shipment.', 'error');
+            }
+        } catch (error) {
+            console.error('Self ship (other) error:', error);
+            addNotification('Failed to save the self-shipment. Check console for details.', 'error');
+        }
+    };
+
+    const openOtherSelfShipForm = (so: GroupedSalesOrder) => {
+        setShipFlowOtherOnly(true);
+        setShipFlowOrder(so);
+    };
+
+    // Cancels the booked shipment of a Ready to Dispatch order and moves it back to Invoiced
+    const handleCancelShipment = (so: GroupedSalesOrder) => {
+        const carrier = so.carrier || 'unknown carrier';
+        const how = /\(NP\)/i.test(carrier) ? 'It will be cancelled on NimbusPost. If NimbusPost refuses, nothing changes.'
+            : /\(SR\)/i.test(carrier) ? 'It will be cancelled on Shiprocket. If Shiprocket refuses, nothing changes.'
+            : /^delhivery\s*\(self\)/i.test(carrier) ? 'The Delhivery partner request is marked Cancelled; the partner must cancel the LRN with Delhivery.'
+            : 'This courier has no cancellation API: cancel it with the courier directly as well.';
+        setActionModal({
+            isOpen: true,
+            title: 'Cancel Shipment',
+            message: `Cancel shipment ${so.awb} (${carrier}) for ${so.id}? The order moves back to Invoiced and its AWB, label and pickup date are cleared. ${how}`,
+            warning: 'This cannot be undone. The order will have to be shipped again.',
+            confirmLabel: 'Cancel Shipment',
+            confirmColor: 'bg-red-600 hover:bg-red-700',
+            iconType: 'danger',
+            onConfirm: async () => {
+                setActionModal(prev => ({ ...prev, isOpen: false }));
+                setIsCancellingShipment(so.id);
+                try {
+                    const res = await cancelShipment(so.id, currentUser?.name || currentUser?.email);
+                    if (res.status === 'success') {
+                        addNotification(res.message || 'Shipment cancelled.', 'success');
+                        addLog('Cancel Shipment', `EE Ref: ${so.id}, AWB ${so.awb} (${carrier})`);
+                    } else {
+                        addNotification(res.message || 'Failed to cancel the shipment.', 'error');
+                    }
+                } catch (error) {
+                    console.error('Cancel shipment error:', error);
+                    addNotification('Could not confirm the cancellation. Refreshing the order to show its current state.', 'warning');
+                } finally {
+                    setIsCancellingShipment(null);
+                    // Always re-read: on a dropped response the cancellation may still have happened
+                    await refreshSingleSOState(so.id, so.poReference);
+                }
+            }
+        });
     };
 
     const handleSyncSelfShip = async () => {
@@ -3586,12 +3756,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                 };
             }
 
-            if (isAwaitingSelfShipAwb(so)) {
+            if (isAwaitingDelhiveryAwb(so)) {
                 return {
                     label: isSyncingSelfShip ? 'Syncing...' : 'Awaiting AWB',
                     color: 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100',
                     onClick: handleSyncSelfShip,
                     disabled: isSyncingSelfShip
+                };
+            }
+            if (isAwaitingSelfShipAwb(so)) {
+                return {
+                    label: 'Enter LRN',
+                    color: 'bg-purple-600 text-white hover:bg-purple-700',
+                    onClick: () => openOtherSelfShipForm(so),
+                    disabled: isExecuting
                 };
             }
 
@@ -4219,6 +4397,19 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             Mark as RTO Initiated
                                                                         </button>
                                                                     )}
+                                                                    {so.status === 'Label Generated' && (
+                                                                        <button
+                                                                            onClick={(e: any) => {
+                                                                                e.stopPropagation();
+                                                                                setOpenMenuId(null);
+                                                                                handleAddPickupDate(so);
+                                                                            }}
+                                                                            className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+                                                                        >
+                                                                            <CalendarIcon className="h-3.5 w-3.5" />
+                                                                            Edit Pickup Date
+                                                                        </button>
+                                                                    )}
                                                                     {(isFlipkart || isFlipkartMinutes || isAmazon) && (so.status === 'Label Generated' || so.status === 'Shipped') && (
                                                                         <>
                                                                             <button
@@ -4232,17 +4423,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                                 <CheckCircleIcon className="h-3.5 w-3.5" />
                                                                                 Mark as Delivered
                                                                             </button>
-                                                                            <button
-                                                                                onClick={(e: any) => {
-                                                                                    e.stopPropagation();
-                                                                                    setOpenMenuId(null);
-                                                                                    handleAddPickupDate(so);
-                                                                                }}
-                                                                                className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
-                                                                            >
-                                                                                <CalendarIcon className="h-3.5 w-3.5" />
-                                                                                Add Pickup Date & Time
-                                                                            </button>
+                                                                            {/* Label Generated orders get Edit Pickup Date above */}
+                                                                            {so.status === 'Shipped' && (
+                                                                                <button
+                                                                                    onClick={(e: any) => {
+                                                                                        e.stopPropagation();
+                                                                                        setOpenMenuId(null);
+                                                                                        handleAddPickupDate(so);
+                                                                                    }}
+                                                                                    className="w-full px-4 py-2.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+                                                                                >
+                                                                                    <CalendarIcon className="h-3.5 w-3.5" />
+                                                                                    Edit Pickup Date
+                                                                                </button>
+                                                                            )}
                                                                         </>
                                                                     )}
                                                                     <div className="px-4 py-2 text-[9px] font-bold text-gray-400 uppercase tracking-widest bg-gray-50/50 border-t border-gray-50 mt-1">More Actions Coming Soon</div>
@@ -4274,7 +4468,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                 <div className="grid grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3 gap-x-4 gap-y-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Ref</p><p className="text-xs font-bold text-partners-green truncate">{so.poReference}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Order Date</p><p className="text-xs font-bold text-gray-700">{so.orderDate || 'N/A'}</p></div>
-                                                                    <div><p className="text-[10px] uppercase font-bold text-gray-400">Pickup Date</p><p className="text-xs font-bold text-indigo-600">{so.pickupDate || 'N/A'}</p></div>
+                                                                    <div>
+                                                                        <p className="text-[10px] uppercase font-bold text-gray-400">Pickup Date</p>
+                                                                        <p className="text-xs font-bold text-indigo-600">
+                                                                            {so.pickupDate || 'N/A'}
+                                                                            {so.status === 'Label Generated' && (
+                                                                                <button onClick={(e: any) => { e.stopPropagation(); handleAddPickupDate(so); }} className="ml-2 text-[10px] font-black text-indigo-400 hover:text-indigo-700 underline">Edit</button>
+                                                                            )}
+                                                                        </p>
+                                                                    </div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Shipping Chg</p><p className="text-xs font-bold text-gray-900">{typeof so.shippingCharge === 'number' ? `₹${so.shippingCharge}` : '₹0'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">EasyEcom Cust ID</p><p className={`text-xs font-bold ${so.eeCustomerId ? 'text-blue-600' : 'text-red-500 italic'}`}>{so.eeCustomerId || 'Not Mapped'}</p></div>
                                                                     <div><p className="text-[10px] uppercase font-bold text-gray-400">Expiry Date</p><p className="text-xs font-bold text-red-600">{so.poExpiryDate || 'N/A'}</p></div>
@@ -4485,7 +4687,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             </button>
                                                                         </div>
                                                                     )}
-                                                                    {(so.invoiceNumber && isAwaitingSelfShipAwb(so)) && (
+                                                                    {(so.invoiceNumber && isAwaitingSelfShipAwb(so) && !isAwaitingDelhiveryAwb(so)) && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); openOtherSelfShipForm(so); }}
+                                                                            title={`Marked as self-shipped via ${so.carrier}. Enter the courier's LRN.`}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-purple-600 hover:bg-purple-700 active:scale-95 shadow-md text-white text-[11px] font-bold rounded-lg transition-all"
+                                                                        >
+                                                                            <SendIcon className="h-3 w-3" />
+                                                                            {`Enter LRN · ${so.carrier}`}
+                                                                        </button>
+                                                                    )}
+                                                                    {(so.invoiceNumber && isAwaitingDelhiveryAwb(so)) && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleSyncSelfShip(); }}
                                                                             disabled={isSyncingSelfShip}
@@ -4531,6 +4743,17 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                         >
                                                                             {isReassigningCourier === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <TruckIcon className="h-3 w-3" />}
                                                                             {isReassigningCourier === so.id ? 'Reassigning...' : 'Reassign Courier'}
+                                                                        </button>
+                                                                    )}
+                                                                    {(so.status === 'Ready to Dispatch' && so.awb) && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); handleCancelShipment(so); }}
+                                                                            disabled={isCancellingShipment === so.id}
+                                                                            title="Cancel this shipment and move the order back to Invoiced"
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-white border border-red-300 text-red-600 hover:bg-red-50 text-[11px] font-bold rounded-lg shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                        >
+                                                                            {isCancellingShipment === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <XCircleIcon className="h-3 w-3" />}
+                                                                            {isCancellingShipment === so.id ? 'Cancelling...' : 'Cancel Shipment'}
                                                                         </button>
                                                                     )}
                                                                 </div>
@@ -4695,13 +4918,15 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             {shipFlowOrder && (
                 <ShipFlowModal
                     so={shipFlowOrder}
-                    onClose={() => setShipFlowOrder(null)}
+                    otherOnly={shipFlowOtherOnly}
+                    onClose={() => { setShipFlowOrder(null); setShipFlowOtherOnly(false); }}
                     onChooseNimbus={() => {
                         const so = shipFlowOrder;
                         setShipFlowOrder(null);
                         handlePushToShippingAction(so.id, so.poReference);
                     }}
-                    onChooseSelfShip={(provider, courierName) => handleSelfShipBooking(shipFlowOrder, provider, courierName)}
+                    onChooseDelhivery={() => handleDelhiveryBooking(shipFlowOrder)}
+                    onSaveOther={(courierName, lrn, doc) => handleSaveOtherSelfShip(shipFlowOrder, courierName, lrn, doc)}
                 />
             )}
             <ActionConfirmationModal 

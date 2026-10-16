@@ -285,6 +285,7 @@ export interface GroupedSalesOrder {
     invoicePdfUrl?: string;
     carrier?: string;
     awb?: string;
+    bookedDate?: string;
     trackingStatus?: string;
     edd?: string;
     latestStatus?: string;
