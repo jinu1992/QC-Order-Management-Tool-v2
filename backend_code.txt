@@ -13910,7 +13910,8 @@ function updatePOPickupDate(data) {
     PICKUP: col("Pickup Date"),
     BOOKED: col("Booked Date"),
     INVOICE_DATE: col("Invoice Date"),
-    APPT: col("Appointment Date")
+    APPT: col("Appointment Date"),
+    CHANNEL: col("Channel Name")
   };
   if (IDX.EE_REF === -1 || IDX.PICKUP === -1) return fail("Required columns missing");
 
@@ -13938,10 +13939,14 @@ function updatePOPickupDate(data) {
     const hit = rows.find(i => db_data[i][c] !== "" && db_data[i][c] !== null);
     return hit === undefined ? "" : db_data[hit][c];
   };
-  const win = pickupDateWindow_(first(IDX.BOOKED), first(IDX.INVOICE_DATE), first(IDX.APPT));
   const fmt = (d) => Utilities.formatDate(d, "Asia/Kolkata", "dd MMM yyyy");
-  if (parsedDate < win.min || parsedDate > win.max) {
-    return fail(`Pickup date must be between ${fmt(win.min)} and ${fmt(win.max)} (${win.rule}).`);
+  // Amazon keeps its original free pickup date entry, with no pickup window
+  const isAmazon = /amazon/i.test(String(first(IDX.CHANNEL)));
+  if (!isAmazon) {
+    const win = pickupDateWindow_(first(IDX.BOOKED), first(IDX.INVOICE_DATE), first(IDX.APPT));
+    if (parsedDate < win.min || parsedDate > win.max) {
+      return fail(`Pickup date must be between ${fmt(win.min)} and ${fmt(win.max)} (${win.rule}).`);
+    }
   }
 
   rows.forEach(i => {
