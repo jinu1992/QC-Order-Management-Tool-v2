@@ -188,6 +188,7 @@ function doPost(e) {
     else if (action === 'pushToEasyEcom') result = pushToEasyEcom(data);
     else if (action === 'pushToAmazon') result = createAmazonFbaInboundPlan(data);
     else if (action === 'createZohoInvoice') result = handleCreateZohoInvoice(data.eeReferenceCode);
+    else if (action === 'syncZohoInvoiceByReference') result = syncZohoInvoiceByReference(data.eeReferenceCode);
     else if (action === 'pushToShippingPartner') result = handlePushToShippingAggregator(data.eeReferenceCode,data.courierId);
     else if (action === 'reassignCourier') result = reassignCourierShipment(data.eeReferenceCode, data.courierId);
     else if (action === 'updatePOStatus') result = updatePOStatus(data.poNumber, data.status);
@@ -6332,6 +6333,83 @@ function updateDatabaseWithInvoices(sheet, map) {
   // Write Back the updated 8-column range.
   sheet.getRange(2, START_COL, finalWriteData.length, NUM_COLUMNS_TO_UPDATE).setValues(finalWriteData);
   console.log("Updated PO Database with Zoho Invoice details (including E-Way Bills).");
+}
+
+/**
+ * Links the Zoho invoice whose Reference# is this EE reference code to its PO_Database rows.
+ * For invoices created directly in Zoho (e.g. while the API quota was exhausted): costs one
+ * or two API calls instead of the full 7-day syncZohoInvoicesToDB.
+ *
+ * @param {string} eeReferenceCode - The EE reference code, set as the invoice's Reference# in Zoho.
+ * @return {object} A status object with a message.
+ */
+function syncZohoInvoiceByReference(eeReferenceCode) {
+  const ref = String(eeReferenceCode || "").trim();
+  if (!ref) return { status: "error", message: "No EE Reference Code was provided." };
+
+  const token = getZohoAccessToken();
+  if (!token) return { status: "error", message: "Could not get Zoho Access Token." };
+  const orgId = PropertiesService.getScriptProperties().getProperty('ZOHO_ORG_ID');
+
+  const options = {
+    method: "GET",
+    headers: { "Authorization": "Zoho-oauthtoken " + token },
+    muteHttpExceptions: true
+  };
+
+  const listUrl = `https://www.zohoapis.in/books/v3/invoices?organization_id=${orgId}&reference_number=${encodeURIComponent(ref)}`;
+  const listResponse = UrlFetchApp.fetch(listUrl, options);
+  if (listResponse.getResponseCode() !== 200) {
+    return { status: "error", message: `Zoho API Error: ${listResponse.getContentText()}` };
+  }
+
+  const invoices = (JSON.parse(listResponse.getContentText()).invoices || [])
+    .filter(inv => inv.status !== "void" && String(inv.reference_number || "").trim() === ref);
+
+  if (invoices.length === 0) {
+    return { status: "error", message: `No Zoho invoice found with Reference# ${ref}.` };
+  }
+  if (invoices.length > 1) {
+    return {
+      status: "error",
+      message: `${invoices.length} Zoho invoices have Reference# ${ref} (${invoices.map(inv => inv.invoice_number).join(", ")}). Void the extra ones first.`
+    };
+  }
+
+  const inv = invoices[0];
+
+  // Same rule as fetchZohoInvoices: only invoices over 50,000 carry an E-Way Bill
+  let ewayBillNumber = "";
+  if (inv.total > 50000) {
+    const detailsUrl = `https://www.zohoapis.in/books/v3/invoices/${inv.invoice_id}?organization_id=${orgId}`;
+    const detailsResponse = UrlFetchApp.fetch(detailsUrl, options);
+    if (detailsResponse.getResponseCode() === 200) {
+      const detailsJson = JSON.parse(detailsResponse.getContentText());
+      if (detailsJson.invoice && detailsJson.invoice.eway_bill_details) {
+        ewayBillNumber = detailsJson.invoice.eway_bill_details.eway_bill_number || "";
+      }
+    }
+  }
+
+  const map = new Map([[ref, {
+    id: inv.invoice_id,
+    status: inv.status,
+    number: inv.invoice_number,
+    date: inv.date,
+    total: inv.total,
+    portalUrl: inv.invoice_url,
+    pdfUrl: `https://books.zoho.in/api/v3/invoices/${inv.invoice_id}?organization_id=${orgId}&accept=pdf`,
+    ewayBill: ewayBillNumber
+  }]]);
+
+  const dbSheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  updateDatabaseWithInvoices(dbSheet, map);
+
+  return {
+    status: "success",
+    message: `Linked Zoho invoice ${inv.invoice_number} (${inv.status}) to ${ref}` +
+      (ewayBillNumber ? `, E-Way Bill ${ewayBillNumber}.` : ".")
+  };
 }
 
 
