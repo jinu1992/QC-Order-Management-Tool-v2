@@ -6412,6 +6412,99 @@ function syncZohoInvoiceByReference(eeReferenceCode) {
   };
 }
 
+/**
+ * Run from the Apps Script editor. Links invoice BSPL/26-27/946, created by hand in Zoho on
+ * 23 Oct 2026 while the Zoho API quota was exhausted, to QT/26-27/146 without calling Zoho.
+ * Fill in ZOHO_INVOICE_ID first: the number at the end of the invoice's Zoho Books URL.
+ */
+function linkManualInvoice_QT_26_27_146() {
+  const ZOHO_INVOICE_ID = "1975394000373837118";
+
+  const result = linkManualZohoInvoice_("QT/26-27/146", {
+    invoiceId: ZOHO_INVOICE_ID,
+    invoiceNumber: "BSPL/26-27/946",
+    invoiceDate: "2026-10-23",
+    total: 49875,
+    status: "sent",
+    ewayBill: "",
+    driveFileId: "1KEJ6HidIYhsJuirDmoWdHqLvkjvAL6kh"
+  });
+  Logger.log(JSON.stringify(result));
+}
+
+/**
+ * Writes a manually created Zoho invoice into the PO_Database rows of one EE reference code,
+ * without any Zoho API call. The invoice PDF (already in Drive) is moved into the PO Drive
+ * folder when possible, made link-viewable like the self-ship invoice copies, and used for
+ * both invoice link columns. Refuses to overwrite a different invoice already on the rows.
+ */
+function linkManualZohoInvoice_(eeReferenceCode, details) {
+  const ref = String(eeReferenceCode || "").trim();
+  const invoiceId = String(details.invoiceId || "").trim();
+  if (!ref) return { status: "error", message: "No EE Reference Code was provided." };
+  if (!/^\d{10,}$/.test(invoiceId)) {
+    return { status: "error", message: "Set the Zoho invoice ID (the number at the end of the invoice's Zoho Books URL) and run again." };
+  }
+
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = name => {
+    const index = headers.indexOf(name);
+    if (index === -1) throw new Error(`Column not found in PO_Database: ${name}`);
+    return index;
+  };
+  const refIdx = col("EE_reference_code");
+  const invoiceIdIdx = col("Invoice Id");
+
+  const rowNumbers = [];
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][refIdx]).trim() !== ref) continue;
+    const existingId = String(data[i][invoiceIdIdx]).trim();
+    if (existingId && existingId !== invoiceId) {
+      return { status: "error", message: `Row ${i + 1} already has Zoho invoice ${existingId}. Nothing was changed.` };
+    }
+    rowNumbers.push(i + 1);
+  }
+  if (rowNumbers.length === 0) return { status: "error", message: `No PO_Database rows found for ${ref}.` };
+
+  let file = DriveApp.getFileById(details.driveFileId);
+  try {
+    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    const existing = folder.getFilesByName(file.getName());
+    if (existing.hasNext()) file = existing.next();
+    else file.moveTo(folder);
+  } catch (e) {
+    Logger.log(`linkManualZohoInvoice_: could not put the PDF in the PO folder, keeping it where it is. ${e.message}`);
+  }
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    Logger.log(`linkManualZohoInvoice_: could not make the PDF link-shareable. ${e.message}`);
+  }
+  const pdfLink = file.getUrl();
+
+  const values = {
+    "Invoice Id": invoiceId,
+    "Invoice Status": details.status || "sent",
+    "Invoice Number": details.invoiceNumber,
+    "Invoice Date": details.invoiceDate,
+    "Invoice Total": details.total,
+    "Invoice Url": pdfLink,
+    "Invoice PDF Url": pdfLink,
+    "EWB": details.ewayBill || ""
+  };
+  rowNumbers.forEach(rowNumber => {
+    Object.keys(values).forEach(name => sheet.getRange(rowNumber, col(name) + 1).setValue(values[name]));
+  });
+  SpreadsheetApp.flush();
+
+  return {
+    status: "success",
+    message: `Linked ${details.invoiceNumber} to ${ref} on rows ${rowNumbers.join(", ")}. PDF: ${pdfLink}`
+  };
+}
+
 
 
 
