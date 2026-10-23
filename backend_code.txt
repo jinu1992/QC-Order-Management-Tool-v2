@@ -214,6 +214,7 @@ function doPost(e) {
     else if (action === 'debugGmailSearch') result = debugGmailSearch(data.query);
     else if (action === 'debugRepoHeaders') result = debugRepoHeaders();
     else if (action === 'repairBlinkitStatusColumnCollision') result = repairBlinkitStatusColumnCollision(data.dryRun);
+    else if (action === 'repairBlinkitBlankStoreCodes') result = repairBlinkitBlankStoreCodes(data.dryRun);
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
@@ -2086,55 +2087,55 @@ function analyzeEmailMetadata(channelKey, subjectOriginal, subjectUpper, emailBo
       Logger.log("Warning: Could not extract BigBasket store code from subject: " + subjectOriginal);
     }
   }
-  else if (channelKey.includes("blinkit") && subjectUpper.includes("PO_BCPL")) {
+  // Blinkit names its billing entity either "BCPL" or, on some PO emails
+  // (since Oct 2026), its full legal name "BLINK COMMERCE PRIVATE LIMITED" -
+  // in both the subject ("PO_BLINK COMMERCE PRIVATE LIMITED - ...") and the
+  // "Bill To:" line. Accept either, or the store code silently comes out blank.
+  else if (channelKey.includes("blinkit") && BLINKIT_PO_SUBJECT_RE.test(subjectUpper)) {
     category = "New PO";
-    const extractionRegex = /^\*?\s*Bill To:\*?\s*BCPL - (.*)/im;
+    const extractionRegex = /^\*?\s*Bill To:\*?\s*(?:BCPL|BLINK COMMERCE PRIVATE LIMITED) - (.*)/im;
     const storeMatch = body.match(extractionRegex);
     if (storeMatch && storeMatch[1]) {
       let rawStoreCode = storeMatch[1].trim();
       Logger.log("Found raw store code: '" + rawStoreCode + "'");
-
-      // =========================================================================
-      // THE FINAL FIX IS HERE: A simple, non-regex, step-by-step method.
-      // =========================================================================
-      
-      let lowerCaseCode = rawStoreCode.toLowerCase();
-      let basePart = "";
-      let warehousePart = "";
-
-      // 1. Identify which warehouse suffix the string has.
-      if (lowerCaseCode.endsWith(' feeder warehouse')) {
-        // Get the part of the string BEFORE " feeder warehouse"
-        basePart = rawStoreCode.substring(0, rawStoreCode.length - 17);
-        warehousePart = 'Feeder Warehouse';
-      } else if (lowerCaseCode.endsWith(' warehouse')) {
-        // Get the part of the string BEFORE " warehouse"
-        basePart = rawStoreCode.substring(0, rawStoreCode.length - 10);
-        warehousePart = 'Warehouse';
-      }
-
-      // 2. If we found a warehouse part, clean up the base and re-join them.
-      if (basePart && warehousePart) {
-        // This is the key step: Remove any trailing space or hyphen from the base part.
-        // The regex `/\s*-?\s*$/` matches optional spaces, an optional hyphen, and optional spaces at the end of the string.
-        let cleanedBase = basePart.replace(/\s*-?\s*$/, '');
-        
-        // Reconstruct the string with the standardized separator.
-        storeCode = `${cleanedBase} - ${warehousePart}`;
-      } else {
-        // If the string doesn't end with a known warehouse type, use it as-is.
-        storeCode = rawStoreCode;
-      }
-      
+      storeCode = normalizeBlinkitStoreCode_(rawStoreCode);
       Logger.log("SUCCESS: Final formatted Blinkit store code: '" + storeCode + "'");
-      
     }
     else {
       Logger.log("Warning: Could not find Blinkit 'Bill To:' details in email body.");
     }
   }
-   
+
   return { category, poNumber, storeCode };
+}
+
+const BLINKIT_PO_SUBJECT_RE = /PO_(?:BCPL|BLINK COMMERCE PRIVATE LIMITED)/i;
+
+/**
+ * Standardizes a raw Blinkit "Bill To" facility name so it matches the
+ * Zoho/EasyEcom customer mapping keys: "X Feeder Warehouse" / "X - Feeder
+ * Warehouse" -> "X - Feeder Warehouse", likewise for plain "Warehouse".
+ * Anything without a known warehouse suffix is returned as-is.
+ */
+function normalizeBlinkitStoreCode_(rawStoreCode) {
+  const lowerCaseCode = rawStoreCode.toLowerCase();
+  let basePart = "";
+  let warehousePart = "";
+
+  if (lowerCaseCode.endsWith(' feeder warehouse')) {
+    basePart = rawStoreCode.substring(0, rawStoreCode.length - 17);
+    warehousePart = 'Feeder Warehouse';
+  } else if (lowerCaseCode.endsWith(' warehouse')) {
+    basePart = rawStoreCode.substring(0, rawStoreCode.length - 10);
+    warehousePart = 'Warehouse';
+  }
+
+  if (basePart && warehousePart) {
+    // Strip any trailing space/hyphen from the base before re-joining.
+    const cleanedBase = basePart.replace(/\s*-?\s*$/, '');
+    return `${cleanedBase} - ${warehousePart}`;
+  }
+  return rawStoreCode;
 }
 
 
@@ -11205,6 +11206,71 @@ function debugRepoHeaders() {
   if (!repoSheet) return { status: "error", message: "PO_Repository sheet not found." };
   const headers = repoSheet.getRange(1, 1, 1, repoSheet.getLastColumn()).getValues()[0];
   return { status: "success", columnCount: headers.length, headers: headers.map((h, i) => ({ col: i + 1, header: h })) };
+}
+
+/**
+ * One-off data repair for Blinkit POs ingested with a blank Store Code
+ * because their email named the billing entity "BLINK COMMERCE PRIVATE
+ * LIMITED" instead of "BCPL" (see analyzeEmailMetadata). Recovers the store
+ * from the logged PO_Repository subject ("PO_<entity> - <store>_<CITY>_..."),
+ * fills it into PO_Repository and every matching PO_Database row, then (unless
+ * dryRun) re-runs the customer ID lookup so Zoho Contact ID/GST get filled.
+ * zohoMapped in the result says whether Zoho_Customers has a contact for the
+ * store - if false, the store still needs a Blinkit_<store> contact in Zoho.
+ */
+function repairBlinkitBlankStoreCodes(dryRun) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const repoSheet = ss.getSheetByName(SHEET_PO_REPO);
+  const dbSheet = ss.getSheetByName(SHEET_PO_DB);
+  const zohoCustSheet = ss.getSheetByName(SHEET_ZOHO_CUSTOMERS);
+
+  const repoData = repoSheet.getDataRange().getValues();
+  const rh = repoData[0];
+  const R = { CHANNEL: rh.indexOf("Channel Name"), SUBJECT: rh.indexOf("Subject"), PO: rh.indexOf("PO Number"), STORE: rh.indexOf("Store Code") };
+
+  const storeByPo = {};
+  const repoRowsToFix = [];
+  for (let i = 1; i < repoData.length; i++) {
+    const row = repoData[i];
+    if (!String(row[R.CHANNEL]).toLowerCase().includes("blinkit")) continue;
+    if (String(row[R.STORE]).trim()) continue;
+    const m = String(row[R.SUBJECT]).match(/PO_(?:BCPL|BLINK COMMERCE PRIVATE LIMITED) - (.+?)_/i);
+    if (!m) continue;
+    const po = String(row[R.PO]).trim();
+    storeByPo[po] = normalizeBlinkitStoreCode_(m[1].trim());
+    repoRowsToFix.push({ row: i + 1, po });
+  }
+
+  const dbData = dbSheet.getDataRange().getValues();
+  const dh = dbData[0];
+  const D = { CHANNEL: dh.indexOf("Channel Name"), PO: dh.indexOf("PO Number"), STORE: dh.indexOf("Store Code") };
+  const dbRowsToFix = [];
+  for (let i = 1; i < dbData.length; i++) {
+    const row = dbData[i];
+    const po = String(row[D.PO]).trim();
+    if (!storeByPo[po] || String(row[D.STORE]).trim()) continue;
+    if (!String(row[D.CHANNEL]).toLowerCase().includes("blinkit")) continue;
+    dbRowsToFix.push({ row: i + 1, po });
+  }
+
+  const zohoKeys = new Set(zohoCustSheet.getDataRange().getValues().slice(1)
+    .map(r => String(r[1] || "").toLowerCase().trim()));
+  const pos = Object.keys(storeByPo).map(po => ({
+    po,
+    storeCode: storeByPo[po],
+    zohoMapped: zohoKeys.has(`blinkit_${storeByPo[po]}`.toLowerCase()),
+    repoRows: repoRowsToFix.filter(r => r.po === po).length,
+    dbRows: dbRowsToFix.filter(r => r.po === po).length
+  }));
+
+  if (!dryRun) {
+    repoRowsToFix.forEach(r => repoSheet.getRange(r.row, R.STORE + 1).setValue(storeByPo[r.po]));
+    dbRowsToFix.forEach(r => dbSheet.getRange(r.row, D.STORE + 1).setValue(storeByPo[r.po]));
+    SpreadsheetApp.flush();
+    if (dbRowsToFix.length > 0) updateCustomerIdsInPoDatabase();
+  }
+
+  return { status: "success", dryRun: !!dryRun, pos };
 }
 
 function whoAmI() {
