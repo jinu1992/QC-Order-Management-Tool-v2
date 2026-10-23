@@ -7721,27 +7721,13 @@ function updateZohoItemIDs() {
   
   Logger.log('--- Starting Zoho Item ID Sync Process ---');
 
-  // --- Step 1: Get credentials and fetch the filtered items from Zoho ---
-  const token = getZohoAccessToken(); // Assumes this helper function exists
-  if (!token) {
-    Logger.log('Could not get Zoho token. Aborting.');
-    return;
-  }
-  
-  // Fetch all items from Zoho where the name contains "Drift".
-  const zohoItemMap = _fetchZohoItems(token, "");
-  if (zohoItemMap.size === 0) {
-    Logger.log('No items containing "Drift" were found in Zoho Books.');
-    return;
-  }
-
-  // --- Step 2: Read the Master SKU Mapping sheet ---
+  // --- Step 1: Read the Master SKU Mapping sheet ---
   const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_INVENTORY);
   if (sheet.getLastRow() < 2) {
     Logger.log('Master SKU Mapping sheet is empty. Nothing to update.');
     return;
   }
-  
+
   const allData = sheet.getDataRange().getValues();
   const headers = allData.shift(); // Get headers and remove from data array
 
@@ -7751,6 +7737,31 @@ function updateZohoItemIDs() {
 
   if (masterSkuIndex === -1 || zohoItemIdIndex === -1) {
     Logger.log("Error: Could not find 'Master SKU' or 'Zoho Item ID' columns in the mapping sheet.");
+    return;
+  }
+
+  // This runs at the start of every processPurchaseOrders trigger run, and fetching the
+  // full Zoho item list costs one API call per 200 items. Doing that when every SKU is
+  // already mapped exhausted the org's 10,000/day Zoho Books quota (Oct 2026), which
+  // then blocked invoice creation. Only go to Zoho when some SKU is missing its ID.
+  const hasUnmappedSku = allData.some(row =>
+    String(row[masterSkuIndex]).trim() && !String(row[zohoItemIdIndex]).trim()
+  );
+  if (!hasUnmappedSku) {
+    Logger.log('Every Master SKU already has a Zoho Item ID. Skipping the Zoho item fetch.');
+    return;
+  }
+
+  // --- Step 2: Get credentials and fetch all items from Zoho ---
+  const token = getZohoAccessToken(); // Assumes this helper function exists
+  if (!token) {
+    Logger.log('Could not get Zoho token. Aborting.');
+    return;
+  }
+
+  const zohoItemMap = _fetchZohoItems(token, "");
+  if (zohoItemMap.size === 0) {
+    Logger.log('No items were returned from Zoho Books.');
     return;
   }
 
