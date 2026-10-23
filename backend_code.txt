@@ -256,7 +256,9 @@ function doPost(e) {
     }
 
     // Ensure we always wrap the result in responseJSON if the function didn't already
-    if (result && result.getContentText) return result; // It's already a TextOutput
+    // A ContentService TextOutput has getContent(), not getContentText() (that's HTTPResponse);
+    // checking the wrong method re-wrapped handler output as "{}", hiding every error from the app
+    if (result && typeof result.getContent === 'function') return result; // It's already a TextOutput
     return responseJSON(result || {status: 'success', message: 'Action processed'});
 
   } catch (error) {
