@@ -15449,7 +15449,10 @@ function recordOtherSelfShipment(data) {
     };
 
     const existingAwb = String(first(col.awb) || "").trim();
-    if (existingAwb && existingAwb !== "PROCESSING") {
+    // Same LRN again with a document (e.g. the first save went through without it): attach
+    // the document below and leave the shipment itself as it is
+    const attachDocOnly = existingAwb === lrn && !!docBase64;
+    if (existingAwb && existingAwb !== "PROCESSING" && !attachDocOnly) {
       if (existingAwb === lrn) return { status: "success", message: `${eeReferenceCode} already has LRN ${lrn}.` };
       return { status: "error", message: `Order already has a shipment (AWB ${existingAwb}, ${first(col.carrier) || "unknown carrier"}).` };
     }
@@ -15468,6 +15471,17 @@ function recordOtherSelfShipment(data) {
         Logger.log(`recordOtherSelfShipment: document save failed for ${eeReferenceCode}: ${docErr.message}`);
         return { status: "error", message: `Could not save the supporting document (${docErr.message}). Nothing was saved; try again, or save without the document.` };
       }
+    }
+
+    if (attachDocOnly) {
+      if (col.label !== -1) rowIdxs.forEach(i => dbSheet.getRange(i + 2, col.label + 1).setValue(docUrl));
+      SpreadsheetApp.flush();
+      return {
+        status: "success",
+        message: `Supporting document attached to ${eeReferenceCode} (LRN ${lrn}).`,
+        awb: lrn,
+        labelUrl: docUrl
+      };
     }
 
     const now = new Date();
