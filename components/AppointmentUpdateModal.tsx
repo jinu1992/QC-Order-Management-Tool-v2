@@ -108,6 +108,9 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
     // booked from another login or scheduled by Blinkit itself never reach that sync, and
     // Mark as RTD is blocked until an Appointment ID exists.
     const hideIdField = isZepto || isInstamart || isBB || isRBL;
+    // The warehouse scans the pass QR at the gate, so a Blinkit appointment can't be saved
+    // without one. A QR already saved (email sync or earlier upload) satisfies this.
+    const hasSavedQr = /^https?:\/\//i.test(so.qrCodeUrl || '');
 
     const getBrandDetails = () => {
         if (isZepto) return {
@@ -171,6 +174,11 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
 
         if (isBlinkit && !appointmentId.trim()) {
             addNotification("Please enter the Appointment ID from the Blinkit appointment pass", "error");
+            return;
+        }
+
+        if (isBlinkit && !hasSavedQr && !qrFile) {
+            addNotification("Please upload the QR code image from the Blinkit appointment pass", "error");
             return;
         }
 
@@ -283,7 +291,7 @@ const AppointmentUpdateModal: FC<AppointmentUpdateModalProps> = ({ so, onClose, 
                         {isBlinkit && (
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">
-                                    QR Code Image {so.qrCodeUrl && !qrFile ? '(already saved — upload to replace)' : '(optional)'}
+                                    QR Code Image {hasSavedQr && !qrFile ? '(already saved — upload to replace)' : <span className="text-red-500">*</span>}
                                 </label>
                                 <div className="flex items-center gap-3">
                                     {qrFile && (
