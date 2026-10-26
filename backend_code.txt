@@ -15529,8 +15529,8 @@ const SHIPMENT_COLUMNS_ = [
 ];
 
 /**
- * Cancels the booked shipment of an order at Ready to Dispatch and moves the order back
- * to Invoiced. NimbusPost / Shiprocket shipments are cancelled through their API, and if
+ * Cancels the booked shipment of an order at Ready to Dispatch (or a self-ship order still
+ * awaiting its AWB) and moves the order back to Invoiced. NimbusPost / Shiprocket shipments are cancelled through their API, and if
  * the courier refuses, nothing is changed. A Delhivery self-ship request is marked
  * Cancelled on the tracker (the partner cancels it with Delhivery). Other self-ship
  * couriers have no API, so the user is reminded to cancel with them directly.
@@ -15566,14 +15566,26 @@ function cancelShipment(data) {
 
     const awb = String(first("AWB") || "").trim();
     const carrier = String(first("Carrier") || "").trim();
-    if (!awb || awb === "PROCESSING") return { status: "error", message: `${eeReferenceCode} has no booked shipment to cancel.` };
+    // A self-ship order still waiting for its AWB / LRN can be cancelled too (e.g. sent to
+    // Delhivery, then shipped with another partner instead)
+    const awaitingAwb = !awb && /\(self\)/i.test(carrier);
+    if (awb === "PROCESSING" || (!awb && !awaitingAwb)) return { status: "error", message: `${eeReferenceCode} has no booked shipment to cancel.` };
 
     const statuses = statusIdx === -1 ? [] : rowIdxs.map(i => String(dbData[i][statusIdx] || "").trim().toLowerCase());
     const blocked = statuses.find(s => CANCEL_SHIPMENT_BLOCKED_STATUSES_.includes(s));
     if (blocked) return { status: "error", message: `${eeReferenceCode} is already ${blocked}; its shipment can't be cancelled from the tool.` };
 
     let note;
-    if (/\(NP\)/i.test(carrier)) {
+    if (awaitingAwb) {
+      if (/^delhivery\s*\(self\)$/i.test(carrier)) {
+        const n = cancelDelhiveryTrackerRequest_(String(first("Invoice Number") || "").trim(), "", userName);
+        note = n
+          ? "The Delhivery request is marked Cancelled before an LRN was assigned. If the partner already booked it with Delhivery, ask them to cancel that booking."
+          : "No open Delhivery tracker request was found.";
+      } else {
+        note = `No LRN was entered for ${carrier.replace(/\s*\(self\)\s*$/i, "")}; cancel the booking with them directly if one was made.`;
+      }
+    } else if (/\(NP\)/i.test(carrier)) {
       const res = cancelNimbusShipment_(awb) || {};
       const msg = String(res.message || res.error || "");
       if (!res.status && !/already\s+cancel/i.test(msg)) {
@@ -15605,7 +15617,7 @@ function cancelShipment(data) {
       });
     }
     SpreadsheetApp.flush();
-    Logger.log(`cancelShipment: ${eeReferenceCode} AWB ${awb} (${carrier}) cancelled by ${userName || "unknown"}. ${note}`);
+    Logger.log(`cancelShipment: ${eeReferenceCode} AWB ${awb || "(awaiting)"} (${carrier}) cancelled by ${userName || "unknown"}. ${note}`);
 
     return { status: "success", message: `Shipment cancelled for ${eeReferenceCode}; the order is back at Invoiced. ${note}` };
   } catch (e) {
@@ -15659,7 +15671,7 @@ function cancelDelhiveryTrackerRequest_(invoiceNumber, awb, userName) {
     sheet.getRange(i + 2, statusCol + 1).setValue(PARTNER_STATUS_.CANCELLED);
     if (verCol !== -1) {
       const prev = String(row[verCol] || "").trim();
-      const line = `✗ ${stamp} Shipment cancelled from the tool${userName ? " by " + userName : ""} (LRN ${awb || "-"})`;
+      const line = `✗ ${stamp} Shipment cancelled from the tool${userName ? " by " + userName : ""} (${awb ? "LRN " + awb : "before an LRN was assigned"})`;
       sheet.getRange(i + 2, verCol + 1).setValue(prev ? `${prev}\n${line}` : line);
     }
     marked++;

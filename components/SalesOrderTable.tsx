@@ -3377,17 +3377,25 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         setShipFlowOrder(so);
     };
 
-    // Cancels the booked shipment of a Ready to Dispatch order and moves it back to Invoiced
+    // Cancels the booked shipment of a Ready to Dispatch order (or a self-ship order still
+    // awaiting its AWB) and moves it back to Invoiced
     const handleCancelShipment = (so: GroupedSalesOrder) => {
         const carrier = so.carrier || 'unknown carrier';
-        const how = /\(NP\)/i.test(carrier) ? 'It will be cancelled on NimbusPost. If NimbusPost refuses, nothing changes.'
+        const awaiting = isAwaitingSelfShipAwb(so);
+        const how = awaiting
+            ? (/^delhivery\s*\(self\)/i.test(carrier)
+                ? 'The Delhivery partner request is marked Cancelled. If the partner already booked it with Delhivery, ask them to cancel that booking.'
+                : 'If a booking was already made with this courier, cancel it with them directly as well.')
+            : /\(NP\)/i.test(carrier) ? 'It will be cancelled on NimbusPost. If NimbusPost refuses, nothing changes.'
             : /\(SR\)/i.test(carrier) ? 'It will be cancelled on Shiprocket. If Shiprocket refuses, nothing changes.'
             : /^delhivery\s*\(self\)/i.test(carrier) ? 'The Delhivery partner request is marked Cancelled; the partner must cancel the LRN with Delhivery.'
             : 'This courier has no cancellation API: cancel it with the courier directly as well.';
         setActionModal({
             isOpen: true,
             title: 'Cancel Shipment',
-            message: `Cancel shipment ${so.awb} (${carrier}) for ${so.id}? The order moves back to Invoiced and its AWB, label and pickup date are cleared. ${how}`,
+            message: awaiting
+                ? `Cancel the ${carrier} self-shipment for ${so.id}? It is still awaiting its AWB. The order moves back to Invoiced so it can be shipped with another partner. ${how}`
+                : `Cancel shipment ${so.awb} (${carrier}) for ${so.id}? The order moves back to Invoiced and its AWB, label and pickup date are cleared. ${how}`,
             warning: 'This cannot be undone. The order will have to be shipped again.',
             confirmLabel: 'Cancel Shipment',
             confirmColor: 'bg-red-600 hover:bg-red-700',
@@ -3399,7 +3407,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     const res = await cancelShipment(so.id, currentUser?.name || currentUser?.email);
                     if (res.status === 'success') {
                         addNotification(res.message || 'Shipment cancelled.', 'success');
-                        addLog('Cancel Shipment', `EE Ref: ${so.id}, AWB ${so.awb} (${carrier})`);
+                        addLog('Cancel Shipment', `EE Ref: ${so.id}, AWB ${so.awb || 'awaiting'} (${carrier})`);
                     } else {
                         addNotification(res.message || 'Failed to cancel the shipment.', 'error');
                     }
@@ -4843,7 +4851,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                                             {isReassigningCourier === so.id ? 'Reassigning...' : 'Reassign Courier'}
                                                                         </button>
                                                                     )}
-                                                                    {(so.status === 'Ready to Dispatch' && so.awb) && (
+                                                                    {((so.status === 'Ready to Dispatch' && so.awb) || (so.invoiceNumber && isAwaitingSelfShipAwb(so))) && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handleCancelShipment(so); }}
                                                                             disabled={isCancellingShipment === so.id}
