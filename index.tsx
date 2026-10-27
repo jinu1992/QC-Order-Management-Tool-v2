@@ -5,7 +5,7 @@ import App from './App';
 import PartnerPortal from './components/PartnerPortal';
 import { networkInterceptor } from './services/networkInterceptor';
 
-// /partner is the Delhivery partner portal: its own login and none of the internal app
+// /partner is the self-ship partner portal (Urvi Ent): its own login and none of the internal app
 const isPartnerPortal = window.location.pathname === '/partner' || window.location.pathname.startsWith('/partner/');
 
 // Initialize network interception before rendering (internal app's Logs page)

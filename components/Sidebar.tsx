@@ -82,6 +82,18 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, currentUse
               </a>
             </li>
           ))}
+          {/* Urvi Ent's self-ship portal: its own Google sign-in (@cubelelo.com is always allowed), so a new tab */}
+          {allowedViews.includes('Sales Orders') && (
+            <li>
+              <a href="/partner" target="_blank" rel="noopener noreferrer" title="Open the self-ship partner portal in a new tab"
+                className="flex items-center p-3 rounded-xl text-sm font-bold transition-all text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+              >
+                <div className="text-gray-400"><TruckIcon /></div>
+                <span className="ml-3 flex-1">Partner Portal</span>
+                <ExternalLinkIcon className="h-4 w-4 text-gray-400" />
+              </a>
+            </li>
+          )}
         </ul>
       </nav>
 
