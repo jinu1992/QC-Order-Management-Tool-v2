@@ -1,10 +1,11 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { google } from 'googleapis';
 import crypto from 'crypto';
-import { parseDelhiveryLabel } from '../partner/labelParser.js';
+import { parseDelhiveryLabel, parseScorpionDocs } from '../partner/labelParser.js';
 
-// Delhivery partner portal (/partner). Partners sign in with Google; the email must be
-// on the "Portal Access" tab of the Delhivery tracker sheet (or be @cubelelo.com).
+// Self-ship partner portal (/partner) for Urvi Ent, who books each request with Delhivery
+// or Scorpion. Partners sign in with Google; the email must be on the "Portal Access" tab
+// of the self-ship tracker sheet (or be @cubelelo.com).
 // The browser only ever talks to these routes. They hold PARTNER_PORTAL_SECRET and call
 // the Apps Script backend, which re-checks the email on every call, so removing a row
 // from "Portal Access" cuts access without waiting for the session to expire.
@@ -173,31 +174,44 @@ export function createPartnerRouter(redirectUri: string): Router {
   });
 
   router.post('/api/partner/submit', requirePartner, async (req: PartnerRequest, res: Response) => {
-    const { invoiceNumber, lrn, labelBase64 } = req.body || {};
-    if (!invoiceNumber || !lrn || !labelBase64) {
-      return res.status(400).json({ status: 'error', message: 'Request, LRN and label PDF are all required.' });
+    const { invoiceNumber, lrn, labelBase64, docketBase64 } = req.body || {};
+    // Requests from before the courier choice existed are Delhivery
+    const courier = String(req.body?.courier || 'delhivery').toLowerCase();
+    if (courier !== 'delhivery' && courier !== 'scorpion') {
+      return res.status(400).json({ status: 'error', message: `${courier} shipments can't be submitted yet.` });
+    }
+    const needsDocket = courier === 'scorpion';
+    if (!invoiceNumber || !lrn || !labelBase64 || (needsDocket && !docketBase64)) {
+      return res.status(400).json({
+        status: 'error',
+        message: needsDocket ? 'Request, docket number, box label and docket PDF are all required.' : 'Request, LRN and label PDF are all required.',
+      });
     }
 
-    const pdf = Buffer.from(String(labelBase64), 'base64');
-    if (pdf.length > MAX_LABEL_BYTES) {
-      return res.status(413).json({ status: 'error', message: 'Label PDF is too large (max 3 MB).' });
+    const pdfs = [labelBase64, ...(needsDocket ? [docketBase64] : [])].map(b => Buffer.from(String(b), 'base64'));
+    if (pdfs.reduce((n, pdf) => n + pdf.length, 0) > MAX_LABEL_BYTES) {
+      return res.status(413).json({ status: 'error', message: 'The PDFs are too large (max 3 MB in total).' });
     }
-    if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
-      return res.status(400).json({ status: 'error', message: 'The label must be a PDF file.' });
+    if (pdfs.some(pdf => pdf.subarray(0, 5).toString('latin1') !== '%PDF-')) {
+      return res.status(400).json({ status: 'error', message: 'Upload the documents as PDF files.' });
     }
 
     try {
-      const label = await parseDelhiveryLabel(new Uint8Array(pdf));
+      const label = needsDocket
+        ? await parseScorpionDocs(pdfs.map(pdf => new Uint8Array(pdf)))
+        : await parseDelhiveryLabel(new Uint8Array(pdfs[0]));
       const result = await callAppsScript('partnerSubmitShipment', req.partner!.email, {
         invoiceNumber: String(invoiceNumber),
+        courier,
         lrn: String(lrn),
         label,
-        labelBase64: pdf.toString('base64'),
+        labelBase64: pdfs[0].toString('base64'),
+        ...(needsDocket ? { docketBase64: pdfs[1].toString('base64') } : {}),
       });
       res.status(result.code === 'forbidden' ? 403 : 200).json({ ...result, label });
     } catch (error: any) {
       console.error('Partner submit error:', error);
-      res.status(502).json({ status: 'error', message: `Could not process the label: ${error.message}` });
+      res.status(502).json({ status: 'error', message: `Could not process the documents: ${error.message}` });
     }
   });
 

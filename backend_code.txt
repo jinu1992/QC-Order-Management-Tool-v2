@@ -79,7 +79,8 @@ const EMAIL_LOGS = "Email Logs";
 // "BUSYBEES LOGISTICS SOLUTIONS PRIVATE LIMITED" (its legal name), not "Xpressbees" —
 // the old mapping made getTransporterIdByName_ throw "Transporter not found: Xpressbees"
 // on every reassignment/booking to this courier.
-const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Busybees" };
+// "scorpion": not a NimbusPost courier, used when Urvi Ent self-ships with Scorpion (partner portal)
+const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Busybees", "scorpion": "Scorpion" };
 // B2B channels that go through the Nimbus courier-selection flow (createNimbusPostShipment)
 const B2B_NIMBUS_CHANNELS_ = ["instamart", "zepto", "bb", "rbl", "flipkartminutes", "blinkit"];
 
@@ -14340,7 +14341,7 @@ function buildHtmlEmailTemplate(shipments, opts) {
 
   // ---------------- TABLE ROWS ----------------
   const tableRows = shipments.map(s => {
-    const trackingLink = s.trackingUrl || `${opts.trackingUrlBase}${s.awb}`;
+    const trackingLink = s.trackingUrl || `${s.trackingUrlBase || opts.trackingUrlBase}${s.awb}`;
     s.awbLink = `<a href="${trackingLink}" style="color:#059669;text-decoration:none;"><b>${s.awb}</b></a>`;
 
     const apptDateObj = s.apptDateObj;
@@ -14692,6 +14693,7 @@ const DELHIVERY_EMAIL_COLUMNS_ = [
   { header: "Invoice Number", cell: s => s.invoiceNumber },
   { header: "No. of Boxes", cell: s => s.boxes },
   { header: "AWB", cell: s => s.awbLink },
+  { header: "Courier", cell: s => s.courier },
   { header: "Appt Date", nowrap: true, cell: s => apptCell_(s.apptDate, s.tag) },
   { header: "Appt Time", nowrap: true, cell: s => s.apptTime },
   { header: "Appt ID", cell: s => s.apptId },
@@ -14705,19 +14707,19 @@ const DELHIVERY_EMAIL_CC_ = "";
 
 function processDelhiveryAndSendEmail() {
   sendTrackerSummaryEmail_({
-    label: "Delhivery",
+    label: "Urvi Ent",
     trackerSpreadsheetId: DELHIVERY_TRACKER_SPREADSHEET_ID,
     trackerSheetGid: DELHIVERY_TRACKER_SHEET_GID,
     trackerSheetNames: ["Action Required"],
     toEmail: DELHIVERY_EMAIL_TO_,
     ccEmail: DELHIVERY_EMAIL_CC_,
-    subjectTitle: "📦 Delhivery Self-Ship | Delivery Alignment Confirmation Report",
+    subjectTitle: "📦 Urvi Ent Self-Ship | Delivery Alignment Confirmation Report",
     skipClosedPos: true,
     // Requests whose shipment was cancelled from the tool
     isClosedRow: (c) => c.has("Status") && String(c.raw("Status") || "").trim().toLowerCase() === "cancelled",
     readRow: readDelhiveryTrackerRow_,
     template: {
-      title: "Delivery Alignment Confirmation Report | Delhivery Self-Ship",
+      title: "Delivery Alignment Confirmation Report | Urvi Ent Self-Ship",
       trackingUrlBase: "https://www.delhivery.com/track-v2/lr/", // the AWB column holds the LRN
       sheetUrl: `https://docs.google.com/spreadsheets/d/${DELHIVERY_TRACKER_SPREADSHEET_ID}/edit?gid=${DELHIVERY_TRACKER_SHEET_GID}#gid=${DELHIVERY_TRACKER_SHEET_GID}`,
       columns: DELHIVERY_EMAIL_COLUMNS_
@@ -14742,8 +14744,12 @@ function readDelhiveryTrackerRow_(c) {
   }
 
   const trackingUrl = c.has("Tracking Link") ? c.url("Tracking Link") : "";
+  const courier = c.has("Courier") ? String(c.raw("Courier") || "").trim() : "";
 
   return {
+    courier: courier || "N/A",
+    // Used when the row has no Tracking Link; blank Courier = Delhivery
+    trackingUrlBase: SELF_SHIP_PARTNER_COURIERS_[selfShipPartnerCourierKey_(courier)].trackingUrlBase,
     bookedDate: c.has("Booked Date") ? formatTrackerDate_(c.raw("Booked Date")) : "N/A",
     channel: text("Channel"),
     invoiceNumber: text("Invoice Number"),
@@ -14907,8 +14913,9 @@ self ship.gs
  * Self-Ship Flow
  * Alternative to the NimbusPost booking flow (createShipment).
  *
- * Delhivery: createSelfShipBooking posts the order as a row in the Delhivery tracker
- * sheet; the partner books it and submits the LRN + label on the partner portal;
+ * Urvi Ent: createSelfShipBooking posts the order as a row in the self-ship tracker
+ * sheet; Urvi Ent books it with Delhivery or Scorpion and submits the LRN / docket
+ * number and documents on the partner portal;
  * syncSelfShipTrackers (15-minute time-driven trigger, plus the tool's "Sync
  * Self-Ship" button) copies the LRN and tracking link back to PO_Database.
  *
@@ -14917,9 +14924,14 @@ self ship.gs
  * any more (the old "other logistics" tracker is no longer read).
  */
 
+// The self-ship partner who books the tracker's requests. Orders booked before
+// 2026-10-27 carry the old "Delhivery (Self)" carrier.
+const SELF_SHIP_PARTNER_NAME_ = "Urvi Ent";
+
+// Keyed "delhivery" for history: it is Urvi Ent's tracker
 const SELF_SHIP_TRACKERS_ = {
   delhivery: {
-    label: "Delhivery",
+    label: "Urvi Ent",
     // Same sheet as DELHIVERY_TRACKER_* in delhivery email.js; literal here because
     // top-level consts from other files may not be initialised yet when this file loads
     spreadsheetId: "1pvpg71Z6WNrYh5GsDO2BHix2o0xDReRaBrqcIdncoZ8",
@@ -14931,6 +14943,25 @@ const SELF_SHIP_TRACKERS_ = {
 const SELF_SHIP_DOC_FOLDER_NAME_ = "Self Ship Labels";
 
 const SELF_SHIP_DELHIVERY_COURIER_ID_ = 110; // EWB transporter mapping, see COURIER_TRANSPORTER_MAP_
+
+// Couriers Urvi Ent books with, chosen on the partner portal per request and written to
+// the tracker's "Courier" column. A row with no Courier is Delhivery (rows from before
+// the choice existed). ewbCourierId keys COURIER_TRANSPORTER_MAP_.
+const SELF_SHIP_PARTNER_COURIERS_ = {
+  delhivery: { label: "Delhivery", trackingUrlBase: "https://www.delhivery.com/track-v2/lr/", ewbCourierId: 110 },
+  scorpion: { label: "Scorpion", trackingUrlBase: "https://sepltms.scorpiongroup.in/Home/CorporateDocketTraking?DocketNo=", ewbCourierId: "scorpion" }
+};
+
+function selfShipPartnerCourierKey_(value) {
+  const v = String(value || "").trim().toLowerCase();
+  return Object.keys(SELF_SHIP_PARTNER_COURIERS_).find(k => k === v || SELF_SHIP_PARTNER_COURIERS_[k].label.toLowerCase() === v) || "delhivery";
+}
+
+// "Urvi Ent (Self)" while awaiting the AWB, "Urvi Ent · Scorpion (Self)" once submitted,
+// or the pre-rename "Delhivery (Self)"
+function isSelfShipPartnerCarrier_(carrier) {
+  return /^(delhivery|urvi\s*ent)\b.*\(self\)$/i.test(String(carrier || "").trim());
+}
 
 // PO_Database statuses at or past "Label Generated" that an AWB sync must not move back
 const SELF_SHIP_NO_ADVANCE_STATUSES_ = [
@@ -15066,7 +15097,7 @@ function getSelfShipInvoiceLink_(invoiceId, invoiceNumber, zohoPortalUrl) {
 }
 
 /**
- * Posts an invoiced order to the Delhivery self-ship tracker and marks it in PO_Database
+ * Posts an invoiced order to the Urvi Ent self-ship tracker and marks it in PO_Database
  * as awaiting an AWB. data: { eeReferenceCode, provider: "delhivery" }
  * Other logistics no longer goes through a tracker: see recordOtherSelfShipment.
  */
@@ -15074,7 +15105,7 @@ function createSelfShipBooking(data) {
   const eeReferenceCode = String((data && data.eeReferenceCode) || "").trim();
   const provider = String((data && data.provider) || "").trim().toLowerCase();
   const cfg = SELF_SHIP_TRACKERS_[provider];
-  const courierName = "Delhivery";
+  const courierName = SELF_SHIP_PARTNER_NAME_;
 
   if (!eeReferenceCode) return { status: "error", message: "No EE Reference Code provided" };
   if (provider === "other") return { status: "error", message: "Other logistics now records the LRN directly. Refresh the app and try again." };
@@ -15123,9 +15154,9 @@ function createSelfShipBooking(data) {
     const boxes = boxIdx === -1 ? 0 : Math.max(0, ...orderRows.map(r => Number(r.row[boxIdx]) || 0));
     const sheetRows = orderRows.map(r => r.sheetRow);
 
-    // The Delhivery partner verifies the label's box count against this, so it must exist
+    // The partner portal verifies the label's box count against this, so it must exist
     if (!boxes) {
-      return { status: "error", message: "No box count on this order yet. Fetch the box details before sending it to Delhivery." };
+      return { status: "error", message: `No box count on this order yet. Fetch the box details before sending it to ${SELF_SHIP_PARTNER_NAME_}.` };
     }
 
     // ---- Tracker row ----
@@ -15154,7 +15185,8 @@ function createSelfShipBooking(data) {
     }
 
     // E-Way Bill with Delhivery as transporter, same as the NP flow does for B2B
-    // channels. A failure is a warning only; the booking still goes ahead.
+    // channels. A failure is a warning only; the booking still goes ahead. If Urvi Ent
+    // ships it with another courier, partnerRegenerateEwb_ redoes it for that courier.
     let ewbWarning = "";
     let ewbNumber = String(first("EWB") || "").trim();
     if (B2B_NIMBUS_CHANNELS_.includes(channel.toLowerCase())) {
@@ -15206,7 +15238,7 @@ function createSelfShipBooking(data) {
 
     return {
       status: "success",
-      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. The AWB syncs back once Delhivery uploads a label that passes verification on the partner portal.${ewbWarning}`,
+      message: `${eeReferenceCode} posted to the ${cfg.label} self-ship tracker. The AWB syncs back once ${SELF_SHIP_PARTNER_NAME_}'s documents pass verification on the partner portal.${ewbWarning}`,
       courier: courierName,
       trackerRow: newRow
     };
@@ -15304,9 +15336,14 @@ function syncSelfShipTrackers() {
         const requestStatus = t.requestStatus !== -1 ? partnerRowStatus_(values[r][t.requestStatus], awb) : "";
         if (requestStatus === PARTNER_STATUS_.PENDING || requestStatus === PARTNER_STATUS_.CANCELLED) continue;
 
+        // Urvi Ent rows: the courier the partner booked with decides the tracking link
+        const partnerCourier = key === "delhivery"
+          ? SELF_SHIP_PARTNER_COURIERS_[selfShipPartnerCourierKey_(t.courier !== -1 ? values[r][t.courier] : "")]
+          : null;
+        const trackingUrlBase = partnerCourier ? partnerCourier.trackingUrlBase : cfg.trackingUrlBase;
         let trackingUrl = "";
-        if (cfg.trackingUrlBase) {
-          trackingUrl = cfg.trackingUrlBase + encodeURIComponent(awb);
+        if (trackingUrlBase) {
+          trackingUrl = trackingUrlBase + encodeURIComponent(awb);
           // Rows typed in by hand have no link formula; fill it in
           if (t.link !== -1 && !String(values[r][t.link] || "").trim() && !formulas[r][t.link]) {
             sheet.getRange(r + 1, t.link + 1).setValue(trackingUrl);
@@ -15319,7 +15356,7 @@ function syncSelfShipTrackers() {
         // Goes to PO_Database "Label URL", which shows the same print-label button as NP orders
         const labelUrl = t.label !== -1 ? partnerCellUrl_(values[r][t.label], formulas[r][t.label]) : "";
 
-        const courier = key === "delhivery" ? "Delhivery"
+        const courier = partnerCourier ? `${SELF_SHIP_PARTNER_NAME_} · ${partnerCourier.label}`
           : (t.courier !== -1 ? String(values[r][t.courier] || "").trim() : "") || "Other";
 
         const inv = t.inv !== -1 ? String(values[r][t.inv] || "").trim() : "";
@@ -15349,7 +15386,8 @@ function syncSelfShipTrackers() {
             const status = col.status !== -1 ? String(row[col.status] || "").trim().toLowerCase() : "";
             if (col.status !== -1 && !SELF_SHIP_NO_ADVANCE_STATUSES_.includes(status)) set(col.status, "Label Generated");
           }
-          if (!/\(self\)/i.test(dbCarrier)) set(col.carrier, `${courier} (Self)`);
+          // The courier is known once the AWB arrives: "Urvi Ent (Self)" -> "Urvi Ent · Scorpion (Self)"
+          if (!/\(self\)/i.test(dbCarrier) || (dbAwb !== awb && isSelfShipPartnerCarrier_(dbCarrier))) set(col.carrier, `${courier} (Self)`);
           if (trackingUrl && col.trackingUrl !== -1 && String(row[col.trackingUrl] || "").trim() !== trackingUrl) {
             set(col.trackingUrl, trackingUrl);
           }
@@ -15531,8 +15569,8 @@ const SHIPMENT_COLUMNS_ = [
 /**
  * Cancels the booked shipment of an order at Ready to Dispatch (or a self-ship order still
  * awaiting its AWB) and moves the order back to Invoiced. NimbusPost / Shiprocket shipments are cancelled through their API, and if
- * the courier refuses, nothing is changed. A Delhivery self-ship request is marked
- * Cancelled on the tracker (the partner cancels it with Delhivery). Other self-ship
+ * the courier refuses, nothing is changed. An Urvi Ent self-ship request is marked
+ * Cancelled on the tracker (Urvi Ent cancels it with the courier). Other self-ship
  * couriers have no API, so the user is reminded to cancel with them directly.
  * data: { eeReferenceCode, userName? }
  */
@@ -15577,11 +15615,11 @@ function cancelShipment(data) {
 
     let note;
     if (awaitingAwb) {
-      if (/^delhivery\s*\(self\)$/i.test(carrier)) {
+      if (isSelfShipPartnerCarrier_(carrier)) {
         const n = cancelDelhiveryTrackerRequest_(String(first("Invoice Number") || "").trim(), "", userName);
         note = n
-          ? "The Delhivery request is marked Cancelled before an LRN was assigned. If the partner already booked it with Delhivery, ask them to cancel that booking."
-          : "No open Delhivery tracker request was found.";
+          ? `The ${SELF_SHIP_PARTNER_NAME_} request is marked Cancelled before an AWB was assigned. If ${SELF_SHIP_PARTNER_NAME_} already booked it, ask them to cancel that booking.`
+          : `No open ${SELF_SHIP_PARTNER_NAME_} tracker request was found.`;
       } else {
         note = `No LRN was entered for ${carrier.replace(/\s*\(self\)\s*$/i, "")}; cancel the booking with them directly if one was made.`;
       }
@@ -15596,11 +15634,13 @@ function cancelShipment(data) {
       const res = cancelShiprocketShipment_(awb);
       if (!res.ok) return { status: "error", message: `Shiprocket did not cancel AWB ${awb}: ${res.message}. Nothing was changed.` };
       note = `AWB ${awb} cancelled on Shiprocket.`;
-    } else if (/^delhivery\s*\(self\)$/i.test(carrier)) {
+    } else if (isSelfShipPartnerCarrier_(carrier)) {
       const n = cancelDelhiveryTrackerRequest_(String(first("Invoice Number") || "").trim(), awb, userName);
+      // "Urvi Ent · Scorpion (Self)" -> Scorpion; the old "Delhivery (Self)" -> Delhivery
+      const via = (carrier.match(/·\s*(.+?)\s*\(self\)$/i) || carrier.match(/^(delhivery)/i) || [])[1] || "the courier";
       note = n
-        ? `The Delhivery request is marked Cancelled. Ask the Delhivery partner to cancel LRN ${awb} with Delhivery.`
-        : `No open Delhivery tracker request was found. Cancel LRN ${awb} with Delhivery directly.`;
+        ? `The ${SELF_SHIP_PARTNER_NAME_} request is marked Cancelled. Ask ${SELF_SHIP_PARTNER_NAME_} to cancel ${awb} with ${via}.`
+        : `No open ${SELF_SHIP_PARTNER_NAME_} tracker request was found. Ask ${SELF_SHIP_PARTNER_NAME_} to cancel ${awb} with ${via} directly.`;
     } else {
       const name = carrier.replace(/\s*\((self|np|sr)\)\s*$/i, "") || "the courier";
       note = `Cancel AWB ${awb} with ${name} directly; it has no cancellation API.`;
@@ -15693,11 +15733,14 @@ partner portal.gs
  * the tracker's "Portal Access" tab on every call, so deleting a row there cuts access
  * immediately. @cubelelo.com accounts are always allowed in, to monitor the queue.
  *
- * The Delhivery self-ship tracker is the database: one row per request, keyed by Invoice
+ * The Urvi Ent self-ship tracker is the database: one row per request, keyed by Invoice
  * Number. createSelfShipBooking (self ship.js) adds rows as "Pending"; the partner books
- * the shipment, then submits the LRN and the Delhivery label PDF. The Vercel server reads
- * the label text and partnerSubmitShipment_ checks it against the row. Only a label that
- * passes every check is accepted, and the LRN then syncs to PO_Database (AWB column).
+ * the shipment with a courier, then submits:
+ *   Delhivery: the LRN and the label PDF
+ *   Scorpion:  the docket number, the box label PDF and the docket PDF
+ * The Vercel server reads the PDFs' text and partnerSubmitShipment_ checks it against the
+ * row. Only documents that pass every check are accepted, and the LRN / docket number
+ * then syncs to PO_Database (AWB column).
  */
 
 const PARTNER_PORTAL_ACCESS_TAB_ = "Portal Access";
@@ -15705,7 +15748,7 @@ const PARTNER_PORTAL_INTERNAL_DOMAIN_ = "@cubelelo.com";
 const PARTNER_STATUS_ = { PENDING: "Pending", ACCEPTED: "Accepted", CANCELLED: "Cancelled" };
 const PARTNER_REQUEST_COLUMNS_ = [
   "Status", "EE Reference", "Ship To", "Box Details", "Invoice Value", "EWB",
-  "Box Label", "Verification", "Submitted By", "Submitted At"
+  "Box Label", "Verification", "Submitted By", "Submitted At", "Courier", "Docket Copy"
 ];
 
 function handlePartnerPortalAction_(data) {
@@ -15809,6 +15852,8 @@ function partnerListRequests_() {
       poPdfUrl: link("PO PDF"),
       invoiceUrl: link("Invoice Url"),
       labelUrl: link("Box Label"),
+      docketUrl: link("Docket Copy"),
+      courier: text("Courier"),
       trackingUrl: link("Tracking Link"),
       verification: text("Verification"),
       submittedBy: text("Submitted By"),
@@ -15821,6 +15866,121 @@ function partnerListRequests_() {
 // Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
 function partnerNormRef_(s) {
   return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+// Whether a reference printed on a label / docket is one of the request's POs, invoice or EE ref
+function partnerRefMatcher_(req) {
+  const refs = req.poNumbers.concat([req.invoiceNumber, req.eeReference]).map(partnerNormRef_).filter(Boolean);
+  return (value) => {
+    const n = partnerNormRef_(value);
+    return !!n && refs.some(ref => ref === n || (Math.min(ref.length, n.length) >= 6 && (ref.indexOf(n) !== -1 || n.indexOf(ref) !== -1)));
+  };
+}
+
+// Box pages "n/N" must agree on N, cover 1..N, and N must be the request's box count
+function partnerBoxPagesCheck_(boxPages, boxTotals, reqBoxes, marking) {
+  const totals = (boxTotals || []).map(Number);
+  const pages = Array.from(new Set((boxPages || []).map(Number)));
+  const total = totals.length ? totals[0] : 0;
+  if (!totals.length) return { ok: false, detail: `No '${marking}' marking found on the label.` };
+  if (new Set(totals).size > 1) return { ok: false, detail: `Label pages disagree on the box total (${Array.from(new Set(totals)).join(", ")}).` };
+  if (pages.length !== total) return { ok: false, detail: `Label says ${total} boxes but contains ${pages.length} box page(s).` };
+  if (!reqBoxes) return { ok: false, detail: "This request has no box count. Contact Cubelelo." };
+  if (total !== reqBoxes) return { ok: false, detail: `Label is for ${total} box(es), but this request is for ${reqBoxes}.` };
+  return { ok: true, detail: `${total} of ${reqBoxes} box(es)` };
+}
+
+// Destination pincode: information only, since the customer master's billing pincode
+// can legitimately differ from the delivery DC
+function partnerPincodeCheck_(pincode, shipTo) {
+  const shipPins = String(shipTo || "").match(/\b\d{6}\b/g) || [];
+  if (!pincode || !shipPins.length) return null;
+  const ok = shipPins.indexOf(String(pincode)) !== -1;
+  return { ok: ok, detail: ok ? `Pin ${pincode}` : `Label pin ${pincode}, request address pin ${shipPins.join("/")}. Please double-check the destination.` };
+}
+
+/**
+ * Checks the Scorpion box label + docket facts read by the Vercel server (see
+ * parseScorpionPages in server/partner/labelParser.ts) against the request row.
+ * Same return shape as partnerVerifyLabel_.
+ */
+function partnerVerifyScorpion_(docs, req) {
+  const checks = [];
+  const add = (key, name, ok, detail, blocking) =>
+    checks.push({ key: key, label: name, ok: !!ok, blocking: blocking !== false, detail: detail });
+
+  const labelDockets = (docs.labelDockets || []).map(String);
+  const docketNumbers = (docs.docketNumbers || []).map(String);
+  const labelPages = Number(docs.labelPageCount) || 0;
+  const docketPages = Number(docs.docketPageCount) || 0;
+  const readable = !!docs.textFound && labelPages > 0 && docketPages > 0;
+  add("readable", "Documents readable", readable, readable
+    ? `${labelPages} box label page(s), ${docketPages} docket page(s) read`
+    : !docs.textFound
+      ? "Could not read the PDFs. Upload the original PDFs downloaded from Scorpion, not scans or photos."
+      : !labelPages
+        ? "No Scorpion box label found (the page showing the docket number and 1/N). Upload the box label PDF."
+        : "No Scorpion docket found (the page with Package Count and Consignee). Upload the docket PDF.");
+  if (!readable) return checks;
+
+  // Docket number: the same on the box label and the docket
+  const labelOk = labelDockets.length === 1 && labelDockets[0] === req.lrn;
+  const docketOk = docketNumbers.indexOf(req.lrn) !== -1;
+  add("lrn", "Docket number matches both documents", labelOk && docketOk, labelOk && docketOk
+    ? `Docket ${req.lrn}`
+    : labelDockets.length > 1
+      ? `Box label has more than one docket number (${labelDockets.join(", ")}). Upload the label for this shipment only.`
+      : !labelOk
+        ? `You entered ${req.lrn}, but the box label's docket number is ${labelDockets[0]}.`
+        : `You entered ${req.lrn}, but the docket shows ${docketNumbers.join(", ") || "no docket number"}.`);
+
+  // Box count: one label page per box, and the docket's Package Count
+  const box = partnerBoxPagesCheck_(docs.boxPages, docs.boxTotals, req.boxes, "<docket> n/N");
+  const packages = (docs.packageCounts || []).map(Number);
+  let boxOk = box.ok;
+  let boxDetail = box.detail;
+  if (box.ok && !packages.length) { boxOk = false; boxDetail = "No Package Count found on the docket."; }
+  else if (box.ok && (packages.length > 1 || packages[0] !== req.boxes)) {
+    boxOk = false;
+    boxDetail = `Docket Package Count is ${packages.join("/")}, but this request is for ${req.boxes} box(es).`;
+  }
+  add("boxes", "Box count matches", boxOk, boxDetail);
+
+  // Invoice printed on the box label
+  const labelInvoices = (docs.labelInvoices || []).map(String);
+  const invoiceOk = labelInvoices.some(i => partnerNormRef_(i) === partnerNormRef_(req.invoiceNumber));
+  add("invoice", "Invoice matches box label", invoiceOk, invoiceOk
+    ? `Invoice ${req.invoiceNumber}`
+    : !labelInvoices.length
+      ? "No 'Invoice(s)' found on the box label."
+      : `Box label invoice ${labelInvoices.join(", ")} is not this request's invoice (${req.invoiceNumber}).`);
+
+  // Order Id / Consignor PO No. on the docket
+  const matches = partnerRefMatcher_(req);
+  const orderIds = (docs.orderIds || []).map(String).filter(Boolean);
+  const badIds = orderIds.filter(o => !matches(o));
+  const refOk = orderIds.length > 0 && badIds.length === 0;
+  add("reference", "PO matches docket", refOk, refOk
+    ? `Order Id ${orderIds.join(", ")}`
+    : !orderIds.length
+      ? "No Order Id or Consignor PO No. found on the docket."
+      : `Docket Order Id / PO ${badIds.join(", ")} is not this request's PO (${req.poNumbers.join(", ") || "-"}) or invoice (${req.invoiceNumber}).`);
+
+  add("unique", "Docket number not used on another request", !req.lrnUsedOnRow, req.lrnUsedOnRow
+    ? `Docket ${req.lrn} is already on tracker row ${req.lrnUsedOnRow}.`
+    : "Not used elsewhere");
+
+  const pin = partnerPincodeCheck_(docs.pincode, req.shipTo);
+  if (pin) add("pincode", "Destination pincode", pin.ok, pin.detail, false);
+
+  const value = Number(docs.shipmentValue) || 0;
+  if (value && req.invoiceValue) {
+    const valueOk = Math.abs(value - req.invoiceValue) <= 1;
+    add("value", "Shipment value", valueOk, valueOk
+      ? `₹${value}`
+      : `Docket shipment value ₹${value}, invoice value ₹${req.invoiceValue}. Please double-check.`, false);
+  }
+  return checks;
 }
 
 /**
@@ -15850,27 +16010,13 @@ function partnerVerifyLabel_(label, req) {
       ? `Label has more than one LRN (${lrns.join(", ")}). Upload the label for this shipment only.`
       : `You entered ${req.lrn}, but the label's LRN is ${lrns[0]}.`);
 
-  // Box count: every box page "Box : n/N" must agree on N, cover 1..N, and N must be the request's box count
-  const totals = (label.boxTotals || []).map(Number);
-  const pages = Array.from(new Set((label.boxPages || []).map(Number)));
-  const total = totals.length ? totals[0] : 0;
-  let boxDetail;
-  let boxOk = false;
-  if (!totals.length) boxDetail = "No 'Box : n/N' marking found on the label.";
-  else if (new Set(totals).size > 1) boxDetail = `Label pages disagree on the box total (${Array.from(new Set(totals)).join(", ")}).`;
-  else if (pages.length !== total) boxDetail = `Label says ${total} boxes but contains ${pages.length} box page(s).`;
-  else if (!req.boxes) boxDetail = "This request has no box count. Contact Cubelelo.";
-  else if (total !== req.boxes) boxDetail = `Label is for ${total} box(es), but this request is for ${req.boxes}.`;
-  else { boxOk = true; boxDetail = `${total} of ${req.boxes} box(es)`; }
-  add("boxes", "Box count matches", boxOk, boxDetail);
+  // Box count: every box page "Box : n/N"
+  const box = partnerBoxPagesCheck_(label.boxPages, label.boxTotals, req.boxes, "Box : n/N");
+  add("boxes", "Box count matches", box.ok, box.detail);
 
   // Order reference: the label's OID must be one of the request's POs / invoice / order ref
-  const refs = req.poNumbers.concat([req.invoiceNumber, req.eeReference]).map(partnerNormRef_).filter(Boolean);
+  const oidMatches = partnerRefMatcher_(req);
   const oids = (label.oids || []).map(String).filter(Boolean);
-  const oidMatches = (oid) => {
-    const n = partnerNormRef_(oid);
-    return !!n && refs.some(ref => ref === n || (Math.min(ref.length, n.length) >= 6 && (ref.indexOf(n) !== -1 || n.indexOf(ref) !== -1)));
-  };
   const badOids = oids.filter(o => !oidMatches(o));
   const refOk = oids.length > 0 && badOids.length === 0;
   add("reference", "PO / invoice matches label", refOk, refOk
@@ -15884,15 +16030,8 @@ function partnerVerifyLabel_(label, req) {
     ? `LRN ${req.lrn} is already on tracker row ${req.lrnUsedOnRow}.`
     : "Not used elsewhere");
 
-  // Destination pincode: shown for information, not blocking, since the customer
-  // master's billing pincode can legitimately differ from the delivery DC
-  const shipPins = String(req.shipTo || "").match(/\b\d{6}\b/g) || [];
-  if (label.pincode && shipPins.length) {
-    const pinOk = shipPins.indexOf(String(label.pincode)) !== -1;
-    add("pincode", "Destination pincode", pinOk, pinOk
-      ? `Pin ${label.pincode}`
-      : `Label pin ${label.pincode}, request address pin ${shipPins.join("/")}. Please double-check the destination.`, false);
-  }
+  const pin = partnerPincodeCheck_(label.pincode, req.shipTo);
+  if (pin) add("pincode", "Destination pincode", pin.ok, pin.detail, false);
   return checks;
 }
 
@@ -15901,18 +16040,51 @@ function partnerSaveLabel_(base64, fileName) {
 }
 
 /**
- * data: { invoiceNumber, lrn, label (parsed by the Vercel server), labelBase64, actorEmail }
+ * The booking generated the E-Way Bill with Delhivery as transporter. When Urvi Ent
+ * ships with another courier, cancel it and generate one for that courier, the same way
+ * an NP courier reassignment does. Only for the channels whose EWB the booking generated.
+ * Returns the new EWB number ("" if none is needed); throws if Zoho refuses (e.g. the
+ * old EWB is past the 24-hour cancel window).
+ */
+function partnerRegenerateEwb_(invoiceNumber, courierCfg) {
+  const dbSheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const dbData = dbSheet.getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(dbData.shift());
+  const invCol = idx("Invoice Number");
+  const refCol = idx("EE_reference_code");
+  const channelCol = idx("Channel Name");
+  if (invCol === -1 || refCol === -1 || channelCol === -1) return "";
+
+  const rows = [];
+  dbData.forEach((row, i) => { if (String(row[invCol]).trim() === invoiceNumber) rows.push(i); });
+  if (!rows.length) return "";
+  if (!B2B_NIMBUS_CHANNELS_.includes(String(dbData[rows[0]][channelCol] || "").trim().toLowerCase())) return "";
+
+  const eeReferenceCode = String(dbData[rows[0]][refCol]).trim();
+  return String(ensureCorrectEwayBillForCourier_(eeReferenceCode, dbSheet, rows.map(i => i + 2), courierCfg.ewbCourierId, true) || "");
+}
+
+/**
+ * data: { invoiceNumber, courier ("delhivery" | "scorpion"), lrn (LRN or docket number),
+ *         label (parsed by the Vercel server), labelBase64, docketBase64 (Scorpion), actorEmail }
  * Accepts the shipment only if every blocking check passes; otherwise records the
  * failed attempt in the row's Verification cell and returns the checks.
  */
 function partnerSubmitShipment_(data, access) {
   const invoiceNumber = String(data.invoiceNumber || "").trim();
-  // The partner enters the LRN; it goes in the tracker's AWB column, whose tracking link is
-  // Delhivery's /track-v2/lr/ page. "awb" is the key the Vercel server sent before 2026-10-13.
+  // Submissions from before the courier choice (2026-10-27) are Delhivery
+  const courierKey = String(data.courier || "delhivery").trim().toLowerCase();
+  const courierCfg = SELF_SHIP_PARTNER_COURIERS_[courierKey];
+  if (!courierCfg) return { status: "error", message: `${data.courier} shipments can't be submitted yet.` };
+  const isScorpion = courierKey === "scorpion";
+  const numberName = isScorpion ? "docket number" : "LRN";
+  // The LRN / docket number goes in the tracker's AWB column. "awb" is the key the Vercel
+  // server sent before 2026-10-13.
   const lrn = String(data.lrn || data.awb || "").replace(/\s+/g, "");
   if (!invoiceNumber) return { status: "error", message: "No request selected." };
-  if (!/^\d{6,20}$/.test(lrn)) return { status: "error", message: "Enter the numeric LRN printed on the label." };
+  if (!/^\d{6,20}$/.test(lrn)) return { status: "error", message: `Enter the numeric ${numberName} printed on the label.` };
   if (!data.labelBase64) return { status: "error", message: "Upload the label PDF." };
+  if (isScorpion && !data.docketBase64) return { status: "error", message: "Upload the docket PDF." };
 
   const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
   const who = access.name ? `${access.name} <${actorEmail}>` : actorEmail;
@@ -15922,10 +16094,13 @@ function partnerSubmitShipment_(data, access) {
   if (!lock.tryLock(30000)) return { status: "error", message: "Another submission is in progress, please retry in a moment." };
 
   let response;
+  let sheet;
+  let acceptedRow = 0;
+  let idx;
   try {
-    const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+    sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
     const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
-    const idx = selfShipHeaderIndex_(headers);
+    idx = selfShipHeaderIndex_(headers);
     const values = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), headers.length).getValues();
     const invCol = idx("Invoice Number");
     const awbCol = idx("AWB");
@@ -15951,8 +16126,8 @@ function partnerSubmitShipment_(data, access) {
     if (status !== PARTNER_STATUS_.PENDING) {
       // Already done (Accepted, or moved on by ops). A retried submit of the same
       // shipment is fine; a different LRN needs Cubelelo.
-      if (currentAwb === lrn) return { status: "success", accepted: true, message: `Already accepted with LRN ${lrn}.` };
-      return { status: "error", message: `This request was already completed with LRN ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
+      if (currentAwb === lrn) return { status: "success", accepted: true, message: `Already accepted with ${numberName} ${lrn}.` };
+      return { status: "error", message: `This request was already completed with ${currentAwb || "-"} (${status}). Contact Cubelelo to change it.` };
     }
 
     const usedAt = values.findIndex((other, i) => i > 0 && i !== r && String(other[awbCol]).trim() === lrn && !isCancelledRow(other));
@@ -15963,38 +16138,44 @@ function partnerSubmitShipment_(data, access) {
       eeReference: String(cell("EE Reference") || "").trim(),
       boxes: Number(cell("No. of Boxes")) || 0,
       shipTo: String(cell("Ship To") || ""),
+      invoiceValue: Number(cell("Invoice Value")) || 0,
       lrnUsedOnRow: usedAt === -1 ? 0 : usedAt + 1
     };
-    const checks = partnerVerifyLabel_(data.label || {}, req);
+    const checks = isScorpion ? partnerVerifyScorpion_(data.label || {}, req) : partnerVerifyLabel_(data.label || {}, req);
     const failed = checks.filter(c => c.blocking && !c.ok);
 
     if (failed.length) {
-      put("Verification", `✗ ${stamp} ${who} (LRN ${lrn}): ${failed.map(c => c.detail).join(" | ")}`);
+      put("Verification", `✗ ${stamp} ${who} (${courierCfg.label} ${numberName} ${lrn}): ${failed.map(c => c.detail).join(" | ")}`);
       SpreadsheetApp.flush();
       return { status: "rejected", message: "The label did not pass verification. Nothing was saved; fix the issues below and submit again.", checks: checks };
     }
 
     const safeInvoice = invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
     const labelUrl = partnerSaveLabel_(data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
+    const docketUrl = isScorpion ? partnerSaveLabel_(data.docketBase64, `${lrn}_${safeInvoice}_docket.pdf`) : "";
 
     sheet.getRange(sheetRow, awbCol + 1).setNumberFormat("@").setValue(lrn);
+    // The booking's link formula points at Delhivery; other couriers get their own link
     const linkCol = idx("Tracking Link");
-    if (linkCol !== -1 && !sheet.getRange(sheetRow, linkCol + 1).getFormula()) {
-      sheet.getRange(sheetRow, linkCol + 1).setValue(SELF_SHIP_TRACKERS_.delhivery.trackingUrlBase + lrn);
+    if (linkCol !== -1 && (courierKey !== "delhivery" || !sheet.getRange(sheetRow, linkCol + 1).getFormula())) {
+      sheet.getRange(sheetRow, linkCol + 1).setValue(courierCfg.trackingUrlBase + lrn);
     }
     const notes = checks.filter(c => !c.blocking && !c.ok).map(c => c.detail);
+    put("Courier", courierCfg.label);
     put("Box Label", hyperlinkFormula_(labelUrl, `${lrn}_label`));
+    if (docketUrl) put("Docket Copy", hyperlinkFormula_(docketUrl, `${lrn}_docket`));
     put("Status", PARTNER_STATUS_.ACCEPTED);
     put("Verification", `✓ ${stamp}: ${checks.filter(c => c.ok).map(c => c.detail).join(" | ")}` +
       (notes.length ? ` | Note: ${notes.join(" | ")}` : ""));
     put("Submitted By", who);
     put("Submitted At", new Date());
     SpreadsheetApp.flush();
+    acceptedRow = sheetRow;
 
     response = {
       status: "success",
       accepted: true,
-      message: `Accepted. LRN ${lrn} is linked to invoice ${invoiceNumber}.`,
+      message: `Accepted. ${courierCfg.label} ${numberName} ${lrn} is linked to invoice ${invoiceNumber}.`,
       checks: checks,
       labelUrl: labelUrl
     };
@@ -16009,6 +16190,26 @@ function partnerSubmitShipment_(data, access) {
     response.syncMessage = sync && sync.message;
   } catch (e) {
     Logger.log(`partnerSubmitShipment_: immediate sync failed, trigger will retry. ${e.message}`);
+  }
+
+  // Outside the lock: Zoho calls take a while. A failure leaves the shipment accepted
+  // and is noted on the tracker row for Cubelelo to fix in Zoho.
+  if (courierKey !== "delhivery") {
+    try {
+      const ewb = partnerRegenerateEwb_(invoiceNumber, courierCfg);
+      if (ewb) {
+        if (idx("EWB") !== -1) sheet.getRange(acceptedRow, idx("EWB") + 1).setValue(ewb);
+        response.ewb = ewb;
+        response.message += ` New E-Way Bill for ${courierCfg.label}: ${ewb}. Share it with ${courierCfg.label}.`;
+      }
+    } catch (e) {
+      Logger.log(`partnerSubmitShipment_: EWB not regenerated for ${invoiceNumber} (${courierCfg.label}): ${e.message}`);
+      const verCol = idx("Verification");
+      if (verCol !== -1) {
+        const cell = sheet.getRange(acceptedRow, verCol + 1);
+        cell.setValue(`${cell.getValue()} | ⚠ E-Way Bill not updated for ${courierCfg.label}: ${e.message}`);
+      }
+    }
   }
   return response;
 }

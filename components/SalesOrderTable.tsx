@@ -66,10 +66,13 @@ const B2B_NIMBUS_CHANNELS = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute'
 const isSelfShipCarrier = (carrier?: string) => /\(self\)/i.test(carrier || '');
 // Marked self-ship, but no AWB / LRN yet
 const isAwaitingSelfShipAwb = (so: { carrier?: string, awb?: string }) => isSelfShipCarrier(so.carrier) && !so.awb;
-// Posted to the Delhivery tracker: the LRN syncs back once the partner's label is accepted.
-// Any other self-ship courier waiting for an LRN was posted to the old other-logistics
-// tracker, which is no longer read; the user enters its LRN in the tool instead.
-const isAwaitingDelhiveryAwb = (so: { carrier?: string, awb?: string }) => isAwaitingSelfShipAwb(so) && /^delhivery/i.test(so.carrier || '');
+// Booked through Urvi Ent ("Urvi Ent (Self)", "Urvi Ent · Scorpion (Self)", or the
+// pre-rename "Delhivery (Self)"): requests on the partner portal tracker
+const isSelfShipPartnerCarrier = (carrier?: string) => /^(delhivery|urvi\s*ent)\b.*\(self\)$/i.test((carrier || '').trim());
+// Posted to the Urvi Ent tracker: the LRN / docket syncs back once the partner's documents
+// are accepted. Any other self-ship courier waiting for an LRN was posted to the old
+// other-logistics tracker, which is no longer read; the user enters its LRN in the tool instead.
+const isAwaitingDelhiveryAwb = (so: { carrier?: string, awb?: string }) => isAwaitingSelfShipAwb(so) && isSelfShipPartnerCarrier(so.carrier);
 
 // --- Pickup date window ---
 // Mirrors pickupDateWindow_ in backend_code.txt (which re-checks every save): from the
@@ -1502,7 +1505,7 @@ const ZeptoASNHelperModal: FC<{
 };
 
 // Lets the user pick how an invoiced order ships: through NimbusPost (the existing
-// courier booking), self-shipped via Delhivery (posted to the partner portal tracker,
+// courier booking), self-shipped via Urvi Ent (posted to the partner portal tracker,
 // the LRN syncs back), or self-shipped via another courier, where the user enters the
 // LRN and an optional supporting document directly. otherOnly shows just that last form,
 // for orders already marked as self-shipped by another courier.
@@ -1570,8 +1573,8 @@ const ShipFlowModal: FC<{
 
                             <button onClick={() => run('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
                                 <div>
-                                    <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Delhivery</p>
-                                    <p className="text-xs text-gray-500">Sends a request to Delhivery's partner portal; AWB syncs back once their label passes verification</p>
+                                    <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Urvi Ent</p>
+                                    <p className="text-xs text-gray-500">Sends a request to Urvi Ent's partner portal (Delhivery / Scorpion); AWB syncs back once their documents pass verification</p>
                                 </div>
                                 {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
                             </button>
@@ -3333,22 +3336,22 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    // Self ship via Delhivery: posts the order to the Delhivery tracker / partner portal.
-    // The LRN syncs back (syncSelfShipTrackers) once the partner's label is accepted.
+    // Self ship via Urvi Ent: posts the order to the Urvi Ent tracker / partner portal.
+    // The LRN syncs back (syncSelfShipTrackers) once the partner's documents are accepted.
     const handleDelhiveryBooking = async (so: GroupedSalesOrder) => {
         try {
             const res = await createSelfShipBooking(so.id);
             if (res.status === 'success') {
-                addNotification(res.message || 'Posted to the Delhivery tracker.', 'success');
-                addLog('Self Ship', `EE Ref: ${so.id} via Delhivery`);
+                addNotification(res.message || 'Posted to the Urvi Ent tracker.', 'success');
+                addLog('Self Ship', `EE Ref: ${so.id} via Urvi Ent`);
                 setShipFlowOrder(null);
                 await refreshSingleSOState(so.id, so.poReference);
             } else {
-                addNotification(res.message || 'Failed to post to the Delhivery tracker.', 'error');
+                addNotification(res.message || 'Failed to post to the Urvi Ent tracker.', 'error');
             }
         } catch (error) {
             console.error('Self ship booking error:', error);
-            addNotification('Failed to post to the Delhivery tracker. Check console for details.', 'error');
+            addNotification('Failed to post to the Urvi Ent tracker. Check console for details.', 'error');
         }
     };
 
@@ -3383,12 +3386,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         const carrier = so.carrier || 'unknown carrier';
         const awaiting = isAwaitingSelfShipAwb(so);
         const how = awaiting
-            ? (/^delhivery\s*\(self\)/i.test(carrier)
-                ? 'The Delhivery partner request is marked Cancelled. If the partner already booked it with Delhivery, ask them to cancel that booking.'
+            ? (isSelfShipPartnerCarrier(carrier)
+                ? 'The Urvi Ent request is marked Cancelled. If Urvi Ent already booked it with a courier, ask them to cancel that booking.'
                 : 'If a booking was already made with this courier, cancel it with them directly as well.')
             : /\(NP\)/i.test(carrier) ? 'It will be cancelled on NimbusPost. If NimbusPost refuses, nothing changes.'
             : /\(SR\)/i.test(carrier) ? 'It will be cancelled on Shiprocket. If Shiprocket refuses, nothing changes.'
-            : /^delhivery\s*\(self\)/i.test(carrier) ? 'The Delhivery partner request is marked Cancelled; the partner must cancel the LRN with Delhivery.'
+            : isSelfShipPartnerCarrier(carrier) ? 'The Urvi Ent request is marked Cancelled; Urvi Ent must cancel the shipment with the courier.'
             : 'This courier has no cancellation API: cancel it with the courier directly as well.';
         setActionModal({
             isOpen: true,
@@ -4140,7 +4143,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     <button
                         onClick={handleSyncSelfShip}
                         disabled={isSyncingSelfShip}
-                        title="Pull AWBs filled in the Delhivery / other-logistics self-ship trackers"
+                        title="Pull AWBs accepted on the Urvi Ent partner portal"
                         className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white bg-purple-600 rounded-lg shadow-sm hover:bg-purple-700 transition-all active:scale-95 group disabled:opacity-50"
                     >
                         <TruckIcon className={`h-3.5 w-3.5 ${isSyncingSelfShip ? 'animate-pulse' : 'group-hover:scale-110 transition-transform'}`} />

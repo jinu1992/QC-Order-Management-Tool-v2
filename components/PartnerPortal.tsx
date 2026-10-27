@@ -4,10 +4,12 @@ import {
     ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon
 } from './icons/Icons';
 
-// Delhivery partner portal, served at /partner. Shows the self-ship requests from the
-// Delhivery tracker sheet; the partner books each one in Delhivery, then submits the LRN
-// and the label PDF. The server reads the label and only accepts it when the LRN, box
-// count and PO / invoice all match the request (see server/routes/partner.ts).
+// Self-ship partner portal, served at /partner. Shows the self-ship requests from Urvi
+// Ent's tracker sheet; the partner books each one with a courier, then submits:
+//   Delhivery: the LRN and the label PDF
+//   Scorpion:  the docket number, the box label PDF and the docket PDF
+// The server reads the PDFs and only accepts them when the number, box count and
+// PO / invoice all match the request (see server/routes/partner.ts).
 
 interface PartnerUser {
     email: string;
@@ -35,6 +37,8 @@ interface ShipRequest {
     poPdfUrl: string;
     invoiceUrl: string;
     labelUrl: string;
+    docketUrl: string;
+    courier: string;
     trackingUrl: string;
     verification: string;
     submittedBy: string;
@@ -50,6 +54,27 @@ interface Check {
 }
 
 type Tab = 'Pending' | 'Completed' | 'All';
+
+type CourierKey = 'delhivery' | 'scorpion' | 'bluedart';
+
+interface CourierOption {
+    key: CourierKey;
+    label: string;
+    numberName: string;
+    placeholder: string;
+    available: boolean;
+}
+
+const COURIERS: CourierOption[] = [
+    { key: 'delhivery', label: 'Delhivery', numberName: 'LRN', placeholder: 'e.g. 320862936', available: true },
+    { key: 'scorpion', label: 'Scorpion', numberName: 'Docket number', placeholder: 'e.g. 11000011425', available: true },
+    { key: 'bluedart', label: 'Bluedart', numberName: 'AWB', placeholder: '', available: false },
+];
+
+// Completed rows from before the courier choice have no Courier: they were Delhivery
+const courierOf = (r: ShipRequest) => COURIERS.find(c => c.label.toLowerCase() === (r.courier || 'Delhivery').toLowerCase()) || COURIERS[0];
+
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 // Ops may move a row past "Accepted" in the sheet (e.g. Delivered); all of those are done
 const isDone = (r: ShipRequest) => r.status !== 'Pending' && r.status !== 'Cancelled';
@@ -181,7 +206,7 @@ const LoginScreen: React.FC<{ onLogin: (token: string, user: PartnerUser) => voi
                         <TruckIcon className="h-10 w-10" />
                     </div>
                     <h1 className="text-3xl font-black text-gray-900 tracking-tight">Cubelelo Shipping Partner Portal</h1>
-                    <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-[10px] mt-2">Delhivery B2B self-ship requests</p>
+                    <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-[10px] mt-2">Self-ship requests</p>
                 </div>
                 <div className="bg-white rounded-[2rem] shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] border border-gray-100 p-8">
                     <div className="flex items-center gap-3 mb-6">
@@ -215,6 +240,19 @@ const LoginScreen: React.FC<{ onLogin: (token: string, user: PartnerUser) => voi
     );
 };
 
+const PdfPicker: React.FC<{ label: string; prompt: string; file: File | null; disabled: boolean; onChange: (f: File | null) => void }> =
+    ({ label, prompt, file, disabled, onChange }) => (
+        <label className="block">
+            <span className="text-xs font-black uppercase tracking-wide text-gray-500">{label}</span>
+            <div className={`mt-1.5 flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed ${file ? 'border-partners-green bg-partners-light-green' : 'border-gray-200'} cursor-pointer`}>
+                <UploadIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
+                <span className="text-sm text-gray-700 truncate">{file ? file.name : prompt}</span>
+                <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={disabled}
+                    onChange={e => onChange(e.target.files?.[0] || null)} />
+            </div>
+        </label>
+    );
+
 const SubmitModal: React.FC<{
     request: ShipRequest;
     token: string;
@@ -222,39 +260,57 @@ const SubmitModal: React.FC<{
     onAccepted: () => void;
     onSessionExpired: () => void;
 }> = ({ request, token, onClose, onAccepted, onSessionExpired }) => {
+    const [courier, setCourier] = useState<CourierOption | null>(null);
     const [lrn, setLrn] = useState('');
     const [file, setFile] = useState<File | null>(null);
+    const [docketFile, setDocketFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState<{ status: string; message: string; checks?: Check[] } | null>(null);
 
     const accepted = result?.status === 'success';
+    const isScorpion = courier?.key === 'scorpion';
     const lrnClean = lrn.replace(/\s+/g, '');
-    const canSubmit = /^\d{6,20}$/.test(lrnClean) && !!file && !isSubmitting && !accepted;
+    const canSubmit = !!courier && /^\d{6,20}$/.test(lrnClean) && !!file && (!isScorpion || !!docketFile) && !isSubmitting && !accepted;
 
-    const handleFile = (f: File | null) => {
+    const chooseCourier = (c: CourierOption | null) => {
+        setCourier(c);
+        setLrn('');
+        setFile(null);
+        setDocketFile(null);
+        setResult(null);
+    };
+
+    // Checks one PDF, and that it fits alongside the other one (the server takes 3 MB in total)
+    const pickPdf = (f: File | null, other: File | null, set: (f: File | null) => void) => {
         setResult(null);
         if (f && f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) {
-            setFile(null);
-            setResult({ status: 'error', message: 'Upload the label as a PDF file.' });
+            set(null);
+            setResult({ status: 'error', message: 'Upload the document as a PDF file.' });
             return;
         }
-        if (f && f.size > 3 * 1024 * 1024) {
-            setFile(null);
-            setResult({ status: 'error', message: 'Label PDF is too large (max 3 MB).' });
+        if (f && f.size + (other?.size || 0) > MAX_UPLOAD_BYTES) {
+            set(null);
+            setResult({ status: 'error', message: 'The PDFs are too large (max 3 MB in total).' });
             return;
         }
-        setFile(f);
+        set(f);
     };
 
     const handleSubmit = async () => {
-        if (!file) return;
+        if (!courier || !file) return;
         setIsSubmitting(true);
         setResult(null);
         try {
             const res = await fetch('/api/partner/submit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ invoiceNumber: request.invoiceNumber, lrn: lrnClean, labelBase64: await fileToBase64(file) }),
+                body: JSON.stringify({
+                    invoiceNumber: request.invoiceNumber,
+                    courier: courier.key,
+                    lrn: lrnClean,
+                    labelBase64: await fileToBase64(file),
+                    ...(isScorpion && docketFile ? { docketBase64: await fileToBase64(docketFile) } : {}),
+                }),
             });
             if (res.status === 401) return onSessionExpired();
             const data = await res.json().catch(() => ({ status: 'error', message: `Server error (${res.status}). Please try again.` }));
@@ -267,12 +323,14 @@ const SubmitModal: React.FC<{
         }
     };
 
+    const orderId = request.poNumbers[0] || request.invoiceNumber;
+
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center sm:p-4" onClick={isSubmitting ? undefined : onClose}>
             <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                 <div className="bg-gray-900 text-white px-6 py-5 rounded-t-3xl flex items-start justify-between gap-4">
                     <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Submit shipment</div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Submit shipment{courier ? ` · ${courier.label}` : ''}</div>
                         <div className="text-lg font-black mt-1">{request.channel} · {request.poNumbers.join(', ') || request.invoiceNumber}</div>
                         <div className="text-xs text-gray-300 mt-1">Invoice {request.invoiceNumber} · <span className="font-bold text-white">{request.boxes} box(es)</span></div>
                     </div>
@@ -282,27 +340,46 @@ const SubmitModal: React.FC<{
                 </div>
 
                 <div className="p-6 space-y-5">
-                    {!accepted && (
+                    {!accepted && !courier && (
+                        <div className="space-y-3">
+                            <div className="text-xs font-black uppercase tracking-wide text-gray-500">Which courier did you book this with?</div>
+                            {COURIERS.map(c => (
+                                <button key={c.key} onClick={() => chooseCourier(c)} disabled={!c.available}
+                                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 border-gray-100 text-left hover:border-partners-green hover:bg-partners-light-green transition-colors disabled:opacity-50 disabled:hover:border-gray-100 disabled:hover:bg-transparent disabled:cursor-not-allowed">
+                                    <span className="flex items-center gap-3">
+                                        <TruckIcon className="h-5 w-5 text-gray-500" />
+                                        <span className="font-black text-gray-900">{c.label}</span>
+                                    </span>
+                                    {!c.available && <span className="text-[10px] font-black uppercase tracking-wide text-gray-400">Coming soon</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {!accepted && courier && (
                         <>
-                            <div className="text-xs text-gray-500 bg-gray-50 rounded-xl p-3 leading-relaxed">
-                                Book this as <b>one shipment of {request.boxes} box(es)</b> with order ID <b>{request.poNumbers[0] || request.invoiceNumber}</b>,
-                                then enter the <b>LRN</b> and upload the label PDF exactly as downloaded from Delhivery.
+                            <div className="flex items-start justify-between gap-3 text-xs text-gray-500 bg-gray-50 rounded-xl p-3 leading-relaxed">
+                                <span>
+                                    Book this with <b>{courier.label}</b> as <b>one shipment of {request.boxes} box(es)</b> with order ID <b>{orderId}</b>,
+                                    then enter the <b>{courier.numberName}</b> and upload {isScorpion
+                                        ? <>the <b>box label</b> and the <b>docket</b> PDFs</>
+                                        : <>the label PDF</>} exactly as downloaded from {courier.label}.
+                                </span>
+                                <button onClick={() => chooseCourier(null)} disabled={isSubmitting}
+                                    className="flex-shrink-0 font-bold text-partners-green hover:underline disabled:opacity-40">Change</button>
                             </div>
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">LRN</span>
+                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">{courier.numberName}</span>
                                 <input value={lrn} onChange={e => { setLrn(e.target.value); setResult(null); }} inputMode="numeric"
-                                    placeholder="e.g. 320862936" disabled={isSubmitting}
+                                    placeholder={courier.placeholder} disabled={isSubmitting}
                                     className="mt-1.5 w-full px-4 py-3 rounded-xl border-2 border-gray-100 focus:border-partners-green focus:outline-none font-mono text-lg tracking-wider" />
                             </label>
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">Label PDF</span>
-                                <div className={`mt-1.5 flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed ${file ? 'border-partners-green bg-partners-light-green' : 'border-gray-200'} cursor-pointer`}>
-                                    <UploadIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                                    <span className="text-sm text-gray-700 truncate">{file ? file.name : 'Choose the label PDF'}</span>
-                                    <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={isSubmitting}
-                                        onChange={e => handleFile(e.target.files?.[0] || null)} />
-                                </div>
-                            </label>
+                            <PdfPicker label={isScorpion ? 'Box label PDF' : 'Label PDF'} prompt={isScorpion ? 'Choose the box label PDF' : 'Choose the label PDF'}
+                                file={file} disabled={isSubmitting} onChange={f => pickPdf(f, docketFile, setFile)} />
+                            {isScorpion && (
+                                <PdfPicker label="Docket PDF" prompt="Choose the docket (consignment note) PDF"
+                                    file={docketFile} disabled={isSubmitting} onChange={f => pickPdf(f, file, setDocketFile)} />
+                            )}
                         </>
                     )}
 
@@ -315,10 +392,10 @@ const SubmitModal: React.FC<{
 
                     {accepted ? (
                         <button onClick={onClose} className="w-full py-3.5 rounded-full bg-gray-900 text-white font-bold text-sm">Done</button>
-                    ) : (
+                    ) : courier && (
                         <button onClick={handleSubmit} disabled={!canSubmit}
                             className="w-full py-3.5 rounded-full bg-partners-green text-white font-bold text-sm shadow-lg shadow-green-500/20 disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2">
-                            {isSubmitting ? <><RefreshIcon className="h-4 w-4 animate-spin" /> Checking label…</> : 'Verify & submit'}
+                            {isSubmitting ? <><RefreshIcon className="h-4 w-4 animate-spin" /> Checking documents…</> : 'Verify & submit'}
                         </button>
                     )}
                 </div>
@@ -380,7 +457,7 @@ const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({
 
             {!pending && request.awb && (
                 <div className="mt-4 p-3 rounded-xl bg-green-50 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span className="text-green-800">LRN <b className="font-mono">{request.awb}</b></span>
+                    <span className="text-green-800">{courierOf(request).label} {courierOf(request).numberName} <b className="font-mono">{request.awb}</b></span>
                     {request.submittedAt && <span className="text-xs text-green-700">Submitted {request.submittedAt}{request.submittedBy ? ` by ${request.submittedBy}` : ''}</span>}
                 </div>
             )}
@@ -395,11 +472,12 @@ const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({
                 <DocLink href={request.poPdfUrl}>PO PDF</DocLink>
                 <DocLink href={request.invoiceUrl}>Invoice</DocLink>
                 <DocLink href={request.labelUrl}>Label</DocLink>
+                <DocLink href={request.docketUrl}>Docket</DocLink>
                 <DocLink href={request.trackingUrl}>Track</DocLink>
                 {pending && (
                     <button onClick={onSubmit}
                         className="ml-auto px-5 py-2.5 rounded-full bg-partners-green text-white text-sm font-bold shadow-lg shadow-green-500/20 hover:bg-green-600 transition-colors">
-                        Submit LRN & label
+                        Submit shipment
                     </button>
                 )}
             </div>
@@ -530,7 +608,7 @@ const PartnerPortal: React.FC = () => {
                     </div>
                     <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3">
                         <SearchIcon className="h-4 w-4 text-gray-400" />
-                        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, invoice or LRN"
+                        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, invoice, LRN or docket"
                             className="flex-1 py-2.5 text-sm bg-transparent focus:outline-none" />
                     </div>
                 </div>

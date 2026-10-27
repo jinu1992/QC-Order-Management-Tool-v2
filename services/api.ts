@@ -640,7 +640,7 @@ const postToScriptWithRetry = async (payload: any) => {
     throw lastError;
 };
 
-// Posts an invoiced order to the Delhivery self-ship tracker sheet (partner portal).
+// Posts an invoiced order to the Urvi Ent self-ship tracker sheet (partner portal).
 // The backend skips an invoice that's already in the tracker, so retrying is safe.
 export const createSelfShipBooking = async (eeReferenceCode: string): Promise<{ status: string, message: string }> => {
     return await postToScriptWithRetry({ action: 'createSelfShipBooking', eeReferenceCode, provider: 'delhivery' });
@@ -672,7 +672,7 @@ export const cancelShipment = async (eeReferenceCode: string, userName?: string)
     return await postToScript({ action: 'cancelShipment', eeReferenceCode, userName });
 };
 
-// Pulls accepted LRNs from the Delhivery self-ship tracker into PO_Database
+// Pulls accepted LRNs / dockets from the Urvi Ent self-ship tracker into PO_Database
 export const syncSelfShipTrackers = async (): Promise<{ status: string, message: string, updated?: string[] }> => {
     return await postToScript({ action: 'syncSelfShipTrackers' });
 };
