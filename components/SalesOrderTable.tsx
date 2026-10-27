@@ -63,6 +63,18 @@ interface SalesOrderTableProps {
 // shipping (once the courier is known), not beforehand, so they skip the EWB gate below.
 const B2B_NIMBUS_CHANNELS = ['instamart', 'zepto', 'bb', 'rbl', 'flipkartminute', 'flipkart minutes', 'flipkartminutes', 'blinkit'];
 
+// Appointment-based channels whose order has moved on (invoiced, label generated, RTD or
+// shipped) without an appointment date: the "Appt. Missing" badge and filter. Blinkit
+// only counts from Label Generated, since its appointment is taken after the label.
+const APPT_MISSING_FILTER = 'Appt. Missing';
+const isApptMissing = (so: Pick<GroupedSalesOrder, 'channel' | 'status' | 'appointmentDate'>) => {
+    const channel = so.channel.toLowerCase();
+    if (so.appointmentDate || !['zepto', 'instamart', 'blinkit', 'minute', 'bb', 'rbl'].some(k => channel.includes(k))) return false;
+    const status = (so.status || '').toLowerCase().trim();
+    return status === 'shipped' || status === 'label generated' || status === 'ready to dispatch' || status === 'rtd'
+        || (status === 'invoiced' && !channel.includes('blinkit'));
+};
+
 const isSelfShipCarrier = (carrier?: string) => /\(self\)/i.test(carrier || '');
 // Marked self-ship, but no AWB / LRN yet
 const isAwaitingSelfShipAwb = (so: { carrier?: string, awb?: string }) => isSelfShipCarrier(so.carrier) && !so.awb;
@@ -2462,9 +2474,11 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             counts['All POs']++;
             if (counts[so.status] !== undefined) counts[so.status]++;
         });
+        counts[APPT_MISSING_FILTER] = results.filter(isApptMissing).length;
 
         let filteredResults = results;
-        if (activeFilter !== 'All POs') filteredResults = results.filter(so => so.status === activeFilter);
+        if (activeFilter === APPT_MISSING_FILTER) filteredResults = results.filter(isApptMissing);
+        else if (activeFilter !== 'All POs') filteredResults = results.filter(so => so.status === activeFilter);
         Object.keys(columnFilters).forEach(key => {
             const val = columnFilters[key].toLowerCase();
             if (!val) return;
@@ -3490,7 +3504,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    const handleMarkAsRTD = async (so: GroupedSalesOrder) => {
+    // withoutAppt: the order has no appointment and the user is sending it on anyway
+    const handleMarkAsRTD = async (so: GroupedSalesOrder, withoutAppt = false) => {
         if (!so.pickupDate) {
             addNotification('Pickup date is required to mark as RTD.', 'warning');
             return;
@@ -3517,12 +3532,20 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             verificationSteps = ['Box Labels Printed', 'Portal Appointment Confirmed'];
         }
 
+        if (withoutAppt) {
+            promptMsg = `${so.id} has no appointment. It moves to RTD anyway and keeps the Appt. Missing badge until an appointment is added. Ensure ALL labels and documents are printed.`;
+            verificationSteps = [
+                ...verificationSteps.filter(step => !/appointment/i.test(step)),
+                'Shipping without an appointment is confirmed'
+            ];
+        }
+
         setActionModal({
             isOpen: true,
-            title: 'Mark as Ready to Dispatch',
+            title: withoutAppt ? 'Mark as RTD without Appointment' : 'Mark as Ready to Dispatch',
             message: promptMsg,
             verificationSteps,
-            confirmLabel: 'Mark as RTD',
+            confirmLabel: withoutAppt ? 'Mark RTD without Appt.' : 'Mark as RTD',
             confirmColor: 'bg-violet-600 hover:bg-violet-700',
             iconType: 'warning',
             onConfirm: async () => {
@@ -3538,7 +3561,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     // concurrent GAS writes to the same sheet with no locking, which can race with the
                     // resync and revert the displayed status. Dedupe down to the parent PO numbers.
                     await Promise.all(parentPoNumbers.filter(Boolean).map((refId: string) => updatePOStatus(refId, 'RTD')));
-                    addNotification(`${so.id} marked as RTD.`, 'success');
+                    addNotification(`${so.id} marked as RTD${withoutAppt ? ' without an appointment' : ''}.`, 'success');
+                    if (withoutAppt) addLog('RTD without Appointment', `EE Ref: ${so.id}`);
                     // Optimistic UI update
                     setPurchaseOrders((prev: PurchaseOrder[]) => prev.map((po: PurchaseOrder) => {
                         const matchesPo = allRefIds.includes(po.poNumber) || (po.eeReferenceCode && allRefIds.includes(po.eeReferenceCode));
@@ -4054,6 +4078,14 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                     {tabs.map(tab => (
                         <button key={tab.id} onClick={() => setActiveFilter(tab.id)} className={`px-3 py-1.5 text-sm font-semibold rounded-full border transition-all ${activeFilter === tab.id ? 'bg-partners-green text-white border-partners-green shadow-sm' : 'bg-white text-gray-600 border-partners-border hover:bg-gray-50'}`}>{tab.name} <span className="ml-1 text-[10px] opacity-70">({salesTabCounts[tab.id] || 0})</span></button>
                     ))}
+                    {/* Across all statuses: POs that moved on without an appointment */}
+                    {(salesTabCounts[APPT_MISSING_FILTER] > 0 || activeFilter === APPT_MISSING_FILTER) && (
+                        <button onClick={() => setActiveFilter(APPT_MISSING_FILTER)} title="POs that moved on without an appointment"
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-full border transition-all ${activeFilter === APPT_MISSING_FILTER ? 'bg-red-600 text-white border-red-600 shadow-sm' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`}>
+                            <AlertIcon className="h-3.5 w-3.5" />
+                            Appt. Missing <span className="text-[10px] opacity-80">({salesTabCounts[APPT_MISSING_FILTER] || 0})</span>
+                        </button>
+                    )}
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     {zeptoEligibility.show && (
@@ -4227,7 +4259,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                 const apptRequired = isZepto || isInstamart || isBB;
                                 const hasAppt = !!so.appointmentId || !!so.appointmentDate;
                                 const isApptPending = apptRequired && !hasAppt && !so.awb;
-                                const showApptMissing = (isZepto || isInstamart || isBlinkit || isFlipkartMinutes || isBB || isRBL) && !so.appointmentDate && (so.status === 'Shipped' || (so.status === 'Invoiced' && !isBlinkit) || so.status === 'Label Generated');
+                                const showApptMissing = isApptMissing(so);
                                 const canUpdateAppt = (isZepto || isInstamart || isBB || isRBL || isFlipkartMinutes) && (so.status === 'Shipped' || so.status === 'Invoiced' || so.status === 'Label Generated');
 
                                 return (
@@ -4438,13 +4470,26 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
                                                     </div>
                                                         {so.status === 'Label Generated' && (() => {
                                                             const isBlinkit = so.channel.toLowerCase().includes('blinkit');
-                                                            const needsAppt = isBlinkit && !so.appointmentId;
+                                                            // No appointment: RTD needs an explicit "without appointment" confirmation
+                                                            if (!so.appointmentId && (isBlinkit || showApptMissing)) {
+                                                                return (
+                                                                    <button
+                                                                        onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so, true); }}
+                                                                        disabled={!so.pickupDate || isUpdatingRTD === so.id}
+                                                                        title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'No appointment yet: mark as RTD anyway'}
+                                                                        className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
+                                                                    >
+                                                                        {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
+                                                                        {isUpdatingRTD === so.id ? 'Updating...' : 'RTD without Appt.'}
+                                                                    </button>
+                                                                );
+                                                            }
                                                             return (
                                                                 <button
                                                                     onClick={(e: any) => { e.stopPropagation(); handleMarkAsRTD(so); }}
-                                                                    disabled={!so.pickupDate || isUpdatingRTD === so.id || needsAppt}
-                                                                    title={needsAppt ? 'Appointment ID required for Blinkit' : (!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as RTD')}
-                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${(so.pickupDate && !needsAppt) ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
+                                                                    disabled={!so.pickupDate || isUpdatingRTD === so.id}
+                                                                    title={!so.pickupDate ? 'Pickup date required to mark as RTD' : 'Mark as RTD'}
+                                                                    className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${so.pickupDate ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'} ${isUpdatingRTD === so.id ? 'opacity-70' : ''}`}
                                                                 >
                                                                     {isUpdatingRTD === so.id ? <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> : null}
                                                                     {isUpdatingRTD === so.id ? 'Updating...' : 'Mark as RTD'}
