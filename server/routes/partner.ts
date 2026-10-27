@@ -3,8 +3,8 @@ import { google } from 'googleapis';
 import crypto from 'crypto';
 import { parseDelhiveryLabel, parseScorpionDocs } from '../partner/labelParser.js';
 
-// Self-ship partner portal (/partner) for Urvi Ent, who books each request with Delhivery
-// or Scorpion. Partners sign in with Google; the email must be on the "Portal Access" tab
+// Self-ship partner portal (/partner) for Urvi Ent, who books each request with Delhivery,
+// Scorpion or Bluedart. Partners sign in with Google; the email must be on the "Portal Access" tab
 // of the self-ship tracker sheet (or be @cubelelo.com).
 // The browser only ever talks to these routes. They hold PARTNER_PORTAL_SECRET and call
 // the Apps Script backend, which re-checks the email on every call, so removing a row
@@ -16,6 +16,14 @@ import { parseDelhiveryLabel, parseScorpionDocs } from '../partner/labelParser.j
 
 const SESSION_HOURS = 12;
 const MAX_LABEL_BYTES = 3 * 1024 * 1024; // Vercel caps request bodies at 4.5 MB; base64 adds a third
+
+// File type from the first bytes, so a renamed file can't pass as a PDF / photo
+function sniffMimeType(file: Buffer): string {
+  if (file.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
+  if (file[0] === 0xff && file[1] === 0xd8 && file[2] === 0xff) return 'image/jpeg';
+  if (file.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  return '';
+}
 
 interface PartnerSession {
   email: string;
@@ -177,36 +185,42 @@ export function createPartnerRouter(redirectUri: string): Router {
     const { invoiceNumber, lrn, labelBase64, docketBase64 } = req.body || {};
     // Requests from before the courier choice existed are Delhivery
     const courier = String(req.body?.courier || 'delhivery').toLowerCase();
-    if (courier !== 'delhivery' && courier !== 'scorpion') {
+    if (courier !== 'delhivery' && courier !== 'scorpion' && courier !== 'bluedart') {
       return res.status(400).json({ status: 'error', message: `${courier} shipments can't be submitted yet.` });
     }
     const needsDocket = courier === 'scorpion';
+    // A Bluedart waybill is handwritten: a photo (or PDF scan) that Apps Script reads with OCR
+    const isBluedart = courier === 'bluedart';
     if (!invoiceNumber || !lrn || !labelBase64 || (needsDocket && !docketBase64)) {
       return res.status(400).json({
         status: 'error',
-        message: needsDocket ? 'Request, docket number, box label and docket PDF are all required.' : 'Request, LRN and label PDF are all required.',
+        message: needsDocket ? 'Request, docket number, box label and docket PDF are all required.'
+          : isBluedart ? 'Request, AWB and waybill photo are all required.'
+          : 'Request, LRN and label PDF are all required.',
       });
     }
 
-    const pdfs = [labelBase64, ...(needsDocket ? [docketBase64] : [])].map(b => Buffer.from(String(b), 'base64'));
-    if (pdfs.reduce((n, pdf) => n + pdf.length, 0) > MAX_LABEL_BYTES) {
-      return res.status(413).json({ status: 'error', message: 'The PDFs are too large (max 3 MB in total).' });
+    const files = [labelBase64, ...(needsDocket ? [docketBase64] : [])].map(b => Buffer.from(String(b), 'base64'));
+    if (files.reduce((n, file) => n + file.length, 0) > MAX_LABEL_BYTES) {
+      return res.status(413).json({ status: 'error', message: 'The files are too large (max 3 MB in total).' });
     }
-    if (pdfs.some(pdf => pdf.subarray(0, 5).toString('latin1') !== '%PDF-')) {
-      return res.status(400).json({ status: 'error', message: 'Upload the documents as PDF files.' });
+    const labelMimeType = sniffMimeType(files[0]);
+    if (isBluedart ? !labelMimeType : files.some(file => sniffMimeType(file) !== 'application/pdf')) {
+      return res.status(400).json({ status: 'error', message: isBluedart ? 'Upload the waybill as a JPG, PNG or PDF.' : 'Upload the documents as PDF files.' });
     }
 
     try {
-      const label = needsDocket
-        ? await parseScorpionDocs(pdfs.map(pdf => new Uint8Array(pdf)))
-        : await parseDelhiveryLabel(new Uint8Array(pdfs[0]));
+      const label = isBluedart ? {}
+        : needsDocket ? await parseScorpionDocs(files.map(file => new Uint8Array(file)))
+        : await parseDelhiveryLabel(new Uint8Array(files[0]));
       const result = await callAppsScript('partnerSubmitShipment', req.partner!.email, {
         invoiceNumber: String(invoiceNumber),
         courier,
         lrn: String(lrn),
         label,
-        labelBase64: pdfs[0].toString('base64'),
-        ...(needsDocket ? { docketBase64: pdfs[1].toString('base64') } : {}),
+        labelBase64: files[0].toString('base64'),
+        labelMimeType,
+        ...(needsDocket ? { docketBase64: files[1].toString('base64') } : {}),
       });
       res.status(result.code === 'forbidden' ? 403 : 200).json({ ...result, label });
     } catch (error: any) {

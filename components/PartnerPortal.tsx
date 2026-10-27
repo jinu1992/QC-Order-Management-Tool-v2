@@ -8,8 +8,10 @@ import {
 // Ent's tracker sheet; the partner books each one with a courier, then submits:
 //   Delhivery: the LRN and the label PDF
 //   Scorpion:  the docket number, the box label PDF and the docket PDF
-// The server reads the PDFs and only accepts them when the number, box count and
-// PO / invoice all match the request (see server/routes/partner.ts).
+//   Bluedart:  the AWB and a photo of the handwritten waybill
+// The server reads the documents and only accepts them when the number, box count and
+// PO / invoice all match the request (see server/routes/partner.ts). Bluedart waybills are
+// read with OCR, which reliably reads only the printed AWB.
 
 interface PartnerUser {
     email: string;
@@ -68,7 +70,7 @@ interface CourierOption {
 const COURIERS: CourierOption[] = [
     { key: 'delhivery', label: 'Delhivery', numberName: 'LRN', placeholder: 'e.g. 320862936', available: true },
     { key: 'scorpion', label: 'Scorpion', numberName: 'Docket number', placeholder: 'e.g. 11000011425', available: true },
-    { key: 'bluedart', label: 'Bluedart', numberName: 'AWB', placeholder: '', available: false },
+    { key: 'bluedart', label: 'Bluedart', numberName: 'AWB', placeholder: 'e.g. 51984159570', available: true },
 ];
 
 // Completed rows from before the courier choice have no Courier: they were Delhivery
@@ -105,6 +107,21 @@ const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
 });
+
+// Phone photos are often 3-10 MB and may be HEIC; re-encode as a JPEG of at most 2400 px,
+// which stays well under the upload limit and is still sharp enough for OCR
+const photoToJpeg = async (file: File): Promise<File> => {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('Could not convert the photo.');
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+};
 
 // Whole days from today (IST calendar day) to a yyyy-MM-dd date; null if no date
 const daysUntil = (date: string): number | null => {
@@ -240,14 +257,14 @@ const LoginScreen: React.FC<{ onLogin: (token: string, user: PartnerUser) => voi
     );
 };
 
-const PdfPicker: React.FC<{ label: string; prompt: string; file: File | null; disabled: boolean; onChange: (f: File | null) => void }> =
-    ({ label, prompt, file, disabled, onChange }) => (
+const FilePicker: React.FC<{ label: string; prompt: string; file: File | null; disabled: boolean; accept?: string; onChange: (f: File | null) => void }> =
+    ({ label, prompt, file, disabled, accept = 'application/pdf,.pdf', onChange }) => (
         <label className="block">
             <span className="text-xs font-black uppercase tracking-wide text-gray-500">{label}</span>
             <div className={`mt-1.5 flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed ${file ? 'border-partners-green bg-partners-light-green' : 'border-gray-200'} cursor-pointer`}>
                 <UploadIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
                 <span className="text-sm text-gray-700 truncate">{file ? file.name : prompt}</span>
-                <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={disabled}
+                <input type="file" accept={accept} className="hidden" disabled={disabled}
                     onChange={e => onChange(e.target.files?.[0] || null)} />
             </div>
         </label>
@@ -269,6 +286,7 @@ const SubmitModal: React.FC<{
 
     const accepted = result?.status === 'success';
     const isScorpion = courier?.key === 'scorpion';
+    const isBluedart = courier?.key === 'bluedart';
     const lrnClean = lrn.replace(/\s+/g, '');
     const canSubmit = !!courier && /^\d{6,20}$/.test(lrnClean) && !!file && (!isScorpion || !!docketFile) && !isSubmitting && !accepted;
 
@@ -280,17 +298,28 @@ const SubmitModal: React.FC<{
         setResult(null);
     };
 
-    // Checks one PDF, and that it fits alongside the other one (the server takes 3 MB in total)
-    const pickPdf = (f: File | null, other: File | null, set: (f: File | null) => void) => {
+    // Checks one file, and that it fits alongside the other one (the server takes 3 MB in
+    // total). A Bluedart waybill may be a photo, which is re-encoded as a JPEG first.
+    const pickFile = async (f: File | null, other: File | null, set: (f: File | null) => void) => {
         setResult(null);
-        if (f && f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) {
+        const isPdf = !!f && (f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+        if (f && !isPdf && !(isBluedart && f.type.startsWith('image/'))) {
             set(null);
-            setResult({ status: 'error', message: 'Upload the document as a PDF file.' });
+            setResult({ status: 'error', message: isBluedart ? 'Upload the waybill as a photo or PDF.' : 'Upload the document as a PDF file.' });
             return;
+        }
+        if (f && !isPdf) {
+            try {
+                f = await photoToJpeg(f);
+            } catch {
+                set(null);
+                setResult({ status: 'error', message: 'Could not open this photo. Upload it as a JPG or PNG.' });
+                return;
+            }
         }
         if (f && f.size + (other?.size || 0) > MAX_UPLOAD_BYTES) {
             set(null);
-            setResult({ status: 'error', message: 'The PDFs are too large (max 3 MB in total).' });
+            setResult({ status: 'error', message: 'The files are too large (max 3 MB in total).' });
             return;
         }
         set(f);
@@ -362,8 +391,10 @@ const SubmitModal: React.FC<{
                                 <span>
                                     Book this with <b>{courier.label}</b> as <b>one shipment of {request.boxes} box(es)</b> with order ID <b>{orderId}</b>,
                                     then enter the <b>{courier.numberName}</b> and upload {isScorpion
-                                        ? <>the <b>box label</b> and the <b>docket</b> PDFs</>
-                                        : <>the label PDF</>} exactly as downloaded from {courier.label}.
+                                        ? <>the <b>box label</b> and the <b>docket</b> PDFs exactly as downloaded from {courier.label}.</>
+                                        : isBluedart
+                                            ? <>a clear photo of the <b>waybill</b>, with the printed AWB under the barcode readable.</>
+                                            : <>the label PDF exactly as downloaded from {courier.label}.</>}
                                 </span>
                                 <button onClick={() => chooseCourier(null)} disabled={isSubmitting}
                                     className="flex-shrink-0 font-bold text-partners-green hover:underline disabled:opacity-40">Change</button>
@@ -374,11 +405,16 @@ const SubmitModal: React.FC<{
                                     placeholder={courier.placeholder} disabled={isSubmitting}
                                     className="mt-1.5 w-full px-4 py-3 rounded-xl border-2 border-gray-100 focus:border-partners-green focus:outline-none font-mono text-lg tracking-wider" />
                             </label>
-                            <PdfPicker label={isScorpion ? 'Box label PDF' : 'Label PDF'} prompt={isScorpion ? 'Choose the box label PDF' : 'Choose the label PDF'}
-                                file={file} disabled={isSubmitting} onChange={f => pickPdf(f, docketFile, setFile)} />
+                            {isBluedart ? (
+                                <FilePicker label="Waybill photo" prompt="Take or choose a photo of the waybill" accept="image/*,application/pdf,.pdf"
+                                    file={file} disabled={isSubmitting} onChange={f => pickFile(f, null, setFile)} />
+                            ) : (
+                                <FilePicker label={isScorpion ? 'Box label PDF' : 'Label PDF'} prompt={isScorpion ? 'Choose the box label PDF' : 'Choose the label PDF'}
+                                    file={file} disabled={isSubmitting} onChange={f => pickFile(f, docketFile, setFile)} />
+                            )}
                             {isScorpion && (
-                                <PdfPicker label="Docket PDF" prompt="Choose the docket (consignment note) PDF"
-                                    file={docketFile} disabled={isSubmitting} onChange={f => pickPdf(f, file, setDocketFile)} />
+                                <FilePicker label="Docket PDF" prompt="Choose the docket (consignment note) PDF"
+                                    file={docketFile} disabled={isSubmitting} onChange={f => pickFile(f, file, setDocketFile)} />
                             )}
                         </>
                     )}
@@ -472,7 +508,7 @@ const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({
                 <DocLink href={request.poPdfUrl}>PO PDF</DocLink>
                 <DocLink href={request.invoiceUrl}>Invoice</DocLink>
                 <DocLink href={request.labelUrl}>Label</DocLink>
-                <DocLink href={request.docketUrl}>Docket</DocLink>
+                <DocLink href={request.docketUrl}>{courierOf(request).key === 'bluedart' ? 'Waybill' : 'Docket'}</DocLink>
                 <DocLink href={request.trackingUrl}>Track</DocLink>
                 {pending && (
                     <button onClick={onSubmit}

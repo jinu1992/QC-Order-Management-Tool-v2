@@ -79,8 +79,8 @@ const EMAIL_LOGS = "Email Logs";
 // "BUSYBEES LOGISTICS SOLUTIONS PRIVATE LIMITED" (its legal name), not "Xpressbees" —
 // the old mapping made getTransporterIdByName_ throw "Transporter not found: Xpressbees"
 // on every reassignment/booking to this courier.
-// "scorpion": not a NimbusPost courier, used when Urvi Ent self-ships with Scorpion (partner portal)
-const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Busybees", "scorpion": "Scorpion" };
+// "scorpion", "bluedart": not NimbusPost couriers, used when Urvi Ent self-ships with them (partner portal)
+const COURIER_TRANSPORTER_MAP_ = { "110": "Delhivery", "71": "Busybees", "scorpion": "Scorpion", "bluedart": "Blue Dart" };
 // B2B channels that go through the Nimbus courier-selection flow (createNimbusPostShipment)
 const B2B_NIMBUS_CHANNELS_ = ["instamart", "zepto", "bb", "rbl", "flipkartminutes", "blinkit"];
 
@@ -14949,7 +14949,8 @@ const SELF_SHIP_DELHIVERY_COURIER_ID_ = 110; // EWB transporter mapping, see COU
 // the choice existed). ewbCourierId keys COURIER_TRANSPORTER_MAP_.
 const SELF_SHIP_PARTNER_COURIERS_ = {
   delhivery: { label: "Delhivery", trackingUrlBase: "https://www.delhivery.com/track-v2/lr/", ewbCourierId: 110 },
-  scorpion: { label: "Scorpion", trackingUrlBase: "https://sepltms.scorpiongroup.in/Home/CorporateDocketTraking?DocketNo=", ewbCourierId: "scorpion" }
+  scorpion: { label: "Scorpion", trackingUrlBase: "https://sepltms.scorpiongroup.in/Home/CorporateDocketTraking?DocketNo=", ewbCourierId: "scorpion" },
+  bluedart: { label: "Bluedart", trackingUrlBase: "https://www.bluedart.com/web/guest/trackdartresult?trackFor=0&trackNo=", ewbCourierId: "bluedart" }
 };
 
 function selfShipPartnerCourierKey_(value) {
@@ -15738,6 +15739,8 @@ partner portal.gs
  * the shipment with a courier, then submits:
  *   Delhivery: the LRN and the label PDF
  *   Scorpion:  the docket number, the box label PDF and the docket PDF
+ *   Bluedart:  the AWB and a photo / PDF of the handwritten waybill, read here with
+ *              Drive OCR (partnerOcrText_)
  * The Vercel server reads the PDFs' text and partnerSubmitShipment_ checks it against the
  * row. Only documents that pass every check are accepted, and the LRN / docket number
  * then syncs to PO_Database (AWB column).
@@ -16039,6 +16042,94 @@ function partnerSaveLabel_(base64, fileName) {
   return saveSelfShipDoc_(base64, fileName, "application/pdf");
 }
 
+// Bluedart AWBs are 11 digits ending in a check digit: the first 10 digits mod 7
+function partnerBluedartCheckDigitOk_(awb) {
+  const s = String(awb);
+  return /^\d{11}$/.test(s) && Number(s.slice(0, 10)) % 7 === Number(s[10]);
+}
+
+// Text of an image / PDF from Drive's OCR (Drive advanced service v2). The temporary
+// Google Doc it creates is deleted straight away.
+function partnerOcrText_(base64, mimeType) {
+  const blob = Utilities.newBlob(Utilities.base64Decode(base64), mimeType, "waybill");
+  const doc = Drive.Files.insert({ title: `partner-ocr-${Date.now()}`, mimeType: MimeType.GOOGLE_DOCS }, blob, { ocr: true, ocrLanguage: "en" });
+  try {
+    return DocumentApp.openById(doc.id).getBody().getText();
+  } finally {
+    try {
+      Drive.Files.remove(doc.id);
+    } catch (e) {
+      Logger.log(`partnerOcrText_: could not delete OCR doc ${doc.id}: ${e.message}`);
+    }
+  }
+}
+
+/**
+ * Checks a Bluedart waybill photo's OCR text against the request row. The AWB is printed
+ * (OCR reads it reliably), everything else is handwritten: tried 2026-10-27 on a real
+ * waybill, Drive OCR read the AWBs and the consignee but not the box count. So only the
+ * AWB is blocking; pincode and consignee are information, and the box count isn't checked.
+ * ocrText is null when OCR itself failed. Same return shape as partnerVerifyLabel_.
+ */
+function partnerVerifyBluedart_(ocrText, req) {
+  const checks = [];
+  const add = (key, name, ok, detail, blocking) =>
+    checks.push({ key: key, label: name, ok: !!ok, blocking: blocking !== false, detail: detail });
+
+  const formatOk = /^\d{11}$/.test(req.lrn);
+  add("format", "AWB format", formatOk, formatOk ? `AWB ${req.lrn}` : `A Bluedart AWB has 11 digits; you entered ${req.lrn.length}.`);
+  if (!formatOk) return checks;
+  if (!partnerBluedartCheckDigitOk_(req.lrn)) {
+    add("checkdigit", "AWB check digit", false, `${req.lrn} doesn't pass Bluedart's check digit. Please double-check the number.`, false);
+  }
+
+  if (ocrText === null) {
+    add("readable", "Waybill photo read", false, "Could not read the photo right now. Please try again in a minute.");
+    return checks;
+  }
+  const text = String(ocrText);
+  const digits = text.replace(/\D/g, "");
+  if (digits.length < 11) {
+    add("readable", "Waybill photo read", false, "Could not read any numbers on the photo. Take a clear, well-lit photo of the whole waybill.");
+    return checks;
+  }
+
+  // One sheet can hold several waybills, and OCR can split an AWB's digits with spaces
+  const awbsOnPhoto = [];
+  text.split("\n").forEach(line => {
+    (line.replace(/(\d)\s+(?=\d)/g, "$1").match(/\d{11}/g) || []).forEach(n => {
+      if (partnerBluedartCheckDigitOk_(n) && awbsOnPhoto.indexOf(n) === -1) awbsOnPhoto.push(n);
+    });
+  });
+  const onPhoto = digits.indexOf(req.lrn) !== -1;
+  add("lrn", "AWB matches waybill photo", onPhoto, onPhoto
+    ? `AWB ${req.lrn} found on the waybill`
+    : awbsOnPhoto.length
+      ? `The photo shows AWB ${awbsOnPhoto.join(", ")}, not ${req.lrn}.`
+      : `AWB ${req.lrn} was not found on the photo. Take a clear photo where the printed AWB under the barcode is readable.`);
+
+  add("unique", "AWB not used on another request", !req.lrnUsedOnRow, req.lrnUsedOnRow
+    ? `AWB ${req.lrn} is already on tracker row ${req.lrnUsedOnRow}.`
+    : "Not used elsewhere");
+
+  // Handwritten, so information only
+  const shipPins = String(req.shipTo || "").match(/\b\d{6}\b/g) || [];
+  if (shipPins.length) {
+    const pinOk = shipPins.some(p => digits.indexOf(p) !== -1);
+    add("pincode", "Destination pincode", pinOk, pinOk
+      ? `Pin ${shipPins.join("/")}`
+      : `Couldn't find the request's pin ${shipPins.join("/")} on the photo. Please double-check the destination.`, false);
+  }
+  const consignee = (String(req.shipTo || "").split("\n")[0].match(/[A-Za-z]{4,}/) || [""])[0];
+  if (consignee) {
+    const nameOk = text.toLowerCase().indexOf(consignee.toLowerCase()) !== -1;
+    add("consignee", "Consignee name", nameOk, nameOk
+      ? `Consignee ${consignee}`
+      : `Couldn't find "${consignee}" on the photo. Please double-check the consignee.`, false);
+  }
+  return checks;
+}
+
 /**
  * The booking generated the E-Way Bill with Delhivery as transporter. When Urvi Ent
  * ships with another courier, cancel it and generate one for that courier, the same way
@@ -16077,14 +16168,30 @@ function partnerSubmitShipment_(data, access) {
   const courierCfg = SELF_SHIP_PARTNER_COURIERS_[courierKey];
   if (!courierCfg) return { status: "error", message: `${data.courier} shipments can't be submitted yet.` };
   const isScorpion = courierKey === "scorpion";
-  const numberName = isScorpion ? "docket number" : "LRN";
-  // The LRN / docket number goes in the tracker's AWB column. "awb" is the key the Vercel
-  // server sent before 2026-10-13.
+  const isBluedart = courierKey === "bluedart";
+  const numberName = isScorpion ? "docket number" : isBluedart ? "AWB" : "LRN";
+  // The LRN / docket number / AWB goes in the tracker's AWB column. "awb" is the key the
+  // Vercel server sent before 2026-10-13.
   const lrn = String(data.lrn || data.awb || "").replace(/\s+/g, "");
   if (!invoiceNumber) return { status: "error", message: "No request selected." };
   if (!/^\d{6,20}$/.test(lrn)) return { status: "error", message: `Enter the numeric ${numberName} printed on the label.` };
-  if (!data.labelBase64) return { status: "error", message: "Upload the label PDF." };
+  if (!data.labelBase64) return { status: "error", message: isBluedart ? "Upload a photo of the waybill." : "Upload the label PDF." };
   if (isScorpion && !data.docketBase64) return { status: "error", message: "Upload the docket PDF." };
+  // A Bluedart waybill is a photo (JPEG / PNG) or a PDF; the other couriers' labels are PDFs
+  const labelMime = isBluedart ? String(data.labelMimeType || "application/pdf") : "application/pdf";
+  if (["application/pdf", "image/jpeg", "image/png"].indexOf(labelMime) === -1) {
+    return { status: "error", message: "Upload the waybill as a JPG, PNG or PDF." };
+  }
+
+  // Before taking the lock: OCR takes a few seconds
+  let ocrText = null;
+  if (isBluedart && /^\d{11}$/.test(lrn)) {
+    try {
+      ocrText = partnerOcrText_(data.labelBase64, labelMime);
+    } catch (e) {
+      Logger.log(`partnerSubmitShipment_: OCR failed for ${invoiceNumber}: ${e.message}`);
+    }
+  }
 
   const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
   const who = access.name ? `${access.name} <${actorEmail}>` : actorEmail;
@@ -16141,18 +16248,25 @@ function partnerSubmitShipment_(data, access) {
       invoiceValue: Number(cell("Invoice Value")) || 0,
       lrnUsedOnRow: usedAt === -1 ? 0 : usedAt + 1
     };
-    const checks = isScorpion ? partnerVerifyScorpion_(data.label || {}, req) : partnerVerifyLabel_(data.label || {}, req);
+    const checks = isScorpion ? partnerVerifyScorpion_(data.label || {}, req)
+      : isBluedart ? partnerVerifyBluedart_(ocrText, req)
+      : partnerVerifyLabel_(data.label || {}, req);
     const failed = checks.filter(c => c.blocking && !c.ok);
 
     if (failed.length) {
       put("Verification", `✗ ${stamp} ${who} (${courierCfg.label} ${numberName} ${lrn}): ${failed.map(c => c.detail).join(" | ")}`);
       SpreadsheetApp.flush();
-      return { status: "rejected", message: "The label did not pass verification. Nothing was saved; fix the issues below and submit again.", checks: checks };
+      return { status: "rejected", message: "The documents did not pass verification. Nothing was saved; fix the issues below and submit again.", checks: checks };
     }
 
     const safeInvoice = invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
-    const labelUrl = partnerSaveLabel_(data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
-    const docketUrl = isScorpion ? partnerSaveLabel_(data.docketBase64, `${lrn}_${safeInvoice}_docket.pdf`) : "";
+    // A Bluedart waybill isn't a box label: it goes in Docket Copy, so the tool's Print
+    // Shipping Label button (PO_Database Label URL) stays hidden for it
+    const labelUrl = isBluedart ? "" : partnerSaveLabel_(data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
+    const waybillExt = labelMime === "image/jpeg" ? "jpg" : labelMime === "image/png" ? "png" : "pdf";
+    const docketUrl = isScorpion ? partnerSaveLabel_(data.docketBase64, `${lrn}_${safeInvoice}_docket.pdf`)
+      : isBluedart ? saveSelfShipDoc_(data.labelBase64, `${lrn}_${safeInvoice}_waybill.${waybillExt}`, labelMime)
+      : "";
 
     sheet.getRange(sheetRow, awbCol + 1).setNumberFormat("@").setValue(lrn);
     // The booking's link formula points at Delhivery; other couriers get their own link
@@ -16162,8 +16276,8 @@ function partnerSubmitShipment_(data, access) {
     }
     const notes = checks.filter(c => !c.blocking && !c.ok).map(c => c.detail);
     put("Courier", courierCfg.label);
-    put("Box Label", hyperlinkFormula_(labelUrl, `${lrn}_label`));
-    if (docketUrl) put("Docket Copy", hyperlinkFormula_(docketUrl, `${lrn}_docket`));
+    if (labelUrl) put("Box Label", hyperlinkFormula_(labelUrl, `${lrn}_label`));
+    if (docketUrl) put("Docket Copy", hyperlinkFormula_(docketUrl, isBluedart ? `${lrn}_waybill` : `${lrn}_docket`));
     put("Status", PARTNER_STATUS_.ACCEPTED);
     put("Verification", `✓ ${stamp}: ${checks.filter(c => c.ok).map(c => c.detail).join(" | ")}` +
       (notes.length ? ` | Note: ${notes.join(" | ")}` : ""));

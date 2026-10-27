@@ -1574,7 +1574,7 @@ const ShipFlowModal: FC<{
                             <button onClick={() => run('delhivery')} disabled={!!submitting} className={`${optionClass} hover:border-red-500 hover:bg-red-50`}>
                                 <div>
                                     <p className="text-base font-black text-gray-900 group-hover:text-red-700">Self Ship: Urvi Ent</p>
-                                    <p className="text-xs text-gray-500">Sends a request to Urvi Ent's partner portal (Delhivery / Scorpion); AWB syncs back once their documents pass verification</p>
+                                    <p className="text-xs text-gray-500">Sends a request to Urvi Ent's partner portal (Delhivery / Scorpion / Bluedart); AWB syncs back once their documents pass verification</p>
                                 </div>
                                 {submitting === 'delhivery' ? <RefreshIcon className="h-5 w-5 text-red-600 animate-spin" /> : <ChevronRightIcon className="h-5 w-5 text-gray-400 group-hover:text-red-600" />}
                             </button>
