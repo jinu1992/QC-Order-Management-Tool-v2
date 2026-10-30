@@ -2960,9 +2960,12 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
             
             const carrierLower = (so.carrier || '').toLowerCase();
-            if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
-            if (!carrierLower.includes('(self)')) return false;
+            const carrierLower = (so.carrier || '').toLowerCase();
+            // Include all Urvi couriers, even if they contain "Self" or "Self Ship"
+            const isUrviCourier = carrierLower.includes('urvi');
+            if (!isUrviCourier) return false;
+            
             if (so.rtoStatus && so.rtoStatus.trim() !== '') return false;
 
             const latestStatusLower = (so.latestStatus || '').toLowerCase();
