@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { google } from 'googleapis';
 import crypto from 'crypto';
+import { PDFDocument } from 'pdf-lib';
 import { parseDelhiveryLabel, parseScorpionDocs } from '../partner/labelParser.js';
 
 // Self-ship partner portal (/partner) for Urvi Ent, who books each request with Delhivery,
@@ -23,6 +24,17 @@ function sniffMimeType(file: Buffer): string {
   if (file[0] === 0xff && file[1] === 0xd8 && file[2] === 0xff) return 'image/jpeg';
   if (file.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   return '';
+}
+
+// One PDF with every page of each file, in order (Scorpion: box labels, then the docket)
+async function mergePdfs(files: Buffer[]): Promise<Buffer> {
+  const merged = await PDFDocument.create();
+  for (const file of files) {
+    const doc = await PDFDocument.load(file, { ignoreEncryption: true });
+    const pages = await merged.copyPages(doc, doc.getPageIndices());
+    pages.forEach(page => merged.addPage(page));
+  }
+  return Buffer.from(await merged.save());
 }
 
 interface PartnerSession {
@@ -213,6 +225,16 @@ export function createPartnerRouter(redirectUri: string): Router {
       const label = isBluedart ? {}
         : needsDocket ? await parseScorpionDocs(files.map(file => new Uint8Array(file)))
         : await parseDelhiveryLabel(new Uint8Array(files[0]));
+      // Saved as the shipment's label, so one print gives the box labels and the docket.
+      // If the merge fails, the box label alone is saved, as before.
+      let mergedLabelBase64 = '';
+      if (needsDocket) {
+        try {
+          mergedLabelBase64 = (await mergePdfs(files)).toString('base64');
+        } catch (error) {
+          console.error('Partner submit: could not merge the Scorpion PDFs:', error);
+        }
+      }
       const result = await callAppsScript('partnerSubmitShipment', req.partner!.email, {
         invoiceNumber: String(invoiceNumber),
         courier,
@@ -221,12 +243,62 @@ export function createPartnerRouter(redirectUri: string): Router {
         labelBase64: files[0].toString('base64'),
         labelMimeType,
         ...(needsDocket ? { docketBase64: files[1].toString('base64') } : {}),
+        ...(mergedLabelBase64 ? { mergedLabelBase64 } : {}),
       });
       res.status(result.code === 'forbidden' ? 403 : 200).json({ ...result, label });
     } catch (error: any) {
       console.error('Partner submit error:', error);
       res.status(502).json({ status: 'error', message: `Could not process the documents: ${error.message}` });
     }
+  });
+
+  // Proof of delivery: a PDF or a photo (the portal re-encodes photos as JPEG)
+  const readPod = (req: Request, res: Response): { podBase64: string; podMimeType: string } | null | undefined => {
+    const { podBase64 } = req.body || {};
+    if (!podBase64) return null;
+    const file = Buffer.from(String(podBase64), 'base64');
+    if (file.length > MAX_LABEL_BYTES) {
+      res.status(413).json({ status: 'error', message: 'The POD file is too large (max 3 MB).' });
+      return undefined;
+    }
+    const podMimeType = sniffMimeType(file);
+    if (!podMimeType) {
+      res.status(400).json({ status: 'error', message: 'Upload the POD as a PDF, JPG or PNG.' });
+      return undefined;
+    }
+    return { podBase64: file.toString('base64'), podMimeType };
+  };
+
+  const forwardAction = (action: string, payload: Record<string, unknown>, req: PartnerRequest, res: Response) =>
+    callAppsScript(action, req.partner!.email, payload)
+      .then(result => res.status(result.code === 'forbidden' ? 403 : 200).json(result))
+      .catch((error: any) => {
+        console.error(`Partner ${action} error:`, error);
+        res.status(502).json({ status: 'error', message: error.message });
+      });
+
+  router.post('/api/partner/mark-delivered', requirePartner, async (req: PartnerRequest, res: Response) => {
+    const { invoiceNumber, deliveredDate } = req.body || {};
+    if (!invoiceNumber || !/^\d{4}-\d{2}-\d{2}$/.test(String(deliveredDate || ''))) {
+      return res.status(400).json({ status: 'error', message: 'Shipment and delivery date are required.' });
+    }
+    const pod = readPod(req, res);
+    if (pod === undefined) return;
+    await forwardAction('partnerMarkDelivered', { invoiceNumber: String(invoiceNumber), deliveredDate: String(deliveredDate), ...(pod || {}) }, req, res);
+  });
+
+  router.post('/api/partner/mark-rto', requirePartner, async (req: PartnerRequest, res: Response) => {
+    const { invoiceNumber } = req.body || {};
+    if (!invoiceNumber) return res.status(400).json({ status: 'error', message: 'No shipment selected.' });
+    await forwardAction('partnerMarkRto', { invoiceNumber: String(invoiceNumber) }, req, res);
+  });
+
+  router.post('/api/partner/pod', requirePartner, async (req: PartnerRequest, res: Response) => {
+    const { invoiceNumber } = req.body || {};
+    const pod = readPod(req, res);
+    if (pod === undefined) return;
+    if (!invoiceNumber || !pod) return res.status(400).json({ status: 'error', message: 'Shipment and POD file are required.' });
+    await forwardAction('partnerUploadPod', { invoiceNumber: String(invoiceNumber), ...pod }, req, res);
   });
 
   return router;

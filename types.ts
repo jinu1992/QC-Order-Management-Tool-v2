@@ -106,6 +106,7 @@ export interface PurchaseOrder {
     actionToBeTaken?: string;
     poPdfUrl?: string;
     podImageUrl?: string;
+    deliveryPodUrl?: string; // proof of delivery from the self-ship partner ("POD Image" is the GRN copy)
     grnNumber?: string;
     pocPhoneNumber?: string;
     contactVerified: boolean;
@@ -315,6 +316,7 @@ export interface GroupedSalesOrder {
     labelUrl?: string;
     orderNotes?: string;
     podImageUrl?: string;
+    deliveryPodUrl?: string;
     grnNumber?: string;
     grnDate?: string;
     locationKey?: string;

@@ -3,7 +3,7 @@ import { PurchaseOrder, POItem, User, GroupedSalesOrder, POStatus } from '../typ
 import { TruckIcon, SearchIcon, AlertIcon, CheckCircleIcon, CalendarIcon, FilterIcon, ChatIcon, ChevronDownIcon, ChevronUpIcon, MessageIcon, PlusIcon, PaperclipIcon, ExternalLinkIcon, RefreshIcon } from './icons/Icons';
 import OrderNotesTimeline from './OrderNotesTimeline';
 import AppointmentUpdateModal from './AppointmentUpdateModal';
-import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile, fetchBotSessions, refreshBotSession, getBotSessionRefreshStatus, runPortalBot } from '../services/api';
+import { logFileUpload, updateShipmentDocuments, fetchLocalDownloads, readLocalFile, fetchBotSessions, refreshBotSession, getBotSessionRefreshStatus, runPortalBot, markShipmentDelivered } from '../services/api';
 
 // GroupedSalesOrder is now imported from ../types
 
@@ -74,6 +74,9 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const [activeTab, setActiveTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered' | 'GRN_PO_Upload'>('All');
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [apptUpdateModal, setApptUpdateModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    // "Mark Delivered" for shipments whose tracking hasn't caught up (and self-ship, which has none)
+    const [deliverModal, setDeliverModal] = useState<{ so: GroupedSalesOrder, date: string, saving: boolean } | null>(null);
+    const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
     // Local files and upload state
     const [localFiles, setLocalFiles] = useState<{ name: string, path: string, folder: string }[]>([]);
@@ -716,6 +719,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         pickupDate: item.pickupDate || po.pickupDate,
                         orderNotes: po.orderNotes || '',
                         podImageUrl: po.podImageUrl,
+                        deliveryPodUrl: po.deliveryPodUrl,
                         grnNumber: po.grnNumber,
                         grnDate: po.grnDate
                     };
@@ -755,6 +759,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     if (po.shippingCharge !== undefined) groups[refCode].shippingCharge = po.shippingCharge;
                     if (po.eeCustomerId) groups[refCode].eeCustomerId = po.eeCustomerId;
                     if (!groups[refCode].podImageUrl && po.podImageUrl) groups[refCode].podImageUrl = po.podImageUrl;
+                    if (!groups[refCode].deliveryPodUrl && po.deliveryPodUrl) groups[refCode].deliveryPodUrl = po.deliveryPodUrl;
                     if (!groups[refCode].grnNumber && po.grnNumber) groups[refCode].grnNumber = po.grnNumber;
                     if (!groups[refCode].grnDate && po.grnDate) groups[refCode].grnDate = po.grnDate;
                     if (po.orderNotes && !groups[refCode].orderNotes?.includes(po.orderNotes)) {
@@ -910,6 +915,28 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         if (so.awb) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 flex items-center gap-1 w-fit"><TruckIcon className="w-3 h-3" /> In Transit</span>;
 
         return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 w-fit">{so.status || 'Pending'}</span>;
+    };
+
+    const handleMarkDelivered = async () => {
+        if (!deliverModal) return;
+        const { so, date } = deliverModal;
+        setDeliverModal({ ...deliverModal, saving: true });
+        try {
+            const res = await markShipmentDelivered(so.id, date, currentUser?.name);
+            if (res.status !== 'success') throw new Error(res.message || 'Could not mark the shipment delivered.');
+            // Show it delivered right away; the next sync brings the same values from the sheet
+            setPurchaseOrders?.(prev => prev.map(p => !so.poReference.split(', ').includes(String(p.id)) ? p : {
+                ...p,
+                deliveredDate: date,
+                trackingStatus: 'Delivered',
+                items: (p.items || []).map(item => String(item.eeReferenceCode || '').trim() === so.id ? { ...item, deliveredDate: date, trackingStatus: 'Delivered' } : item),
+            }));
+            addNotification?.(res.message || `${so.id} marked delivered.`, 'success');
+            setDeliverModal(null);
+        } catch (err: any) {
+            addNotification?.(err.message || 'Could not mark the shipment delivered.', 'error');
+            setDeliverModal(prev => prev && { ...prev, saving: false });
+        }
     };
 
     // WhatsApp share handler
@@ -1609,6 +1636,20 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                                     {getStatusBadge(so)}
                                                     {so.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={so.trackingStatus}>Status: {so.trackingStatus}</span>}
                                                     {so.latestStatus && <span className="text-xs text-gray-500 w-40 truncate" title={so.latestStatus}>{so.latestStatus}</span>}
+                                                    {isActuallyDelivered && so.deliveryPodUrl && (
+                                                        <a href={so.deliveryPodUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                                            className="text-xs font-semibold text-green-700 hover:underline flex items-center gap-1 w-fit">
+                                                            <PaperclipIcon className="h-3 w-3" /> Proof of Delivery
+                                                        </a>
+                                                    )}
+                                                    {!isActuallyDelivered && !isRTO && so.awb && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); setDeliverModal({ so, date: todayIso(), saving: false }); }}
+                                                            className="mt-1 px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded text-[10px] font-bold hover:bg-green-100 transition-colors flex items-center gap-1 w-fit"
+                                                        >
+                                                            <CheckCircleIcon className="h-3 w-3" /> Mark Delivered
+                                                        </button>
+                                                    )}
                                                 </div>
                                                 <div className="text-xs text-gray-700 mt-1 pb-1">
                                                     <span className="font-bold border-t border-gray-200 pt-2 mt-1 block w-full">Order Date: <span className="font-medium text-gray-600">{so.orderDate || '-'}</span></span>
@@ -1708,6 +1749,32 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                     }}
                     currentUser={currentUser}
                 />
+            )}
+            {deliverModal && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !deliverModal.saving && setDeliverModal(null)}>
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+                        <div>
+                            <h3 className="text-base font-bold text-gray-900">Mark Delivered</h3>
+                            <p className="text-xs text-gray-500 mt-1">
+                                {deliverModal.so.channel} · PO {deliverModal.so.poReference}{deliverModal.so.awb ? ` · AWB ${deliverModal.so.awb}` : ''}
+                            </p>
+                        </div>
+                        <label className="block">
+                            <span className="text-xs font-semibold text-gray-600">Delivered on</span>
+                            <input type="date" value={deliverModal.date} max={todayIso()} disabled={deliverModal.saving}
+                                onChange={(e) => setDeliverModal({ ...deliverModal, date: e.target.value })}
+                                className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+                        </label>
+                        <div className="flex justify-end gap-2">
+                            <button onClick={() => setDeliverModal(null)} disabled={deliverModal.saving}
+                                className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50">Cancel</button>
+                            <button onClick={handleMarkDelivered} disabled={deliverModal.saving || !deliverModal.date || deliverModal.date > todayIso()}
+                                className="px-4 py-2 text-sm font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 flex items-center gap-2">
+                                {deliverModal.saving && <RefreshIcon className="h-4 w-4 animate-spin" />} Mark Delivered
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

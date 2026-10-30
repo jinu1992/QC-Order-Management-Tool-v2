@@ -467,6 +467,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
             if (!po.labelUrl && row['Label URL']) po.labelUrl = String(row['Label URL']);
             if (!po.orderNotes && row['Order Notes']) po.orderNotes = String(row['Order Notes']);
             if (!po.podImageUrl && (row['POD Image'] || row['POD Image URL'])) po.podImageUrl = String(row['POD Image'] || row['POD Image URL']);
+            if (!po.deliveryPodUrl && row['Delivery POD URL']) po.deliveryPodUrl = String(row['Delivery POD URL']);
             if (!po.grnNumber && row['GRN Number']) po.grnNumber = String(row['GRN Number']);
             if (!po.grnDate && row['GRN Date']) po.grnDate = formatSheetDate(row['GRN Date']);
             // Preserve DB status override: if ANY row for this PO has a status override, keep/update it.
@@ -495,6 +496,7 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
                 poExpiryDate: formatSheetDate(row['PO Expiry Date']) || 'N/A',
                 poPdfUrl: row['PO PDF'] ? String(row['PO PDF']) : undefined,
                 podImageUrl: (row['POD Image'] || row['POD Image URL']) ? String(row['POD Image'] || row['POD Image URL']) : undefined,
+                deliveryPodUrl: row['Delivery POD URL'] ? String(row['Delivery POD URL']) : undefined,
                 grnNumber: row['GRN Number'] ? String(row['GRN Number']) : undefined,
                 grnDate: formatSheetDate(row['GRN Date']),
                 eeCustomerId: row['EE Customer ID'] ? String(row['EE Customer ID']) : undefined,
@@ -527,6 +529,11 @@ const transformSheetDataToPOs = (rows: any[]): PurchaseOrder[] => {
 
 export const updateRTOStatus = async (eeReferenceCode: string, rtoStatus: string) => {
     return await postToScript({ action: 'updateRTOStatus', eeReferenceCode, rtoStatus });
+};
+
+// deliveredDate is yyyy-MM-dd; also moves the self-ship partner's request to Delivered
+export const markShipmentDelivered = async (eeReferenceCode: string, deliveredDate: string, actorName?: string) => {
+    return await postToScript({ action: 'markShipmentDelivered', eeReferenceCode, deliveredDate, actorName });
 };
 
 export const saveOrderNote = async (poNumber: string, note: string, userName: string) => {

@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     RefreshIcon, XCircleIcon, CheckCircleIcon, TruckIcon, CalendarIcon, SearchIcon, UploadIcon,
-    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon
+    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon
 } from './icons/Icons';
 
-// Self-ship partner portal, served at /partner. Shows the self-ship requests from Urvi
-// Ent's tracker sheet; the partner books each one with a courier, then submits:
+// Self-ship partner portal, served at /partner: a shipment tracker for Urvi Ent's requests
+// (the Urvi Ent tracker sheet, joined with PO_Database for live appointments, deliveries
+// and returns). The partner books each request with a courier, then submits:
 //   Delhivery: the LRN and the label PDF
-//   Scorpion:  the docket number, the box label PDF and the docket PDF
+//   Scorpion:  the docket number, the box label PDF and the docket PDF (merged into one
+//              label PDF by the server)
 //   Bluedart:  the AWB and a photo of the handwritten waybill
 // The server reads the documents and only accepts them when the number, box count and
 // PO / invoice all match the request (see server/routes/partner.ts). Bluedart waybills are
 // read with OCR, which reliably reads only the printed AWB.
+// Once shipped, the partner marks each shipment delivered (with the proof of delivery) or
+// RTO; returns stay flagged until EasyEcom shows them received at the warehouse.
 
 interface PartnerUser {
     email: string;
@@ -45,6 +49,15 @@ interface ShipRequest {
     verification: string;
     submittedBy: string;
     submittedAt: string;
+    // From PO_Database (blank until the server sends them)
+    storeCode?: string;
+    trackingStatus?: string;
+    deliveredDate?: string;
+    rtoMarkedAt?: string;
+    delivered?: boolean;
+    rto?: boolean;
+    returnReceived?: boolean;
+    podUrl?: string;
 }
 
 interface Check {
@@ -55,7 +68,32 @@ interface Check {
     detail: string;
 }
 
-type Tab = 'Pending' | 'Completed' | 'All';
+type TabKey = 'all' | 'today' | 'tomorrow' | 'upcoming' | 'noAppt' | 'missed' | 'delivered' | 'rto';
+
+// Each tab's badge counts what needs the partner: shipments to create, appointments,
+// PODs to upload, returns not yet received
+const TABS: { key: TabKey; label: string; badge: string; tone: string }[] = [
+    { key: 'all', label: 'All Shipments', badge: 'to create', tone: 'bg-blue-100 text-blue-700' },
+    { key: 'today', label: "Today's Appts", badge: 'today', tone: 'bg-orange-100 text-orange-700' },
+    { key: 'tomorrow', label: "Tomorrow's Appts", badge: 'tomorrow', tone: 'bg-sky-100 text-sky-700' },
+    { key: 'upcoming', label: 'Upcoming Appts', badge: 'upcoming', tone: 'bg-indigo-100 text-indigo-700' },
+    { key: 'noAppt', label: 'Pending Appointment', badge: 'no appointment', tone: 'bg-amber-100 text-amber-800' },
+    { key: 'missed', label: 'Missed Deliveries', badge: 'missed', tone: 'bg-red-100 text-red-700' },
+    { key: 'delivered', label: 'Delivered', badge: 'POD pending', tone: 'bg-green-100 text-green-700' },
+    { key: 'rto', label: 'RTO / Returned', badge: 'not received', tone: 'bg-purple-100 text-purple-700' },
+];
+
+// "All Shipments" filter; the tab opens on shipments still to be created
+type StageFilter = 'pending' | 'created' | 'delivered' | 'rto' | 'cancelled' | 'any';
+
+const STAGE_FILTERS: { key: StageFilter; label: string }[] = [
+    { key: 'pending', label: 'Shipment pending' },
+    { key: 'created', label: 'Shipped, not delivered' },
+    { key: 'delivered', label: 'Delivered' },
+    { key: 'rto', label: 'RTO / Returned' },
+    { key: 'cancelled', label: 'Cancelled' },
+    { key: 'any', label: 'All statuses' },
+];
 
 type CourierKey = 'delhivery' | 'scorpion' | 'bluedart';
 
@@ -78,8 +116,41 @@ const courierOf = (r: ShipRequest) => COURIERS.find(c => c.label.toLowerCase() =
 
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 
-// Ops may move a row past "Accepted" in the sheet (e.g. Delivered); all of those are done
-const isDone = (r: ShipRequest) => r.status !== 'Pending' && r.status !== 'Cancelled';
+const isCancelled = (r: ShipRequest) => r.status === 'Cancelled';
+// The partner has submitted the shipment. Ops may also move a row on in the sheet.
+const isCreated = (r: ShipRequest) => r.status !== 'Pending' && !isCancelled(r);
+const isRto = (r: ShipRequest) => !isCancelled(r) && (!!r.rto || r.status === 'RTO');
+const isDelivered = (r: ShipRequest) => !isCancelled(r) && !isRto(r) && (!!r.delivered || r.status === 'Delivered');
+// Still on its way to the store (or not yet shipped)
+const isOpen = (r: ShipRequest) => !isCancelled(r) && !isRto(r) && !isDelivered(r);
+
+const inTab = (r: ShipRequest, tab: TabKey): boolean => {
+    const days = daysUntil(r.appointmentDate);
+    switch (tab) {
+        case 'all': return true;
+        case 'today': return isCreated(r) && isOpen(r) && days === 0;
+        case 'tomorrow': return isCreated(r) && isOpen(r) && days === 1;
+        case 'upcoming': return isCreated(r) && isOpen(r) && days !== null && days > 1;
+        case 'noAppt': return isOpen(r) && days === null;
+        case 'missed': return isOpen(r) && days !== null && days < 0;
+        case 'delivered': return isDelivered(r);
+        case 'rto': return isRto(r);
+    }
+};
+
+const tabBadgeCount = (tab: TabKey, rows: ShipRequest[]) => rows.filter(r =>
+    tab === 'all' ? r.status === 'Pending'
+        : tab === 'delivered' ? isDelivered(r) && !r.podUrl
+        : tab === 'rto' ? isRto(r) && !r.returnReceived
+        : inTab(r, tab)).length;
+
+const inStage = (r: ShipRequest, stage: StageFilter) =>
+    stage === 'pending' ? r.status === 'Pending'
+        : stage === 'created' ? isCreated(r) && isOpen(r)
+        : stage === 'delivered' ? isDelivered(r)
+        : stage === 'rto' ? isRto(r)
+        : stage === 'cancelled' ? isCancelled(r)
+        : true;
 
 const SESSION_KEY = 'cubelelo.partnerPortal.session';
 
@@ -147,17 +218,74 @@ const AppointmentBadge: React.FC<{ date: string }> = ({ date }) => {
     return <span className={`px-2 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wide ${tone}`}>{text}</span>;
 };
 
-const StatusPill: React.FC<{ status: string }> = ({ status }) => {
-    const tone = status === 'Pending' ? 'bg-blue-100 text-blue-700'
-        : status === 'Cancelled' ? 'bg-gray-100 text-gray-600'
-        : 'bg-green-100 text-green-700';
-    return <span className={`px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wide ${tone}`}>{status === 'Accepted' ? 'Completed' : status}</span>;
+const todayIst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+// Same badges as the tool's Shipment Tracker
+const StagePill: React.FC<{ request: ShipRequest }> = ({ request: r }) => {
+    const days = daysUntil(r.appointmentDate);
+    const badge = 'px-2 py-1 text-xs font-medium rounded-full flex items-center gap-1 w-fit whitespace-nowrap';
+    if (isCancelled(r)) return <span className={`${badge} bg-gray-100 text-gray-700`}><XCircleIcon className="w-3 h-3" /> Cancelled</span>;
+    if (r.status === 'Pending') return <span className={`${badge} bg-blue-100 text-blue-700`}><UploadIcon className="w-3 h-3" /> Shipment Pending</span>;
+    if (isRto(r)) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
+    if (isDelivered(r)) return <span className={`${badge} bg-green-100 text-green-700`}><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
+    if (days !== null && days < 0) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> Missed</span>;
+    if (r.appointmentDate) return <span className={`${badge} bg-blue-100 text-blue-700`}><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
+    return <span className={`${badge} bg-orange-100 text-orange-700`}><TruckIcon className="w-3 h-3" /> In Transit</span>;
 };
+
+type ActionResult = { status: string; message: string; checks?: Check[] };
+
+// POSTs to a partner route. Resolves null when the session has expired (the caller signs out).
+const partnerPost = async (path: string, token: string, body: Record<string, unknown>): Promise<ActionResult | null> => {
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+        });
+        if (res.status === 401) return null;
+        return await res.json().catch(() => ({ status: 'error', message: `Server error (${res.status}). Please try again.` }));
+    } catch {
+        return { status: 'error', message: 'Could not reach the server. Check your connection and try again.' };
+    }
+};
+
+const ModalShell: React.FC<{
+    eyebrow: string;
+    request: ShipRequest;
+    busy: boolean;
+    onClose: () => void;
+    children: React.ReactNode;
+}> = ({ eyebrow, request, busy, onClose, children }) => (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={busy ? undefined : onClose}>
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-4">
+                <div>
+                    <h3 className="text-base font-bold text-gray-900">{eyebrow}</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                        {request.channel} · PO {request.poNumbers.join(', ') || '-'} · Invoice {request.invoiceNumber} · <span className="font-semibold text-gray-700">{request.boxes} box(es)</span>
+                        {request.awb && <> · {courierOf(request).label} {request.awb}</>}
+                    </p>
+                </div>
+                <button onClick={onClose} disabled={busy} className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40" aria-label="Close">
+                    <XIcon className="h-5 w-5" />
+                </button>
+            </div>
+            <div className="p-5 space-y-4">{children}</div>
+        </div>
+    </div>
+);
+
+const ResultBanner: React.FC<{ result: ActionResult | null }> = ({ result }) => result ? (
+    <div className={`p-3 rounded-lg border text-sm font-medium ${result.status === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+        {result.message}
+    </div>
+) : null;
 
 const DocLink: React.FC<{ href: string; children: React.ReactNode }> = ({ href, children }) =>
     href ? (
         <a href={href} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-700 hover:border-partners-green hover:text-partners-green transition-colors">
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:border-indigo-300 hover:text-indigo-600 transition-colors">
             {children}<ExternalLinkIcon className="h-3.5 w-3.5" />
         </a>
     ) : null;
@@ -165,7 +293,7 @@ const DocLink: React.FC<{ href: string; children: React.ReactNode }> = ({ href, 
 const ChecksList: React.FC<{ checks: Check[] }> = ({ checks }) => (
     <ul className="space-y-2">
         {checks.map(c => (
-            <li key={c.key} className={`flex items-start gap-2.5 p-2.5 rounded-xl text-sm ${c.ok ? 'bg-green-50' : c.blocking ? 'bg-red-50' : 'bg-amber-50'}`}>
+            <li key={c.key} className={`flex items-start gap-2.5 p-2.5 rounded-lg text-sm ${c.ok ? 'bg-green-50' : c.blocking ? 'bg-red-50' : 'bg-amber-50'}`}>
                 {c.ok
                     ? <CheckCircleIcon className="h-5 w-5 text-green-600 flex-shrink-0" />
                     : c.blocking ? <XCircleIcon className="h-5 w-5 text-red-600 flex-shrink-0" />
@@ -260,8 +388,8 @@ const LoginScreen: React.FC<{ onLogin: (token: string, user: PartnerUser) => voi
 const FilePicker: React.FC<{ label: string; prompt: string; file: File | null; disabled: boolean; accept?: string; onChange: (f: File | null) => void }> =
     ({ label, prompt, file, disabled, accept = 'application/pdf,.pdf', onChange }) => (
         <label className="block">
-            <span className="text-xs font-black uppercase tracking-wide text-gray-500">{label}</span>
-            <div className={`mt-1.5 flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed ${file ? 'border-partners-green bg-partners-light-green' : 'border-gray-200'} cursor-pointer`}>
+            <span className="text-xs font-semibold text-gray-600">{label}</span>
+            <div className={`mt-1.5 flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed ${file ? 'border-green-400 bg-green-50' : 'border-gray-200'} cursor-pointer`}>
                 <UploadIcon className="h-5 w-5 text-gray-500 flex-shrink-0" />
                 <span className="text-sm text-gray-700 truncate">{file ? file.name : prompt}</span>
                 <input type="file" accept={accept} className="hidden" disabled={disabled}
@@ -282,7 +410,7 @@ const SubmitModal: React.FC<{
     const [file, setFile] = useState<File | null>(null);
     const [docketFile, setDocketFile] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [result, setResult] = useState<{ status: string; message: string; checks?: Check[] } | null>(null);
+    const [result, setResult] = useState<ActionResult | null>(null);
 
     const accepted = result?.status === 'success';
     const isScorpion = courier?.key === 'scorpion';
@@ -330,23 +458,18 @@ const SubmitModal: React.FC<{
         setIsSubmitting(true);
         setResult(null);
         try {
-            const res = await fetch('/api/partner/submit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({
-                    invoiceNumber: request.invoiceNumber,
-                    courier: courier.key,
-                    lrn: lrnClean,
-                    labelBase64: await fileToBase64(file),
-                    ...(isScorpion && docketFile ? { docketBase64: await fileToBase64(docketFile) } : {}),
-                }),
+            const data = await partnerPost('/api/partner/submit', token, {
+                invoiceNumber: request.invoiceNumber,
+                courier: courier.key,
+                lrn: lrnClean,
+                labelBase64: await fileToBase64(file),
+                ...(isScorpion && docketFile ? { docketBase64: await fileToBase64(docketFile) } : {}),
             });
-            if (res.status === 401) return onSessionExpired();
-            const data = await res.json().catch(() => ({ status: 'error', message: `Server error (${res.status}). Please try again.` }));
+            if (!data) return onSessionExpired();
             setResult(data);
             if (data.status === 'success') onAccepted();
         } catch {
-            setResult({ status: 'error', message: 'Could not reach the server. Check your connection and submit again.' });
+            setResult({ status: 'error', message: 'Could not read the files. Choose them again and submit.' });
         } finally {
             setIsSubmitting(false);
         }
@@ -355,31 +478,18 @@ const SubmitModal: React.FC<{
     const orderId = request.poNumbers[0] || request.invoiceNumber;
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center sm:p-4" onClick={isSubmitting ? undefined : onClose}>
-            <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                <div className="bg-gray-900 text-white px-6 py-5 rounded-t-3xl flex items-start justify-between gap-4">
-                    <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Submit shipment{courier ? ` · ${courier.label}` : ''}</div>
-                        <div className="text-lg font-black mt-1">{request.channel} · {request.poNumbers.join(', ') || request.invoiceNumber}</div>
-                        <div className="text-xs text-gray-300 mt-1">Invoice {request.invoiceNumber} · <span className="font-bold text-white">{request.boxes} box(es)</span></div>
-                    </div>
-                    <button onClick={onClose} disabled={isSubmitting} className="p-1.5 rounded-full hover:bg-white/10 disabled:opacity-40" aria-label="Close">
-                        <XIcon className="h-5 w-5" />
-                    </button>
-                </div>
-
-                <div className="p-6 space-y-5">
+        <ModalShell eyebrow={`Submit shipment${courier ? ` · ${courier.label}` : ''}`} request={request} busy={isSubmitting} onClose={onClose}>
                     {!accepted && !courier && (
                         <div className="space-y-3">
-                            <div className="text-xs font-black uppercase tracking-wide text-gray-500">Which courier did you book this with?</div>
+                            <div className="text-xs font-semibold text-gray-600">Which courier did you book this with?</div>
                             {COURIERS.map(c => (
                                 <button key={c.key} onClick={() => chooseCourier(c)} disabled={!c.available}
-                                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border-2 border-gray-100 text-left hover:border-partners-green hover:bg-partners-light-green transition-colors disabled:opacity-50 disabled:hover:border-gray-100 disabled:hover:bg-transparent disabled:cursor-not-allowed">
+                                    className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-gray-300 text-left hover:border-indigo-400 hover:bg-indigo-50 transition-colors disabled:opacity-50 disabled:hover:border-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed">
                                     <span className="flex items-center gap-3">
                                         <TruckIcon className="h-5 w-5 text-gray-500" />
-                                        <span className="font-black text-gray-900">{c.label}</span>
+                                        <span className="font-semibold text-gray-900">{c.label}</span>
                                     </span>
-                                    {!c.available && <span className="text-[10px] font-black uppercase tracking-wide text-gray-400">Coming soon</span>}
+                                    {!c.available && <span className="text-xs font-medium text-gray-400">Coming soon</span>}
                                 </button>
                             ))}
                         </div>
@@ -387,7 +497,7 @@ const SubmitModal: React.FC<{
 
                     {!accepted && courier && (
                         <>
-                            <div className="flex items-start justify-between gap-3 text-xs text-gray-500 bg-gray-50 rounded-xl p-3 leading-relaxed">
+                            <div className="flex items-start justify-between gap-3 text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3 leading-relaxed">
                                 <span>
                                     Book this with <b>{courier.label}</b> as <b>one shipment of {request.boxes} box(es)</b> with order ID <b>{orderId}</b>,
                                     then enter the <b>{courier.numberName}</b> and upload {isScorpion
@@ -397,13 +507,13 @@ const SubmitModal: React.FC<{
                                             : <>the label PDF exactly as downloaded from {courier.label}.</>}
                                 </span>
                                 <button onClick={() => chooseCourier(null)} disabled={isSubmitting}
-                                    className="flex-shrink-0 font-bold text-partners-green hover:underline disabled:opacity-40">Change</button>
+                                    className="flex-shrink-0 font-semibold text-indigo-600 hover:underline disabled:opacity-40">Change</button>
                             </div>
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-gray-500">{courier.numberName}</span>
+                                <span className="text-xs font-semibold text-gray-600">{courier.numberName}</span>
                                 <input value={lrn} onChange={e => { setLrn(e.target.value); setResult(null); }} inputMode="numeric"
                                     placeholder={courier.placeholder} disabled={isSubmitting}
-                                    className="mt-1.5 w-full px-4 py-3 rounded-xl border-2 border-gray-100 focus:border-partners-green focus:outline-none font-mono text-lg tracking-wider" />
+                                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm tracking-wider" />
                             </label>
                             {isBluedart ? (
                                 <FilePicker label="Waybill photo" prompt="Take or choose a photo of the waybill" accept="image/*,application/pdf,.pdf"
@@ -419,106 +529,330 @@ const SubmitModal: React.FC<{
                         </>
                     )}
 
-                    {result && (
-                        <div className={`p-4 rounded-2xl text-sm font-bold ${accepted ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-700'}`}>
-                            {result.message}
-                        </div>
-                    )}
+                    <ResultBanner result={result} />
                     {result?.checks && <ChecksList checks={result.checks} />}
 
                     {accepted ? (
-                        <button onClick={onClose} className="w-full py-3.5 rounded-full bg-gray-900 text-white font-bold text-sm">Done</button>
+                        <button onClick={onClose} className="w-full py-2.5 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-medium text-sm">Done</button>
                     ) : courier && (
                         <button onClick={handleSubmit} disabled={!canSubmit}
-                            className="w-full py-3.5 rounded-full bg-partners-green text-white font-bold text-sm shadow-lg shadow-green-500/20 disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2">
+                            className="w-full py-2.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium text-sm shadow-sm disabled:opacity-50 flex items-center justify-center gap-2">
                             {isSubmitting ? <><RefreshIcon className="h-4 w-4 animate-spin" /> Checking documents…</> : 'Verify & submit'}
                         </button>
                     )}
-                </div>
-            </div>
-        </div>
+        </ModalShell>
     );
 };
 
-const RequestCard: React.FC<{ request: ShipRequest; onSubmit: () => void }> = ({ request, onSubmit }) => {
-    const pending = request.status === 'Pending';
-    const lastFailure = pending && request.verification.startsWith('✗') ? request.verification : '';
+// Delivery modes: "deliver" marks the shipment delivered (POD optional), "pod" uploads
+// the proof of delivery for one already delivered, "rto" marks it returned
+type ShipmentAction = 'deliver' | 'pod' | 'rto';
+
+// A POD may be a PDF or a photo; photos are re-encoded as JPEG to stay under the limit
+const preparePod = async (f: File): Promise<File> => {
+    const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf && !f.type.startsWith('image/')) throw new Error('Upload the POD as a PDF or a photo.');
+    const out = isPdf ? f : await photoToJpeg(f).catch(() => { throw new Error('Could not open this photo. Upload it as a JPG or PNG.'); });
+    if (out.size > MAX_UPLOAD_BYTES) throw new Error('The POD file is too large (max 3 MB).');
+    return out;
+};
+
+const ShipmentActionModal: React.FC<{
+    action: ShipmentAction;
+    request: ShipRequest;
+    token: string;
+    onClose: () => void;
+    onDone: () => void;
+    onSessionExpired: () => void;
+}> = ({ action, request, token, onClose, onDone, onSessionExpired }) => {
+    const [deliveredDate, setDeliveredDate] = useState(todayIst);
+    const [pod, setPod] = useState<File | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState<ActionResult | null>(null);
+    const done = result?.status === 'success';
+
+    const pickPod = async (f: File | null) => {
+        setResult(null);
+        if (!f) return setPod(null);
+        try {
+            setPod(await preparePod(f));
+        } catch (e: any) {
+            setPod(null);
+            setResult({ status: 'error', message: e.message });
+        }
+    };
+
+    const canSubmit = !busy && !done && (action === 'rto' || (action === 'pod' ? !!pod : !!deliveredDate && deliveredDate <= todayIst()));
+
+    const handleSubmit = async () => {
+        setBusy(true);
+        setResult(null);
+        try {
+            const podFields = pod ? { podBase64: await fileToBase64(pod) } : {};
+            const data = action === 'rto'
+                ? await partnerPost('/api/partner/mark-rto', token, { invoiceNumber: request.invoiceNumber })
+                : action === 'pod'
+                    ? await partnerPost('/api/partner/pod', token, { invoiceNumber: request.invoiceNumber, ...podFields })
+                    : await partnerPost('/api/partner/mark-delivered', token, { invoiceNumber: request.invoiceNumber, deliveredDate, ...podFields });
+            if (!data) return onSessionExpired();
+            setResult(data);
+            if (data.status === 'success') onDone();
+        } catch {
+            setResult({ status: 'error', message: 'Could not read the POD file. Choose it again.' });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const eyebrow = action === 'rto' ? 'Mark RTO / returned' : action === 'pod' ? 'Upload proof of delivery' : 'Mark delivered';
+    const busyText = action === 'rto' ? 'Saving…' : pod ? 'Uploading…' : 'Saving…';
+    const submitText = action === 'rto' ? 'Yes, mark RTO' : action === 'pod' ? 'Upload POD' : 'Mark delivered';
+
     return (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[11px] font-black uppercase tracking-wide text-gray-400">{request.channel}</span>
-                        <StatusPill status={request.status} />
-                        {pending && <AppointmentBadge date={request.appointmentDate} />}
-                    </div>
-                    <div className="text-lg font-black text-gray-900 mt-1 break-all">{request.poNumbers.join(', ') || '—'}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">Invoice <span className="font-bold text-gray-700">{request.invoiceNumber}</span> · Requested {request.bookedDate || '—'}</div>
-                </div>
-                <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
-                    <CubeIcon className="h-5 w-5 text-gray-500" />
-                    <span className="text-xl font-black text-gray-900">{request.boxes || '—'}</span>
-                    <span className="text-xs font-bold text-gray-500">box(es)</span>
-                </div>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4 mt-4 text-sm">
-                <div>
-                    <div className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 mb-1">Ship to</div>
-                    <div className="text-gray-700 whitespace-pre-line leading-snug">{request.shipTo || '—'}</div>
-                </div>
-                <div className="space-y-3">
-                    <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 mb-1">Appointment</div>
-                        <div className="flex items-center gap-1.5 text-gray-700">
-                            <CalendarIcon className="h-4 w-4 text-gray-400" />
-                            {request.appointmentDate ? `${formatDate(request.appointmentDate)}${request.appointmentTime ? `, ${request.appointmentTime}` : ''}` : '—'}
-                        </div>
-                        {request.appointmentId && <div className="text-xs text-gray-500 mt-0.5">ID {request.appointmentId}</div>}
-                    </div>
-                    {request.boxDetails && (
-                        <div>
-                            <div className="text-[10px] font-black uppercase tracking-[0.15em] text-gray-400 mb-1">Boxes</div>
-                            <div className="text-xs text-gray-600 whitespace-pre-line font-mono">{request.boxDetails}</div>
-                        </div>
-                    )}
-                    {(request.invoiceValue > 0 || request.ewb) && (
-                        <div className="text-xs text-gray-600">
-                            {request.invoiceValue > 0 && <>Invoice value <b>₹{request.invoiceValue.toLocaleString('en-IN')}</b></>}
-                            {request.ewb && <> · EWB <b className="font-mono">{request.ewb}</b></>}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {!pending && request.awb && (
-                <div className="mt-4 p-3 rounded-xl bg-green-50 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span className="text-green-800">{courierOf(request).label} {courierOf(request).numberName} <b className="font-mono">{request.awb}</b></span>
-                    {request.submittedAt && <span className="text-xs text-green-700">Submitted {request.submittedAt}{request.submittedBy ? ` by ${request.submittedBy}` : ''}</span>}
+        <ModalShell eyebrow={eyebrow} request={request} busy={busy} onClose={onClose}>
+            {!done && action === 'rto' && (
+                <div className="text-sm text-gray-600 bg-purple-50 border border-purple-100 rounded-lg p-3 leading-relaxed">
+                    Mark this shipment as <b>not delivered and returning to Cubelelo</b>. It moves to the RTO / Returned tab
+                    and stays flagged until the return is received at our warehouse.
                 </div>
             )}
-            {lastFailure && (
-                <div className="mt-4 p-3 rounded-xl bg-red-50 text-xs text-red-700 flex items-start gap-2">
-                    <XCircleIcon className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                    <span><b>Last attempt rejected:</b> {lastFailure.replace(/^✗\s*/, '')}</span>
-                </div>
+            {!done && action === 'deliver' && (
+                <label className="block">
+                    <span className="text-xs font-semibold text-gray-600">Delivered on</span>
+                    <input type="date" value={deliveredDate} max={todayIst()} disabled={busy}
+                        onChange={e => { setDeliveredDate(e.target.value); setResult(null); }}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                </label>
+            )}
+            {!done && action !== 'rto' && (
+                <FilePicker label={action === 'pod' ? 'Proof of delivery' : 'Proof of delivery (optional, can be added later)'}
+                    prompt="Signed delivery copy: photo or PDF" accept="image/*,application/pdf,.pdf"
+                    file={pod} disabled={busy} onChange={pickPod} />
             )}
 
-            <div className="flex flex-wrap items-center gap-2 mt-4">
-                <DocLink href={request.poPdfUrl}>PO PDF</DocLink>
-                <DocLink href={request.invoiceUrl}>Invoice</DocLink>
-                <DocLink href={request.labelUrl}>Label</DocLink>
-                <DocLink href={request.docketUrl}>{courierOf(request).key === 'bluedart' ? 'Waybill' : 'Docket'}</DocLink>
-                <DocLink href={request.trackingUrl}>Track</DocLink>
-                {pending && (
-                    <button onClick={onSubmit}
-                        className="ml-auto px-5 py-2.5 rounded-full bg-partners-green text-white text-sm font-bold shadow-lg shadow-green-500/20 hover:bg-green-600 transition-colors">
-                        Submit shipment
-                    </button>
-                )}
-            </div>
-        </div>
+            <ResultBanner result={result} />
+
+            {done ? (
+                <button onClick={onClose} className="w-full py-2.5 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-medium text-sm">Done</button>
+            ) : (
+                <button onClick={handleSubmit} disabled={!canSubmit}
+                    className={`w-full py-2.5 rounded-lg text-white font-medium text-sm shadow-sm disabled:opacity-50 flex items-center justify-center gap-2 ${action === 'rto' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'}`}>
+                    {busy ? <><RefreshIcon className="h-4 w-4 animate-spin" /> {busyText}</> : submitText}
+                </button>
+            )}
+        </ModalShell>
     );
+};
+
+
+const firstLine = (s: string) => (s || '').split('\n')[0].trim();
+
+type RowAction = 'submit' | ShipmentAction;
+
+const smallButton = 'px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 w-fit border';
+
+// One shipment, laid out like a row of the tool's Shipment Tracker table
+const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction) => void }> = ({ request: r, onAction }) => {
+    const [expanded, setExpanded] = useState(false);
+    const pending = r.status === 'Pending';
+    const lastFailure = pending && r.verification.startsWith('✗') ? r.verification : '';
+    const courier = courierOf(r);
+    const days = daysUntil(r.appointmentDate);
+    const open = isOpen(r);
+
+    let rowClass = 'hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer';
+    if (isCancelled(r)) rowClass = 'bg-gray-50 hover:bg-gray-100 transition-colors border-l-4 border-gray-300 opacity-60 cursor-pointer';
+    else if (open && days === 0) rowClass = 'bg-orange-50/60 hover:bg-orange-100 transition-colors border-l-4 border-orange-500 cursor-pointer';
+    else if (open && days === 1) rowClass = 'bg-blue-50/60 hover:bg-blue-100 transition-colors border-l-4 border-blue-500 cursor-pointer';
+    else if (open && days !== null && days < 0) rowClass = 'bg-red-50 hover:bg-red-100/80 transition-colors border-l-4 border-red-500 cursor-pointer';
+    else if (isDelivered(r)) rowClass = 'bg-green-50/30 hover:bg-green-50 transition-colors border-l-4 border-green-400 cursor-pointer';
+    else if (isRto(r)) rowClass = 'bg-purple-50/40 hover:bg-purple-50 transition-colors border-l-4 border-purple-400 cursor-pointer';
+
+    const act = (action: RowAction) => (e: React.MouseEvent) => { e.stopPropagation(); onAction(action); };
+
+    return (
+        <>
+            <tr onClick={() => setExpanded(!expanded)} className={rowClass}>
+                {/* Channel & Store */}
+                <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                        {expanded ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
+                        <div>
+                            <div className="font-semibold text-gray-900">{r.channel || '-'}</div>
+                            <div className="text-sm text-gray-500 max-w-[220px] truncate" title={firstLine(r.shipTo)}>
+                                {[r.storeCode, firstLine(r.shipTo)].filter(Boolean).join(' - ') || '-'}
+                            </div>
+                        </div>
+                    </div>
+                </td>
+
+                {/* PO Details */}
+                <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="font-medium text-gray-900">{r.poNumbers.join(', ') || '-'}</div>
+                    <div className="text-xs text-gray-500">Invoice: {r.invoiceNumber}</div>
+                    <div className="text-xs text-gray-500">Requested: {formatDate(r.bookedDate)}</div>
+                    {lastFailure && <div className="text-xs text-red-500 mt-0.5 flex items-center gap-1"><XCircleIcon className="h-3 w-3" /> Last submission rejected</div>}
+                </td>
+
+                {/* Quantities */}
+                <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">Boxes: <span className="font-medium">{r.boxes || '-'}</span></div>
+                    {r.invoiceValue > 0 && <div className="text-sm text-gray-500">Value: <span className="font-medium">₹{r.invoiceValue.toLocaleString('en-IN')}</span></div>}
+                </td>
+
+                {/* Tracking Details */}
+                <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex flex-col gap-0.5">
+                        {r.awb ? (
+                            <>
+                                <div className="text-sm text-gray-900 flex items-center gap-1.5">
+                                    <span className="font-semibold">{courier.numberName}:</span>
+                                    {r.trackingUrl ? (
+                                        <a href={r.trackingUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                                            className="text-indigo-600 hover:text-indigo-900 font-medium underline">{r.awb}</a>
+                                    ) : <span>{r.awb}</span>}
+                                </div>
+                                <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {courier.label}</div>
+                            </>
+                        ) : (
+                            <span className="text-sm text-gray-400 italic">{pending ? 'Shipment not created' : 'No AWB'}</span>
+                        )}
+                    </div>
+                </td>
+
+                {/* Status */}
+                <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="mb-1.5 flex flex-col gap-1">
+                        <StagePill request={r} />
+                        {r.trackingStatus && <span className="text-xs font-semibold text-gray-700 w-40 truncate mt-0.5" title={r.trackingStatus}>Status: {r.trackingStatus}</span>}
+                        {isDelivered(r) && r.deliveredDate && <span className="text-xs text-gray-500">Delivered on {formatDate(r.deliveredDate)}</span>}
+                        {isDelivered(r) && (r.podUrl ? (
+                            <a href={r.podUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                                className="text-xs font-semibold text-green-700 hover:underline flex items-center gap-1 w-fit">
+                                <CheckCircleIcon className="h-3 w-3" /> Proof of Delivery
+                            </a>
+                        ) : <span className="text-xs font-semibold text-amber-600">POD not uploaded</span>)}
+                        {isRto(r) && (r.returnReceived
+                            ? <span className="text-xs font-semibold text-green-700 flex items-center gap-1"><CheckCircleIcon className="h-3 w-3" /> Received at warehouse</span>
+                            : <span className="text-xs font-semibold text-red-600 flex items-center gap-1"><AlertIcon className="h-3 w-3" /> Return not received (GRN pending)</span>)}
+
+                        {pending && (
+                            <button onClick={act('submit')} className={`mt-1 ${smallButton} bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100`}>
+                                <UploadIcon className="h-3 w-3" /> Submit Shipment
+                            </button>
+                        )}
+                        {isCreated(r) && open && (
+                            <div className="flex gap-1.5 mt-1">
+                                <button onClick={act('deliver')} className={`${smallButton} bg-green-50 text-green-700 border-green-200 hover:bg-green-100`}>
+                                    <CheckCircleIcon className="h-3 w-3" /> Mark Delivered
+                                </button>
+                                <button onClick={act('rto')} className={`${smallButton} bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100`}>
+                                    <AlertIcon className="h-3 w-3" /> Mark RTO
+                                </button>
+                            </div>
+                        )}
+                        {isDelivered(r) && !r.podUrl && (
+                            <button onClick={act('pod')} className={`mt-1 ${smallButton} bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100`}>
+                                <UploadIcon className="h-3 w-3" /> Upload POD
+                            </button>
+                        )}
+                    </div>
+                </td>
+
+                {/* Appointment */}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {open && days === 0 && <div className="text-xs text-orange-600 font-bold mb-1 uppercase tracking-wider animate-pulse">Today</div>}
+                    {open && days === 1 && <div className="text-xs text-blue-600 font-bold mb-1 uppercase tracking-wider">Tomorrow</div>}
+                    {open && days !== null && days < 0 && <div className="text-xs text-red-600 font-bold mb-1 uppercase tracking-wider">Missed</div>}
+                    <div className="font-medium text-gray-900 mt-0.5">
+                        {r.appointmentDate ? (
+                            <div className="flex flex-col">
+                                <span>{formatDate(r.appointmentDate)}</span>
+                                <span className="text-xs text-gray-600 font-normal">{r.appointmentTime}</span>
+                            </div>
+                        ) : (
+                            <span className="text-gray-400 italic font-normal">Pending Appt</span>
+                        )}
+                    </div>
+                    {r.appointmentId && (
+                        <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded inline-block font-medium w-fit border border-indigo-100 mt-1.5">
+                            ID: {r.appointmentId}
+                        </div>
+                    )}
+                </td>
+            </tr>
+            {expanded && (
+                <tr className="bg-gray-50/50">
+                    <td colSpan={6} className="px-6 py-4">
+                        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm grid md:grid-cols-3 gap-4 text-sm">
+                            <div>
+                                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Ship To</div>
+                                <div className="text-gray-700 whitespace-pre-line">{r.shipTo || '-'}</div>
+                            </div>
+                            <div className="space-y-2">
+                                {r.boxDetails && (
+                                    <div>
+                                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Boxes</div>
+                                        <div className="text-xs text-gray-600 whitespace-pre-line font-mono">{r.boxDetails}</div>
+                                    </div>
+                                )}
+                                {r.ewb && <div className="text-xs text-gray-600">EWB: <span className="font-mono font-medium">{r.ewb}</span></div>}
+                                {r.submittedAt && <div className="text-xs text-gray-500">Submitted {r.submittedAt}{r.submittedBy ? ` by ${r.submittedBy}` : ''}</div>}
+                                {lastFailure && (
+                                    <div className="p-2 rounded-lg bg-red-50 border border-red-100 text-xs text-red-700">
+                                        <b>Last submission rejected:</b> {lastFailure.replace(/^✗\s*/, '')}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap content-start gap-2" onClick={e => e.stopPropagation()}>
+                                <DocLink href={r.poPdfUrl}>PO PDF</DocLink>
+                                <DocLink href={r.invoiceUrl}>Invoice</DocLink>
+                                <DocLink href={r.labelUrl}>Label</DocLink>
+                                <DocLink href={r.docketUrl}>{courier.key === 'bluedart' ? 'Waybill' : 'Docket'}</DocLink>
+                                <DocLink href={r.podUrl || ''}>POD</DocLink>
+                                <DocLink href={r.trackingUrl}>Track</DocLink>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            )}
+        </>
+    );
+};
+
+// Tab colours, as in the tool's Shipment Tracker
+const TAB_ACTIVE: Record<TabKey, string> = {
+    all: 'border-indigo-500 text-indigo-600',
+    today: 'border-orange-500 text-orange-600',
+    tomorrow: 'border-blue-500 text-blue-600',
+    upcoming: 'border-sky-500 text-sky-600',
+    noAppt: 'border-amber-500 text-amber-600',
+    missed: 'border-red-500 text-red-600',
+    delivered: 'border-green-500 text-green-600',
+    rto: 'border-purple-500 text-purple-600',
+};
+
+const EMPTY_TEXT: Record<TabKey, string> = {
+    all: 'No shipments matching criteria',
+    today: 'No shipments with an appointment today',
+    tomorrow: 'No shipments with an appointment tomorrow',
+    upcoming: 'No shipments with later appointments',
+    noAppt: 'Every open shipment has an appointment',
+    missed: 'No missed deliveries',
+    delivered: 'No delivered shipments yet',
+    rto: 'No returned shipments',
+};
+
+// Appointment date then time; shipments without one go last
+const apptKey = (r: ShipRequest) => `${r.appointmentDate || '9999'} ${r.appointmentTime || '99:99'}`;
+
+const sortForTab = (tab: TabKey) => (a: ShipRequest, b: ShipRequest): number => {
+    if (tab === 'delivered') {
+        // POD still to upload first, then the latest delivery
+        return Number(!!a.podUrl) - Number(!!b.podUrl) || (b.deliveredDate || '').localeCompare(a.deliveredDate || '');
+    }
+    if (tab === 'rto') return Number(!!a.returnReceived) - Number(!!b.returnReceived) || b.bookedDate.localeCompare(a.bookedDate);
+    return apptKey(a).localeCompare(apptKey(b)) || a.bookedDate.localeCompare(b.bookedDate);
 };
 
 const PartnerPortal: React.FC = () => {
@@ -527,9 +861,12 @@ const PartnerPortal: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
-    const [tab, setTab] = useState<Tab>('Pending');
+    const [tab, setTab] = useState<TabKey>('all');
+    const [stage, setStage] = useState<StageFilter>('pending');
+    const [channel, setChannel] = useState('');
     const [query, setQuery] = useState('');
-    const [submitting, setSubmitting] = useState<ShipRequest | null>(null);
+    const [awbQuery, setAwbQuery] = useState('');
+    const [active, setActive] = useState<{ action: RowAction; request: ShipRequest } | null>(null);
 
     const signOut = useCallback((message?: string) => {
         saveSession(null);
@@ -555,12 +892,12 @@ const PartnerPortal: React.FC = () => {
                 return signOut(data.message || 'Please sign in again.');
             }
             const data = await res.json();
-            if (data.status !== 'success') throw new Error(data.message || 'Could not load requests.');
+            if (data.status !== 'success') throw new Error(data.message || 'Could not load shipments.');
             setRequests(data.requests || []);
             setLastLoaded(new Date());
             setError(null);
         } catch (e: any) {
-            setError(e.message || 'Could not load requests.');
+            setError(e.message || 'Could not load shipments.');
         } finally {
             setIsLoading(false);
         }
@@ -573,114 +910,179 @@ const PartnerPortal: React.FC = () => {
         return () => window.clearInterval(timer);
     }, [loadRequests, session]);
 
-    const counts = useMemo(() => {
-        const pending = requests.filter(r => r.status === 'Pending');
-        return {
-            pending: pending.length,
-            dueSoon: pending.filter(r => { const d = daysUntil(r.appointmentDate); return d !== null && d <= 1; }).length,
-            completed: requests.filter(isDone).length,
-        };
-    }, [requests]);
+    const counts = useMemo(() => Object.fromEntries(TABS.map(t => [t.key, tabBadgeCount(t.key, requests)])) as Record<TabKey, number>, [requests]);
+    const channels = useMemo(() => Array.from(new Set(requests.map(r => r.channel).filter(Boolean))).sort(), [requests]);
 
     const visible = useMemo(() => {
         const q = query.trim().toLowerCase();
+        const awb = awbQuery.trim().toLowerCase();
         return requests
-            .filter(r => tab === 'All' || (tab === 'Pending' ? r.status === 'Pending' : isDone(r)))
-            .filter(r => !q || [r.invoiceNumber, r.awb, r.channel, r.eeReference, ...r.poNumbers].some(v => v.toLowerCase().includes(q)))
-            .sort((a, b) => tab === 'Pending'
-                // Most urgent appointment first; requests without one go last
-                ? (a.appointmentDate || '9999').localeCompare(b.appointmentDate || '9999') || a.bookedDate.localeCompare(b.bookedDate)
-                : (b.submittedAt || b.bookedDate).localeCompare(a.submittedAt || a.bookedDate));
-    }, [requests, tab, query]);
+            .filter(r => inTab(r, tab) && (tab !== 'all' || inStage(r, stage)))
+            .filter(r => !channel || r.channel === channel)
+            .filter(r => !awb || (r.awb || '').toLowerCase().includes(awb))
+            .filter(r => !q || [r.invoiceNumber, r.channel, r.eeReference, r.storeCode || '', firstLine(r.shipTo), r.appointmentId, ...r.poNumbers]
+                .some(v => (v || '').toLowerCase().includes(q)))
+            .sort(sortForTab(tab));
+    }, [requests, tab, stage, channel, query, awbQuery]);
 
     if (!session) return <LoginScreen onLogin={handleLogin} />;
 
+    const expireSession = () => { setActive(null); signOut('Your session has expired. Please sign in again.'); };
+
     return (
-        <div className="min-h-screen bg-partners-gray-bg font-sans">
-            <header className="bg-white border-b border-gray-100 sticky top-0 z-30">
-                <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
-                    <div className="w-10 h-10 bg-partners-green rounded-2xl text-white flex items-center justify-center flex-shrink-0">
-                        <TruckIcon className="h-5 w-5" />
+        <div className="min-h-screen bg-gray-50 font-sans flex flex-col">
+            <header className="flex flex-col md:flex-row justify-between md:items-center bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sticky top-0 z-40">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-800">Shipment Tracking</h1>
+                    <p className="text-xs text-gray-500 mt-0.5">Cubelelo Shipping Partner Portal</p>
+                </div>
+                <div className="mt-4 md:mt-0 flex items-center gap-2 sm:gap-4">
+                    <div className="hidden sm:flex flex-col items-end mr-2">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Auto-Refresh Active</p>
+                        <p className="text-[11px] font-medium text-partners-green flex items-center gap-1">
+                            <RefreshIcon className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+                            {lastLoaded ? `Synced: ${lastLoaded.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : 'Syncing…'}
+                        </p>
                     </div>
-                    <div className="min-w-0 flex-1">
-                        <div className="font-black text-gray-900 leading-tight truncate">Cubelelo Shipping Partner Portal</div>
-                        <div className="text-[11px] text-gray-500 truncate">
-                            {session.user.name}{session.user.internal ? ' · Cubelelo' : ''} · {session.user.email}
-                        </div>
+                    <div className="hidden md:block text-right">
+                        <p className="text-sm font-semibold text-gray-800">{session.user.name || session.user.email}</p>
+                        <p className="text-[11px] text-gray-500">{session.user.email}</p>
                     </div>
                     <button onClick={loadRequests} disabled={isLoading} title="Refresh"
-                        className="p-2.5 rounded-xl border border-gray-200 text-gray-600 hover:text-partners-green hover:border-partners-green disabled:opacity-50">
-                        <RefreshIcon className={`h-5 w-5 ${isLoading ? 'animate-spin' : ''}`} />
+                        className="p-2 text-gray-800 hover:text-partners-green hover:bg-gray-100 rounded-full transition-all border border-transparent hover:border-gray-200 active:scale-95 disabled:opacity-50">
+                        <RefreshIcon className={`h-6 w-6 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
-                    <button onClick={() => signOut()} title="Sign out"
-                        className="p-2.5 rounded-xl border border-gray-200 text-gray-600 hover:text-red-600 hover:border-red-300">
-                        <LogoutIcon className="h-5 w-5" />
+                    <button onClick={() => signOut()}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+                        <LogoutIcon className="h-5 w-5" /> Logout
                     </button>
                 </div>
             </header>
 
-            <main className="max-w-5xl mx-auto px-4 py-6 space-y-5">
-                <div className="grid grid-cols-3 gap-3">
-                    {[
-                        { label: 'Pending', value: counts.pending, tone: 'text-blue-600' },
-                        { label: 'Appointment ≤ 1 day', value: counts.dueSoon, tone: counts.dueSoon ? 'text-red-600' : 'text-gray-900' },
-                        { label: 'Completed', value: counts.completed, tone: 'text-green-600' },
-                    ].map(t => (
-                        <div key={t.label} className="bg-white rounded-2xl border border-gray-100 p-4">
-                            <div className="text-[10px] font-black uppercase tracking-[0.12em] text-gray-400">{t.label}</div>
-                            <div className={`text-3xl font-black mt-1 ${t.tone}`}>{t.value}</div>
-                        </div>
+            {/* Header & Filters */}
+            <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
+                <div className="flex space-x-4 mb-4 border-b border-gray-200 pb-2 overflow-x-auto">
+                    {TABS.map(t => (
+                        <button key={t.key} onClick={() => setTab(t.key)}
+                            className={`pb-2 px-1 text-sm font-medium transition-colors relative border-b-2 flex items-center gap-2 whitespace-nowrap ${tab === t.key ? TAB_ACTIVE[t.key] : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}>
+                            {t.label}
+                            <span title={`${counts[t.key]} ${t.badge}`} className={`py-0.5 px-2 rounded-full text-xs font-bold ${counts[t.key] ? t.tone : 'bg-gray-100 text-gray-400'}`}>
+                                {counts[t.key]}
+                            </span>
+                        </button>
                     ))}
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="flex bg-white rounded-xl border border-gray-100 p-1">
-                        {(['Pending', 'Completed', 'All'] as Tab[]).map(t => (
-                            <button key={t} onClick={() => setTab(t)}
-                                className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-sm font-bold transition-colors ${tab === t ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900'}`}>
-                                {t}
-                            </button>
-                        ))}
+                <div className="flex flex-wrap gap-4 items-center">
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <SearchIcon className="h-4 w-4 text-gray-400" />
+                        </div>
+                        <input type="text" placeholder="Search by PO Number or Store..." value={query} onChange={e => setQuery(e.target.value)}
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500" />
                     </div>
-                    <div className="flex-1 flex items-center gap-2 bg-white rounded-xl border border-gray-100 px-3">
-                        <SearchIcon className="h-4 w-4 text-gray-400" />
-                        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search PO, invoice, LRN or docket"
-                            className="flex-1 py-2.5 text-sm bg-transparent focus:outline-none" />
-                    </div>
-                </div>
 
+                    <div className="relative flex-1 min-w-[150px] max-w-[200px]">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <FilterIcon className="h-4 w-4 text-gray-400" />
+                        </div>
+                        <select value={channel} onChange={e => setChannel(e.target.value)}
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                            <option value="">All Channels</option>
+                            {channels.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <SearchIcon className="h-4 w-4 text-gray-400" />
+                        </div>
+                        <input type="text" placeholder="Filter by AWB / LRN / Docket..." value={awbQuery} onChange={e => setAwbQuery(e.target.value)}
+                            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-blue-50/30" />
+                    </div>
+
+                    {tab === 'all' && (
+                        <div className="relative flex-1 min-w-[180px] max-w-[240px] flex items-center gap-1">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <FilterIcon className="h-4 w-4 text-gray-400" />
+                            </div>
+                            <select value={stage} onChange={e => setStage(e.target.value as StageFilter)} aria-label="Shipment status filter"
+                                className={`block w-full pl-10 pr-3 py-2 border rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 ${stage === 'any' ? 'border-gray-300 bg-white' : 'border-indigo-300 bg-indigo-50 text-indigo-700 font-medium'}`}>
+                                {STAGE_FILTERS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                            </select>
+                            {stage !== 'any' && (
+                                <button onClick={() => setStage('any')} title="Remove filter: show all statuses"
+                                    className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+                                    <XIcon className="h-4 w-4" />
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Tracking Table */}
+            <div className="flex-1 overflow-auto p-6 space-y-4">
                 {error && (
-                    <div className="p-4 bg-red-50 border border-red-100 text-red-700 rounded-2xl text-sm flex items-start gap-3">
+                    <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-start gap-2">
                         <XCircleIcon className="h-5 w-5 flex-shrink-0" /><span>{error}</span>
                     </div>
                 )}
 
-                {isLoading && !requests.length ? (
-                    <div className="py-20 flex justify-center"><RefreshIcon className="h-8 w-8 text-partners-green animate-spin" /></div>
-                ) : visible.length ? (
-                    <div className="space-y-3">
-                        {visible.map(r => <RequestCard key={`${r.row}-${r.invoiceNumber}`} request={r} onSubmit={() => setSubmitting(r)} />)}
-                    </div>
-                ) : (
-                    <div className="py-16 text-center text-gray-400 text-sm font-bold">
-                        {tab === 'Pending' && !query ? 'No pending requests. You are all caught up.' : 'Nothing matches.'}
-                    </div>
-                )}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[140px]">Channel &amp; Store</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[150px]">PO Details</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Quantities</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[220px]">Tracking Details</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[180px]">Status</th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider min-w-[160px]">Appointment</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {isLoading && !requests.length ? (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                        <RefreshIcon className="mx-auto h-8 w-8 text-gray-300 animate-spin" />
+                                    </td>
+                                </tr>
+                            ) : visible.length ? (
+                                visible.map(r => <ShipmentRow key={`${r.row}-${r.invoiceNumber}`} request={r} onAction={action => setActive({ action, request: r })} />)
+                            ) : (
+                                <tr>
+                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                        <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
+                                        <p className="text-lg font-medium">
+                                            {tab === 'all' && stage === 'pending' && !query && !awbQuery && !channel ? 'No shipments to create' : EMPTY_TEXT[tab]}
+                                        </p>
+                                        <p className="text-sm mt-1">Adjust filters or select another tab.</p>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-                {lastLoaded && (
-                    <p className="text-center text-[11px] text-gray-400">
-                        Updated {lastLoaded.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · refreshes every 5 minutes
-                    </p>
-                )}
-            </main>
-
-            {submitting && (
+            {active?.action === 'submit' && (
                 <SubmitModal
-                    request={submitting}
+                    request={active.request}
                     token={session.token}
-                    onClose={() => setSubmitting(null)}
+                    onClose={() => setActive(null)}
                     onAccepted={loadRequests}
-                    onSessionExpired={() => { setSubmitting(null); signOut('Your session has expired. Please sign in again.'); }}
+                    onSessionExpired={expireSession}
+                />
+            )}
+            {active && active.action !== 'submit' && (
+                <ShipmentActionModal
+                    action={active.action}
+                    request={active.request}
+                    token={session.token}
+                    onClose={() => setActive(null)}
+                    onDone={loadRequests}
+                    onSessionExpired={expireSession}
                 />
             )}
         </div>

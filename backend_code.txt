@@ -219,6 +219,7 @@ function doPost(e) {
     else if (action === 'repairBlinkitBlankStoreCodes') result = repairBlinkitBlankStoreCodes(data.dryRun);
     else if (action === 'updateZeptoASN') result = updateZeptoASN(data);
     else if (action === 'updateRTOStatus') result = updateRTOStatus(data);
+    else if (action === 'markShipmentDelivered') result = markShipmentDelivered(data);
     else if (action === 'getSalesOrders') result = getSalesOrders(data.referenceCode);
     else if (action === 'updatePOPickupDate') result = updatePOPickupDate(data);
     else if (action === 'SELF_SHIP_ORDER') result = selfShipOrder(data);
@@ -15748,11 +15749,14 @@ partner portal.gs
 
 const PARTNER_PORTAL_ACCESS_TAB_ = "Portal Access";
 const PARTNER_PORTAL_INTERNAL_DOMAIN_ = "@cubelelo.com";
-const PARTNER_STATUS_ = { PENDING: "Pending", ACCEPTED: "Accepted", CANCELLED: "Cancelled" };
+// Delivered / RTO are set by the partner (or by Cubelelo marking the order delivered in the tool)
+const PARTNER_STATUS_ = { PENDING: "Pending", ACCEPTED: "Accepted", CANCELLED: "Cancelled", DELIVERED: "Delivered", RTO: "RTO" };
 const PARTNER_REQUEST_COLUMNS_ = [
   "Status", "EE Reference", "Ship To", "Box Details", "Invoice Value", "EWB",
-  "Box Label", "Verification", "Submitted By", "Submitted At", "Courier", "Docket Copy"
+  "Box Label", "Verification", "Submitted By", "Submitted At", "Courier", "Docket Copy", "POD", "Delivered On"
 ];
+// PO_Database column for the partner's proof of delivery ("POD Image" is the GRN copy)
+const PARTNER_POD_DB_COLUMN_ = "Delivery POD URL";
 
 function handlePartnerPortalAction_(data) {
   try {
@@ -15768,6 +15772,9 @@ function handlePartnerPortalAction_(data) {
 
     if (data.action === "partnerListRequests") return partnerListRequests_();
     if (data.action === "partnerSubmitShipment") return partnerSubmitShipment_(data, access);
+    if (data.action === "partnerMarkDelivered") return partnerMarkDelivered_(data, access);
+    if (data.action === "partnerMarkRto") return partnerMarkRto_(data, access);
+    if (data.action === "partnerUploadPod") return partnerUploadPod_(data, access);
     return { status: "error", message: "Invalid partner action: " + data.action };
   } catch (e) {
     Logger.log(`handlePartnerPortalAction_ ${data && data.action}: ${e.message}`);
@@ -15824,6 +15831,7 @@ function partnerListRequests_() {
 
   const idx = selfShipHeaderIndex_(values[0]);
   const requests = [];
+  const poInfo = partnerPoDbInfo_();
 
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
@@ -15834,19 +15842,36 @@ function partnerListRequests_() {
     const invoiceNumber = text("Invoice Number");
     if (!invoiceNumber) continue;
     const awb = text("AWB");
+    const status = partnerRowStatus_(cell("Status"), awb);
+    const poNumbers = text("PO Number").split(",").map(s => s.trim()).filter(Boolean);
+    const eeReference = text("EE Reference");
+    // PO_Database is the live record: appointments get rescheduled there after the
+    // request was posted, and courier tracking / EasyEcom mark deliveries and returns there
+    const po = poInfo.find(eeReference, invoiceNumber, poNumbers);
+    const ee = po.eeStatus.toLowerCase();
 
     requests.push({
       row: r + 1,
       invoiceNumber: invoiceNumber,
-      status: partnerRowStatus_(cell("Status"), awb),
-      poNumbers: text("PO Number").split(",").map(s => s.trim()).filter(Boolean),
+      status: status,
+      poNumbers: poNumbers,
       channel: text("Channel"),
-      eeReference: text("EE Reference"),
+      eeReference: eeReference,
       boxes: Number(cell("No. of Boxes")) || 0,
       bookedDate: partnerFormatCell_(cell("Booked Date"), "yyyy-MM-dd HH:mm"),
-      appointmentDate: partnerFormatCell_(cell("Appointment Date"), "yyyy-MM-dd"),
-      appointmentTime: partnerFormatCell_(cell("Appointment Time"), "HH:mm"),
-      appointmentId: text("Appointment ID"),
+      appointmentDate: po.appointmentDate || partnerIsoDate_(cell("Appointment Date")),
+      appointmentTime: po.appointmentTime || partnerFormatCell_(cell("Appointment Time"), "HH:mm"),
+      appointmentId: po.appointmentId || text("Appointment ID"),
+      storeCode: po.storeCode,
+      trackingStatus: po.trackingStatus,
+      deliveredDate: po.deliveredDate,
+      rtoMarkedAt: po.rtoStatus,
+      delivered: status === PARTNER_STATUS_.DELIVERED || !!po.deliveredDate ||
+        /^(successfully )?delivered$/i.test(po.trackingStatus) || ee === "delivered" || ee === "closed",
+      rto: status === PARTNER_STATUS_.RTO || !!po.rtoStatus || ee === "returned" || ee === "rto",
+      // The return is GRN'd in EasyEcom: the order goes to Returned with a returned quantity
+      returnReceived: po.returnedQty > 0 || ee === "returned",
+      podUrl: link("POD"),
       shipTo: text("Ship To"),
       boxDetails: text("Box Details"),
       invoiceValue: Number(cell("Invoice Value")) || 0,
@@ -15864,6 +15889,74 @@ function partnerListRequests_() {
     });
   }
   return { status: "success", requests: requests };
+}
+
+// yyyy-MM-dd (IST) from a sheet date or the text forms PO_Database holds: "2026-02-13",
+// "13-02-2026", "13 Feb 2026", "13-Feb-2026". "" when there is no date.
+function partnerIsoDate_(value) {
+  const ist = (d) => isNaN(d.getTime()) ? "" : Utilities.formatDate(d, "Asia/Kolkata", "yyyy-MM-dd");
+  if (value instanceof Date) return ist(value);
+  const s = String(value === null || value === undefined ? "" : value).trim();
+  if (!s || /^(n\/?a|-)$/i.test(s)) return "";
+  const pad = (n) => ("0" + n).slice(-2);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return ist(new Date(s));
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m) return `${m[3]}-${pad(m[2])}-${pad(m[1])}`;
+  return ist(new Date(s.replace(/-/g, " ")));
+}
+
+// One summary per shipment (EE reference) of the PO_Database rows the partner portal
+// needs, looked up by EE reference, then invoice, then PO number
+function partnerPoDbInfo_() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const values = sheet.getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values.shift());
+  const col = {
+    ref: idx("EE_reference_code"), inv: idx("Invoice Number"), po: idx("PO Number"),
+    apptDate: idx("Appointment Date"), apptTime: idx("Appointment Time"), apptId: idx("Appointment ID"),
+    store: idx("Store Code"), tracking: idx("Tracking Status"), delivered: idx("Delivered Date"),
+    rto: idx("RTO Status"), eeStatus: idx("EE_order_status"), returned: idx("EE_item_returned_quantity")
+  };
+  const get = (row, c) => c === -1 ? "" : row[c];
+  const str = (row, c) => partnerFormatCell_(get(row, c), "HH:mm");
+
+  const infos = {};
+  const byInvoice = {};
+  const byPo = {};
+  values.forEach(row => {
+    const ref = str(row, col.ref);
+    const inv = str(row, col.inv);
+    const key = ref || inv;
+    if (!key) return;
+    const info = infos[key] = infos[key] || {
+      appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
+      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0
+    };
+    const fill = (field, value) => { if (!info[field] && value) info[field] = value; };
+    fill("appointmentDate", partnerIsoDate_(get(row, col.apptDate)));
+    fill("appointmentTime", str(row, col.apptTime));
+    fill("appointmentId", str(row, col.apptId));
+    fill("storeCode", str(row, col.store));
+    fill("trackingStatus", str(row, col.tracking));
+    fill("deliveredDate", partnerIsoDate_(get(row, col.delivered)));
+    fill("rtoStatus", str(row, col.rto));
+    fill("eeStatus", str(row, col.eeStatus));
+    info.returnedQty += Number(get(row, col.returned)) || 0;
+    if (inv) byInvoice[inv] = info;
+    const po = str(row, col.po);
+    if (po) byPo[po] = info;
+  });
+
+  const none = {
+    appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
+    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0
+  };
+  return {
+    find: (ref, invoiceNumber, poNumbers) => (ref && infos[ref]) || byInvoice[invoiceNumber] ||
+      poNumbers.map(p => byPo[p]).find(Boolean) || none
+  };
 }
 
 // Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
@@ -16261,8 +16354,11 @@ function partnerSubmitShipment_(data, access) {
 
     const safeInvoice = invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
     // A Bluedart waybill isn't a box label: it goes in Docket Copy, so the tool's Print
-    // Shipping Label button (PO_Database Label URL) stays hidden for it
-    const labelUrl = isBluedart ? "" : partnerSaveLabel_(data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
+    // Shipping Label button (PO_Database Label URL) stays hidden for it. For Scorpion the
+    // label is the box labels and the docket merged into one PDF (by the Vercel server),
+    // so printing the label prints both; the docket is also kept on its own.
+    const labelUrl = isBluedart ? ""
+      : partnerSaveLabel_((isScorpion && data.mergedLabelBase64) || data.labelBase64, `${lrn}_${safeInvoice}_label.pdf`);
     const waybillExt = labelMime === "image/jpeg" ? "jpg" : labelMime === "image/png" ? "png" : "pdf";
     const docketUrl = isScorpion ? partnerSaveLabel_(data.docketBase64, `${lrn}_${safeInvoice}_docket.pdf`)
       : isBluedart ? saveSelfShipDoc_(data.labelBase64, `${lrn}_${safeInvoice}_waybill.${waybillExt}`, labelMime)
@@ -16326,4 +16422,183 @@ function partnerSubmitShipment_(data, access) {
     }
   }
   return response;
+}
+
+// PO_Database statuses a manual "delivered" must not move back
+const PO_STATUSES_PAST_DELIVERY_ = ["delivered", "grn pending", "grn updated", "closed"];
+
+// yyyy-MM-dd from the date picker -> Date; null if missing or after today (IST)
+function partnerParseDeliveredDate_(value) {
+  const m = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m || m[0] > Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd")) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+// Calls update(set, get) for each PO_Database row match(row, idx) picks; returns how many.
+// extraColumns are appended to the header row first if missing.
+function partnerUpdatePoRows_(match, update, extraColumns) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  if (extraColumns) ensureSelfShipColumns_(sheet, extraColumns);
+  const values = sheet.getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values[0]);
+  let count = 0;
+  for (let r = 1; r < values.length; r++) {
+    if (!match(values[r], idx)) continue;
+    const set = (name, value) => { const c = idx(name); if (c !== -1) sheet.getRange(r + 1, c + 1).setValue(value); };
+    const get = (name) => { const c = idx(name); return c === -1 ? "" : values[r][c]; };
+    update(set, get);
+    count++;
+  }
+  return count;
+}
+
+// The shipment's PO_Database rows: by EE reference, or by invoice for rows without one
+function partnerPoRowMatcher_(eeReference, invoiceNumber) {
+  return (row, idx) => eeReference
+    ? String(row[idx("EE_reference_code")] || "").trim() === eeReference
+    : String(row[idx("Invoice Number")] || "").trim() === invoiceNumber;
+}
+
+// The same columns the courier tracking sync writes on delivery
+function markPoRowsDelivered_(match, deliveredOn, note) {
+  return partnerUpdatePoRows_(match, (set, get) => {
+    set("Delivered Date", deliveredOn);
+    set("Tracking Status", "Delivered");
+    set("Latest Status", note);
+    set("Latest Status Date", new Date());
+    if (PO_STATUSES_PAST_DELIVERY_.indexOf(String(get("Status")).trim().toLowerCase()) === -1) set("Status", "Delivered");
+  });
+}
+
+// Runs fn on the request row for data.invoiceNumber (the newest one that isn't
+// Cancelled) under the script lock. Only shipments the partner has created qualify.
+function partnerWithShipment_(data, access, fn) {
+  const invoiceNumber = String(data.invoiceNumber || "").trim();
+  if (!invoiceNumber) return { status: "error", message: "No shipment selected." };
+  const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another update is in progress, please retry in a moment." };
+  try {
+    const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+    const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
+    const idx = selfShipHeaderIndex_(headers);
+    const values = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), headers.length).getValues();
+    const rowStatus = (row) => partnerRowStatus_(row[idx("Status")], String(row[idx("AWB")] || "").trim());
+
+    const matches = [];
+    values.forEach((row, i) => { if (i > 0 && String(row[idx("Invoice Number")]).trim() === invoiceNumber) matches.push(i); });
+    if (!matches.length) return { status: "error", message: `Shipment ${invoiceNumber} not found. Refresh the list.` };
+    const open = matches.filter(i => rowStatus(values[i]) !== PARTNER_STATUS_.CANCELLED);
+    const r = open.length ? open[open.length - 1] : matches[0];
+    const row = values[r];
+    const status = rowStatus(row);
+    if (status === PARTNER_STATUS_.CANCELLED) return { status: "error", message: "This request was cancelled by Cubelelo." };
+    if (status === PARTNER_STATUS_.PENDING) return { status: "error", message: "This shipment hasn't been created yet. Submit it first." };
+
+    const cell = (name) => { const c = idx(name); return c === -1 ? "" : row[c]; };
+    return fn({
+      invoiceNumber: invoiceNumber,
+      status: status,
+      awb: String(cell("AWB") || "").trim(),
+      who: access.name ? `${access.name} <${actorEmail}>` : actorEmail,
+      matchPoRows: partnerPoRowMatcher_(String(cell("EE Reference") || "").trim(), invoiceNumber),
+      put: (name, value) => { const c = idx(name); if (c !== -1) sheet.getRange(r + 1, c + 1).setValue(value); }
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Proof of delivery: a PDF or a photo, saved next to the labels. Goes on the request row
+// and in PO_Database, where the tool's Shipment Tracker shows it.
+function partnerSavePod_(data, shipment) {
+  const mime = String(data.podMimeType || "application/pdf");
+  if (["application/pdf", "image/jpeg", "image/png"].indexOf(mime) === -1) throw new Error("Upload the POD as a PDF, JPG or PNG.");
+  const ext = mime === "image/jpeg" ? "jpg" : mime === "image/png" ? "png" : "pdf";
+  const safeInvoice = shipment.invoiceNumber.replace(/[^A-Za-z0-9-]/g, "-");
+  const url = saveSelfShipDoc_(data.podBase64, `${shipment.awb || "noawb"}_${safeInvoice}_pod.${ext}`, mime);
+  shipment.put("POD", hyperlinkFormula_(url, `${shipment.awb || safeInvoice}_POD`));
+  partnerUpdatePoRows_(shipment.matchPoRows, (set) => set(PARTNER_POD_DB_COLUMN_, url), [PARTNER_POD_DB_COLUMN_]);
+  return url;
+}
+
+// data: { invoiceNumber, deliveredDate (yyyy-MM-dd), podBase64?, podMimeType? }
+function partnerMarkDelivered_(data, access) {
+  const deliveredOn = partnerParseDeliveredDate_(data.deliveredDate);
+  if (!deliveredOn) return { status: "error", message: "Pick the delivery date (today or earlier)." };
+  return partnerWithShipment_(data, access, (shipment) => {
+    if (shipment.status === PARTNER_STATUS_.RTO) return { status: "error", message: "This shipment is marked RTO. Contact Cubelelo if it was delivered after all." };
+    const podUrl = data.podBase64 ? partnerSavePod_(data, shipment) : "";
+    if (shipment.status === PARTNER_STATUS_.DELIVERED) {
+      return { status: "success", message: podUrl ? "POD uploaded. The shipment was already marked delivered." : "Already marked delivered." };
+    }
+    markPoRowsDelivered_(shipment.matchPoRows, deliveredOn, `Delivered (marked by ${shipment.who})`);
+    shipment.put("Status", PARTNER_STATUS_.DELIVERED);
+    shipment.put("Delivered On", deliveredOn);
+    SpreadsheetApp.flush();
+    return { status: "success", message: `Marked delivered on ${Utilities.formatDate(deliveredOn, "Asia/Kolkata", "dd MMM yyyy")}.` + (podUrl ? " POD uploaded." : "") };
+  });
+}
+
+// data: { invoiceNumber, podBase64, podMimeType }
+function partnerUploadPod_(data, access) {
+  if (!data.podBase64) return { status: "error", message: "Choose the POD file." };
+  return partnerWithShipment_(data, access, (shipment) => {
+    if (shipment.status === PARTNER_STATUS_.RTO) return { status: "error", message: "This shipment is marked RTO, so it has no proof of delivery." };
+    partnerSavePod_(data, shipment);
+    SpreadsheetApp.flush();
+    return { status: "success", message: "POD uploaded." };
+  });
+}
+
+// The shipment came back undelivered. Same "RTO Status" timestamp the tool's RTO button
+// writes, which puts the order in the Shipment Tracker's RTO / Returned tab.
+function partnerMarkRto_(data, access) {
+  return partnerWithShipment_(data, access, (shipment) => {
+    if (shipment.status === PARTNER_STATUS_.DELIVERED) return { status: "error", message: "This shipment is marked delivered. Contact Cubelelo if it came back." };
+    if (shipment.status === PARTNER_STATUS_.RTO) return { status: "success", message: "Already marked RTO." };
+    const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "dd-MM-yyyy, HH:mm:ss");
+    partnerUpdatePoRows_(shipment.matchPoRows, (set) => {
+      set("RTO Status", stamp);
+      set("Latest Status", `RTO (marked by ${shipment.who})`);
+      set("Latest Status Date", new Date());
+    });
+    shipment.put("Status", PARTNER_STATUS_.RTO);
+    SpreadsheetApp.flush();
+    return { status: "success", message: "Marked RTO / returned. Cubelelo will track the return to the warehouse." };
+  });
+}
+
+/**
+ * Tool action (Shipment Tracker "Mark Delivered"), for any shipment whose tracking
+ * hasn't caught up. data: { eeReferenceCode, deliveredDate (yyyy-MM-dd), actorName? }
+ * Urvi Ent requests for the order move to Delivered on the partner portal too.
+ */
+function markShipmentDelivered(data) {
+  const ref = String(data.eeReferenceCode || "").trim();
+  const deliveredOn = partnerParseDeliveredDate_(data.deliveredDate);
+  if (!ref) return { status: "error", message: "EE reference is required." };
+  if (!deliveredOn) return { status: "error", message: "Pick the delivery date (today or earlier)." };
+
+  const count = markPoRowsDelivered_(partnerPoRowMatcher_(ref, ""), deliveredOn, `Delivered (marked by ${data.actorName || "Cubelelo"})`);
+  if (!count) return { status: "error", message: `Order ${ref} not found in PO_Database.` };
+
+  try {
+    const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+    const values = sheet.getDataRange().getValues();
+    const idx = selfShipHeaderIndex_(values[0]);
+    if (idx("EE Reference") !== -1 && idx("Status") !== -1) {
+      for (let r = 1; r < values.length; r++) {
+        if (String(values[r][idx("EE Reference")]).trim() !== ref) continue;
+        if (partnerRowStatus_(values[r][idx("Status")], String(values[r][idx("AWB")] || "").trim()) !== PARTNER_STATUS_.ACCEPTED) continue;
+        sheet.getRange(r + 1, idx("Status") + 1).setValue(PARTNER_STATUS_.DELIVERED);
+        if (idx("Delivered On") !== -1) sheet.getRange(r + 1, idx("Delivered On") + 1).setValue(deliveredOn);
+      }
+    }
+  } catch (e) {
+    Logger.log(`markShipmentDelivered: tracker not updated for ${ref}: ${e.message}`);
+  }
+  SpreadsheetApp.flush();
+  return { status: "success", message: `${ref} marked delivered on ${Utilities.formatDate(deliveredOn, "Asia/Kolkata", "dd MMM yyyy")}.` };
 }
