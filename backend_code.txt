@@ -15400,6 +15400,14 @@ function syncSelfShipTrackers() {
       }
     });
 
+    // The partner portal reads the Urvi Ent tracker alone: refresh the PO_Database data
+    // copied onto it (appointments, dispatch, delivery, returns)
+    try {
+      partnerSyncMasterToTracker_();
+    } catch (e) {
+      errors.push(`Master data not copied to the ${SELF_SHIP_TRACKERS_.delhivery.label} tracker: ${e.message}`);
+    }
+
     SpreadsheetApp.flush();
     Logger.log(`syncSelfShipTrackers: ${updated.length} updated. ${updated.join("; ")} ${errors.join("; ")}`);
 
@@ -15823,8 +15831,21 @@ function partnerCellUrl_(value, formula) {
   return url && url !== "N/A" && /^https?:\/\//i.test(url) ? url : "";
 }
 
+// PO_Database data copied onto each tracker row by partnerSyncMasterToTracker_, so the
+// portal reads the tracker alone and both sheets hold everything. The AWB / LRN and the
+// tracking link stay the tracker's own. "Appointment Date / Time / ID" and "Delivered On"
+// are existing tracker columns, refreshed the same way.
+const PARTNER_MASTER_COLUMNS_ = [
+  "Store", "Order Status", "EE Status", "Tracking Status", "Pickup Date", "Picked Up",
+  "RTO Status", "Returned Qty", "Appointment QR"
+];
+
 function partnerListRequests_() {
   const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  // Until the first master sync has added its columns, run it now
+  if (selfShipHeaderIndex_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0])("Order Status") === -1) {
+    partnerSyncMasterToTracker_();
+  }
   const range = sheet.getDataRange();
   const values = range.getValues();
   const formulas = range.getFormulas();
@@ -15832,7 +15853,6 @@ function partnerListRequests_() {
 
   const idx = selfShipHeaderIndex_(values[0]);
   const requests = [];
-  const poInfo = partnerPoDbInfo_();
 
   for (let r = 1; r < values.length; r++) {
     const row = values[r];
@@ -15841,15 +15861,15 @@ function partnerListRequests_() {
     const link = (name) => { const c = idx(name); return c === -1 ? "" : partnerCellUrl_(row[c], formulas[r][c]); };
 
     const invoiceNumber = text("Invoice Number");
-    if (!invoiceNumber) continue;
+    const poNumbers = text("PO Number").split(",").map(s => s.trim()).filter(Boolean);
+    if (!invoiceNumber && !poNumbers.length) continue;
     const awb = text("AWB");
     const status = partnerRowStatus_(cell("Status"), awb);
-    const poNumbers = text("PO Number").split(",").map(s => s.trim()).filter(Boolean);
-    const eeReference = text("EE Reference");
-    // PO_Database is the live record: appointments get rescheduled there after the
-    // request was posted, and courier tracking / EasyEcom mark deliveries and returns there
-    const po = poInfo.find(eeReference, invoiceNumber, poNumbers);
-    const ee = po.eeStatus.toLowerCase();
+    const orderStatus = text("Order Status").toLowerCase();
+    const ee = text("EE Status").toLowerCase();
+    const trackingStatus = text("Tracking Status");
+    const deliveredDate = partnerIsoDate_(cell("Delivered On"));
+    const rtoMarkedAt = text("RTO Status");
 
     requests.push({
       row: r + 1,
@@ -15857,25 +15877,27 @@ function partnerListRequests_() {
       status: status,
       poNumbers: poNumbers,
       channel: text("Channel"),
-      eeReference: eeReference,
+      eeReference: text("EE Reference"),
       boxes: Number(cell("No. of Boxes")) || 0,
       bookedDate: partnerFormatCell_(cell("Booked Date"), "yyyy-MM-dd HH:mm"),
-      appointmentDate: po.appointmentDate || partnerIsoDate_(cell("Appointment Date")),
-      appointmentTime: po.appointmentTime || partnerFormatCell_(cell("Appointment Time"), "HH:mm"),
-      appointmentId: po.appointmentId || text("Appointment ID"),
-      storeCode: po.storeCode,
-      trackingStatus: po.trackingStatus,
-      deliveredDate: po.deliveredDate,
-      rtoMarkedAt: po.rtoStatus,
-      delivered: status === PARTNER_STATUS_.DELIVERED || !!po.deliveredDate ||
-        /^(successfully )?delivered$/i.test(po.trackingStatus) || ee === "delivered" || ee === "closed",
-      rto: status === PARTNER_STATUS_.RTO || !!po.rtoStatus || ee === "returned" || ee === "rto",
+      appointmentDate: partnerIsoDate_(cell("Appointment Date")),
+      appointmentTime: partnerApptTime_(cell("Appointment Time")),
+      appointmentId: text("Appointment ID"),
+      storeCode: text("Store"),
+      trackingStatus: trackingStatus,
+      deliveredDate: deliveredDate,
+      rtoMarkedAt: rtoMarkedAt,
+      delivered: status === PARTNER_STATUS_.DELIVERED || !!deliveredDate ||
+        /^(successfully )?delivered$/i.test(trackingStatus) ||
+        PO_STATUSES_PAST_DELIVERY_.indexOf(orderStatus) !== -1 || ee === "delivered" || ee === "closed",
+      rto: status === PARTNER_STATUS_.RTO || !!rtoMarkedAt ||
+        ["rto", "rto initiated", "returned"].indexOf(orderStatus) !== -1 || ee === "returned" || ee === "rto",
       // The return is GRN'd in EasyEcom: the order goes to Returned with a returned quantity
-      returnReceived: po.returnedQty > 0 || ee === "returned",
-      pickupDate: po.pickupDate,
-      pickedUp: po.pickedUp,
+      returnReceived: (Number(cell("Returned Qty")) || 0) > 0 || ee === "returned",
+      pickupDate: partnerIsoDate_(cell("Pickup Date")),
+      pickedUp: text("Picked Up") === "Yes",
       // The QR itself comes from partnerAppointmentQr_: the Drive files aren't public
-      hasAppointmentQr: /^https?:\/\//i.test(po.qrCodeUrl),
+      hasAppointmentQr: /^https?:\/\//i.test(text("Appointment QR")),
       podUrl: link("POD"),
       shipTo: text("Ship To"),
       boxDetails: text("Box Details"),
@@ -15912,6 +15934,13 @@ function partnerIsoDate_(value) {
   return ist(new Date(s.replace(/-/g, " ")));
 }
 
+// "10:00" from a sheet time or text; the appointment sync writes "Not Found" when the
+// pass had no time
+function partnerApptTime_(value) {
+  const s = partnerFormatCell_(value, "HH:mm");
+  return /^(not\s*found|n\/?a|-)$/i.test(s) ? "" : s;
+}
+
 // PO_Database / EasyEcom statuses that mean the shipment has left the warehouse
 const PARTNER_PICKED_UP_STATUSES_ = ["dispatched", "shipped", "delivered", "grn pending", "grn updated", "closed"];
 const PARTNER_PICKED_UP_EE_STATUSES_ = ["shipped", "delivered", "closed", "returned", "rto"];
@@ -15931,6 +15960,10 @@ function partnerPoDbInfo_() {
   };
   const get = (row, c) => c === -1 ? "" : row[c];
   const str = (row, c) => partnerFormatCell_(get(row, c), "HH:mm");
+  const blank = () => ({
+    found: false, appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
+    deliveredDate: "", rtoStatus: "", eeStatus: "", orderStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false, qrCodeUrl: ""
+  });
 
   const infos = {};
   const byInvoice = {};
@@ -15940,13 +15973,11 @@ function partnerPoDbInfo_() {
     const inv = str(row, col.inv);
     const key = ref || inv;
     if (!key) return;
-    const info = infos[key] = infos[key] || {
-      appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false, qrCodeUrl: ""
-    };
+    const info = infos[key] = infos[key] || blank();
+    info.found = true;
     const fill = (field, value) => { if (!info[field] && value) info[field] = value; };
     fill("appointmentDate", partnerIsoDate_(get(row, col.apptDate)));
-    fill("appointmentTime", str(row, col.apptTime));
+    fill("appointmentTime", partnerApptTime_(get(row, col.apptTime)));
     fill("appointmentId", str(row, col.apptId));
     fill("storeCode", str(row, col.store));
     fill("trackingStatus", str(row, col.tracking));
@@ -15955,9 +15986,12 @@ function partnerPoDbInfo_() {
     fill("eeStatus", str(row, col.eeStatus));
     fill("pickupDate", partnerIsoDate_(get(row, col.pickup)));
     fill("qrCodeUrl", str(row, col.qr));
+    // A cancelled line item doesn't speak for the order: prefer a live row's status
+    const status = str(row, col.status);
+    if (status && (!info.orderStatus || (/^cancelled$/i.test(info.orderStatus) && !/^cancelled$/i.test(status)))) info.orderStatus = status;
     // Picked up: the warehouse marked it Dispatched (Dispatch Manager) or later, or EasyEcom
     // manifested / shipped it
-    if (PARTNER_PICKED_UP_STATUSES_.indexOf(str(row, col.status).toLowerCase()) !== -1 ||
+    if (PARTNER_PICKED_UP_STATUSES_.indexOf(status.toLowerCase()) !== -1 ||
       PARTNER_PICKED_UP_EE_STATUSES_.indexOf(str(row, col.eeStatus).toLowerCase()) !== -1 ||
       partnerIsoDate_(get(row, col.manifest))) info.pickedUp = true;
     info.returnedQty += Number(get(row, col.returned)) || 0;
@@ -15966,14 +16000,92 @@ function partnerPoDbInfo_() {
     if (po) byPo[po] = info;
   });
 
-  const none = {
-    appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false, qrCodeUrl: ""
-  };
+  const none = blank();
   return {
     find: (ref, invoiceNumber, poNumbers) => (ref && infos[ref]) || byInvoice[invoiceNumber] ||
       poNumbers.map(p => byPo[p]).find(Boolean) || none
   };
+}
+
+/**
+ * Copies each request's PO_Database data onto its tracker row (PARTNER_MASTER_COLUMNS_
+ * plus the appointment and delivery columns), so the partner portal reads one sheet.
+ * Runs with syncSelfShipTrackers: the 15-minute trigger, the tool's Sync Self-Ship button
+ * and every partner submission. Only columns with a changed cell are rewritten. Rows whose
+ * order isn't in PO_Database are left alone. Returns the number of cells changed.
+ */
+function partnerSyncMasterToTracker_() {
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_.concat(PARTNER_MASTER_COLUMNS_));
+  const idx = selfShipHeaderIndex_(headers);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const tz = sheet.getParent().getSpreadsheetTimeZone();
+  const poInfo = partnerPoDbInfo_();
+
+  // Dates are written as dates; everything else as text, so Sheets doesn't turn an ID
+  // into 4.55E+11 or an RTO timestamp into a date
+  const DATE = "date", TEXT = "text", NUM = "num";
+  const fields = [
+    ["Store", TEXT, p => p.storeCode],
+    ["Order Status", TEXT, p => p.orderStatus],
+    ["EE Status", TEXT, p => p.eeStatus],
+    ["Tracking Status", TEXT, p => p.trackingStatus],
+    ["Pickup Date", DATE, p => p.pickupDate],
+    ["Picked Up", TEXT, p => p.pickedUp ? "Yes" : "No"],
+    ["RTO Status", TEXT, p => p.rtoStatus],
+    ["Returned Qty", NUM, p => p.returnedQty || ""],
+    ["Appointment QR", TEXT, p => p.qrCodeUrl],
+    ["Appointment Date", DATE, p => p.appointmentDate],
+    ["Appointment Time", TEXT, p => p.appointmentTime],
+    ["Appointment ID", TEXT, p => p.appointmentId],
+    // The partner may have entered the date already; PO_Database only fills it in
+    ["Delivered On", DATE, p => p.deliveredDate, true]
+  ].map(([name, kind, get, onlyFill]) => ({ c: idx(name), kind: kind, get: get, onlyFill: !!onlyFill }))
+    .filter(f => f.c !== -1);
+
+  const current = (v, kind) => kind === DATE ? partnerIsoDate_(v)
+    : v instanceof Date ? Utilities.formatDate(v, tz, "HH:mm")
+    : String(v === null || v === undefined ? "" : v).trim();
+  const toCell = (v, kind) => {
+    if (v === "" || v === null || v === undefined) return "";
+    if (kind === NUM) return Number(v) || "";
+    if (kind === DATE) {
+      const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : "'" + v;
+    }
+    return "'" + v;
+  };
+
+  const changedRows = {}; // column -> { row index: new cell value }
+  values.forEach((row, i) => {
+    const invoiceNumber = partnerFormatCell_(row[idx("Invoice Number")], "yyyy-MM-dd");
+    const poNumbers = partnerFormatCell_(row[idx("PO Number")], "yyyy-MM-dd").split(",").map(s => s.trim()).filter(Boolean);
+    if (!invoiceNumber && !poNumbers.length) return;
+    const p = poInfo.find(partnerFormatCell_(row[idx("EE Reference")], "yyyy-MM-dd"), invoiceNumber, poNumbers);
+    if (!p.found) return;
+    fields.forEach(f => {
+      const next = String(f.get(p) === null || f.get(p) === undefined ? "" : f.get(p));
+      if (f.onlyFill && !next) return;
+      if (current(row[f.c], f.kind) === next) return;
+      (changedRows[f.c] = changedRows[f.c] || {})[i] = toCell(next, f.kind);
+    });
+  });
+
+  let count = 0;
+  Object.keys(changedRows).forEach(key => {
+    const c = Number(key);
+    const kind = fields.find(f => f.c === c).kind;
+    // Unchanged text cells are re-written as text too, so Sheets doesn't re-parse them
+    const column = values.map((row, i) => {
+      if (i in changedRows[c]) { count++; return [changedRows[c][i]]; }
+      const v = row[c];
+      return [typeof v === "string" && v !== "" && kind !== NUM ? "'" + v : v];
+    });
+    sheet.getRange(2, c + 1, column.length, 1).setValues(column);
+  });
+  return count;
 }
 
 // Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
@@ -16631,8 +16743,13 @@ function partnerAppointmentQr_(data) {
   const row = values.find((r, i) => i > 0 && String(r[idx("Invoice Number")]).trim() === invoiceNumber);
   if (!row) return { status: "error", message: `Shipment ${invoiceNumber} not found. Refresh the list.` };
 
-  const poNumbers = String(row[idx("PO Number")] || "").split(",").map(s => s.trim()).filter(Boolean);
-  const qrUrl = partnerPoDbInfo_().find(String(row[idx("EE Reference")] || "").trim(), invoiceNumber, poNumbers).qrCodeUrl;
+  // Copied from PO_Database by partnerSyncMasterToTracker_; read PO_Database only if the
+  // copy hasn't caught up yet
+  let qrUrl = idx("Appointment QR") === -1 ? "" : String(row[idx("Appointment QR")] || "").trim();
+  if (!qrUrl) {
+    const poNumbers = String(row[idx("PO Number")] || "").split(",").map(s => s.trim()).filter(Boolean);
+    qrUrl = partnerPoDbInfo_().find(String(row[idx("EE Reference")] || "").trim(), invoiceNumber, poNumbers).qrCodeUrl;
+  }
   const m = qrUrl.match(/\/d\/([\w-]{20,})/) || qrUrl.match(/[?&]id=([\w-]{20,})/);
   if (!m) return { status: "error", message: "No appointment QR has been saved for this PO yet." };
   const blob = DriveApp.getFileById(m[1]).getBlob();

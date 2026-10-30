@@ -130,6 +130,9 @@ const isRto = (r: ShipRequest) => !isCancelled(r) && (!!r.rto || r.status === 'R
 const isDelivered = (r: ShipRequest) => !isCancelled(r) && !isRto(r) && (!!r.delivered || r.status === 'Delivered');
 // Still on its way to the store (or not yet shipped)
 const isOpen = (r: ShipRequest) => !isCancelled(r) && !isRto(r) && !isDelivered(r);
+// Channels that book a delivery appointment; bulk / event orders never get one. Same list
+// as the tool's "Appt. Missing" filter (isApptMissing in SalesOrderTable).
+const needsAppointment = (r: ShipRequest) => ['zepto', 'instamart', 'blinkit', 'minute', 'bb', 'rbl'].some(k => (r.channel || '').toLowerCase().includes(k));
 
 const inTab = (r: ShipRequest, tab: TabKey): boolean => {
     const days = daysUntil(r.appointmentDate);
@@ -139,7 +142,7 @@ const inTab = (r: ShipRequest, tab: TabKey): boolean => {
         case 'today': return isCreated(r) && isOpen(r) && days === 0;
         case 'tomorrow': return isCreated(r) && isOpen(r) && days === 1;
         case 'upcoming': return isCreated(r) && isOpen(r) && days !== null && days > 1;
-        case 'noAppt': return isOpen(r) && days === null;
+        case 'noAppt': return isOpen(r) && needsAppointment(r) && days === null;
         case 'missed': return isOpen(r) && days !== null && days < 0;
         case 'delivered': return isDelivered(r);
         case 'rto': return isRto(r);
@@ -986,8 +989,11 @@ const PartnerPortal: React.FC = () => {
     const visible = useMemo(() => {
         const q = query.trim().toLowerCase();
         const awb = awbQuery.trim().toLowerCase();
+        // A search on All Shipments looks through every status: the "Shipment pending"
+        // default shouldn't hide a PO the partner is looking for
+        const searching = !!(q || awb);
         return requests
-            .filter(r => inTab(r, tab) && (tab !== 'all' || inStage(r, stage)))
+            .filter(r => inTab(r, tab) && (tab !== 'all' || searching || inStage(r, stage)))
             .filter(r => !channel || r.channel === channel)
             .filter(r => !awb || (r.awb || '').toLowerCase().includes(awb))
             .filter(r => !q || [r.invoiceNumber, r.channel, r.eeReference, r.storeCode || '', firstLine(r.shipTo), r.appointmentId, ...r.poNumbers]
