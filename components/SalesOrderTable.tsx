@@ -2958,9 +2958,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const isAmazon = channelLower.includes('amazon');
             const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
             const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
-            
-            const carrierLower = (so.carrier || '').toLowerCase();
-
+        
             const carrierLower = (so.carrier || '').toLowerCase();
             // Include all Urvi couriers, even if they contain "Self" or "Self Ship"
             const isUrviCourier = carrierLower.includes('urvi');
