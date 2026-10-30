@@ -15775,6 +15775,7 @@ function handlePartnerPortalAction_(data) {
     if (data.action === "partnerMarkDelivered") return partnerMarkDelivered_(data, access);
     if (data.action === "partnerMarkRto") return partnerMarkRto_(data, access);
     if (data.action === "partnerUploadPod") return partnerUploadPod_(data, access);
+    if (data.action === "partnerAppointmentQr") return partnerAppointmentQr_(data);
     return { status: "error", message: "Invalid partner action: " + data.action };
   } catch (e) {
     Logger.log(`handlePartnerPortalAction_ ${data && data.action}: ${e.message}`);
@@ -15873,6 +15874,8 @@ function partnerListRequests_() {
       returnReceived: po.returnedQty > 0 || ee === "returned",
       pickupDate: po.pickupDate,
       pickedUp: po.pickedUp,
+      // The QR itself comes from partnerAppointmentQr_: the Drive files aren't public
+      hasAppointmentQr: /^https?:\/\//i.test(po.qrCodeUrl),
       podUrl: link("POD"),
       shipTo: text("Ship To"),
       boxDetails: text("Box Details"),
@@ -15924,7 +15927,7 @@ function partnerPoDbInfo_() {
     apptDate: idx("Appointment Date"), apptTime: idx("Appointment Time"), apptId: idx("Appointment ID"),
     store: idx("Store Code"), tracking: idx("Tracking Status"), delivered: idx("Delivered Date"),
     rto: idx("RTO Status"), eeStatus: idx("EE_order_status"), returned: idx("EE_item_returned_quantity"),
-    status: idx("Status"), manifest: idx("EE_manifest_date"), pickup: idx("Pickup Date")
+    status: idx("Status"), manifest: idx("EE_manifest_date"), pickup: idx("Pickup Date"), qr: idx("QR Code URL")
   };
   const get = (row, c) => c === -1 ? "" : row[c];
   const str = (row, c) => partnerFormatCell_(get(row, c), "HH:mm");
@@ -15939,7 +15942,7 @@ function partnerPoDbInfo_() {
     if (!key) return;
     const info = infos[key] = infos[key] || {
       appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false
+      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false, qrCodeUrl: ""
     };
     const fill = (field, value) => { if (!info[field] && value) info[field] = value; };
     fill("appointmentDate", partnerIsoDate_(get(row, col.apptDate)));
@@ -15951,6 +15954,7 @@ function partnerPoDbInfo_() {
     fill("rtoStatus", str(row, col.rto));
     fill("eeStatus", str(row, col.eeStatus));
     fill("pickupDate", partnerIsoDate_(get(row, col.pickup)));
+    fill("qrCodeUrl", str(row, col.qr));
     // Picked up: the warehouse marked it Dispatched (Dispatch Manager) or later, or EasyEcom
     // manifested / shipped it
     if (PARTNER_PICKED_UP_STATUSES_.indexOf(str(row, col.status).toLowerCase()) !== -1 ||
@@ -15964,7 +15968,7 @@ function partnerPoDbInfo_() {
 
   const none = {
     appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false
+    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false, qrCodeUrl: ""
   };
   return {
     find: (ref, invoiceNumber, poNumbers) => (ref && infos[ref]) || byInvoice[invoiceNumber] ||
@@ -16614,4 +16618,25 @@ function markShipmentDelivered(data) {
   }
   SpreadsheetApp.flush();
   return { status: "success", message: `${ref} marked delivered on ${Utilities.formatDate(deliveredOn, "Asia/Kolkata", "dd MMM yyyy")}.` };
+}
+
+// The appointment pass QR (PO_Database "QR Code URL") of one of the partner's requests,
+// read with the web app's own Drive access because the QR files aren't shared publicly.
+// Only the QR saved on that request's own order is served. data: { invoiceNumber }
+function partnerAppointmentQr_(data) {
+  const invoiceNumber = String(data.invoiceNumber || "").trim();
+  if (!invoiceNumber) return { status: "error", message: "No shipment selected." };
+  const values = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery).getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values[0]);
+  const row = values.find((r, i) => i > 0 && String(r[idx("Invoice Number")]).trim() === invoiceNumber);
+  if (!row) return { status: "error", message: `Shipment ${invoiceNumber} not found. Refresh the list.` };
+
+  const poNumbers = String(row[idx("PO Number")] || "").split(",").map(s => s.trim()).filter(Boolean);
+  const qrUrl = partnerPoDbInfo_().find(String(row[idx("EE Reference")] || "").trim(), invoiceNumber, poNumbers).qrCodeUrl;
+  const m = qrUrl.match(/\/d\/([\w-]{20,})/) || qrUrl.match(/[?&]id=([\w-]{20,})/);
+  if (!m) return { status: "error", message: "No appointment QR has been saved for this PO yet." };
+  const blob = DriveApp.getFileById(m[1]).getBlob();
+  const bytes = blob.getBytes();
+  if (bytes.length > 3 * 1024 * 1024) return { status: "error", message: "The appointment QR image is too large to show." };
+  return { status: "success", mimeType: blob.getContentType() || "image/jpeg", base64: Utilities.base64Encode(bytes) };
 }

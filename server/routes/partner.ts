@@ -287,6 +287,13 @@ export function createPartnerRouter(redirectUri: string): Router {
     await forwardAction('partnerMarkDelivered', { invoiceNumber: String(invoiceNumber), deliveredDate: String(deliveredDate), ...(pod || {}) }, req, res);
   });
 
+  // The appointment pass QR image, read by Apps Script (the Drive files aren't public)
+  router.get('/api/partner/appointment-qr', requirePartner, async (req: PartnerRequest, res: Response) => {
+    const invoiceNumber = String(req.query.invoiceNumber || '');
+    if (!invoiceNumber) return res.status(400).json({ status: 'error', message: 'No shipment selected.' });
+    await forwardAction('partnerAppointmentQr', { invoiceNumber }, req, res);
+  });
+
   router.post('/api/partner/mark-rto', requirePartner, async (req: PartnerRequest, res: Response) => {
     const { invoiceNumber } = req.body || {};
     if (!invoiceNumber) return res.status(400).json({ status: 'error', message: 'No shipment selected.' });

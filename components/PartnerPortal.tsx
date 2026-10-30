@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     RefreshIcon, XCircleIcon, CheckCircleIcon, TruckIcon, CalendarIcon, SearchIcon, UploadIcon,
-    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon
+    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon, PrinterIcon
 } from './icons/Icons';
+import AppointmentPass from './AppointmentPass';
 
 // Self-ship partner portal, served at /partner: a shipment tracker for Urvi Ent's requests
 // (the Urvi Ent tracker sheet, joined with PO_Database for live appointments, deliveries
@@ -61,6 +62,8 @@ interface ShipRequest {
     pickupDate?: string;
     // false until the warehouse dispatches it (or EasyEcom ships it); absent from older backends
     pickedUp?: boolean;
+    // The order has an appointment pass QR (fetched separately from /api/partner/appointment-qr)
+    hasAppointmentQr?: boolean;
 }
 
 interface Check {
@@ -652,7 +655,57 @@ const ShipmentActionModal: React.FC<{
 
 const firstLine = (s: string) => (s || '').split('\n')[0].trim();
 
-type RowAction = 'submit' | ShipmentAction;
+type RowAction = 'submit' | 'pass' | ShipmentAction;
+
+// Loads the appointment QR, then shows the same printable pass as the tool's "Print Appt Pass"
+const AppointmentPassLoader: React.FC<{ request: ShipRequest; token: string; onClose: () => void; onSessionExpired: () => void }> =
+    ({ request: r, token, onClose, onSessionExpired }) => {
+        const [qr, setQr] = useState<string | null>(null);
+        const [error, setError] = useState<string | null>(null);
+
+        useEffect(() => {
+            let cancelled = false;
+            fetch(`/api/partner/appointment-qr?invoiceNumber=${encodeURIComponent(r.invoiceNumber)}`, { headers: { Authorization: `Bearer ${token}` } })
+                .then(async res => {
+                    if (res.status === 401) return onSessionExpired();
+                    const data = await res.json().catch(() => ({ status: 'error', message: `Server error (${res.status}).` }));
+                    if (cancelled) return;
+                    if (data.status === 'success') setQr(`data:${data.mimeType};base64,${data.base64}`);
+                    else setError(data.message || 'Could not load the appointment QR.');
+                })
+                .catch(() => !cancelled && setError('Could not reach the server. Check your connection and try again.'));
+            return () => { cancelled = true; };
+            // onSessionExpired is a new function on every render; fetch once per request
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [r.invoiceNumber, token]);
+
+        if (qr) {
+            return (
+                <AppointmentPass
+                    appointmentId={r.appointmentId || 'PENDING'}
+                    appointmentDate={r.appointmentDate || 'TBD'}
+                    appointmentTime={r.appointmentTime}
+                    facilityName={`${r.channel} - ${r.storeCode || firstLine(r.shipTo)}`}
+                    qrCodeUrl={qr}
+                    purchaseManagerName="BRAINLYTIC SOLUTIONS PVT LTD"
+                    purchaseManagerPhone="N/A"
+                    unloadingSlot="Standard"
+                    purchaseOrderId={r.poNumbers.join(', ')}
+                    onClose={onClose}
+                    addNotification={message => setError(message)}
+                />
+            );
+        }
+        return (
+            <ModalShell eyebrow="Appointment pass" request={r} busy={false} onClose={onClose}>
+                {error ? <ResultBanner result={{ status: 'error', message: error }} /> : (
+                    <div className="py-8 flex flex-col items-center gap-2 text-sm text-gray-500">
+                        <RefreshIcon className="h-6 w-6 animate-spin text-gray-400" /> Loading appointment QR…
+                    </div>
+                )}
+            </ModalShell>
+        );
+    };
 
 const smallButton = 'px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 w-fit border';
 
@@ -786,6 +839,11 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
                         <div className="text-xs text-indigo-600 bg-indigo-50 py-0.5 px-1.5 rounded inline-block font-medium w-fit border border-indigo-100 mt-1.5">
                             ID: {r.appointmentId}
                         </div>
+                    )}
+                    {r.hasAppointmentQr && !isCancelled(r) && (
+                        <button onClick={act('pass')} className={`mt-1.5 ${smallButton} bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100`}>
+                            <PrinterIcon className="h-3 w-3" /> Print Appt Pass
+                        </button>
                     )}
                 </td>
             </tr>
@@ -1087,7 +1145,10 @@ const PartnerPortal: React.FC = () => {
                     onSessionExpired={expireSession}
                 />
             )}
-            {active && active.action !== 'submit' && (
+            {active?.action === 'pass' && (
+                <AppointmentPassLoader request={active.request} token={session.token} onClose={() => setActive(null)} onSessionExpired={expireSession} />
+            )}
+            {active && active.action !== 'submit' && active.action !== 'pass' && (
                 <ShipmentActionModal
                     action={active.action}
                     request={active.request}
