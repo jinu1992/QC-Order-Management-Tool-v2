@@ -2962,7 +2962,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
             const carrierLower = (so.carrier || '').toLowerCase();
             if (carrierLower.includes('self ship') || carrierLower.includes('(self)')) return false;
 
-            if (!carrierLower.includes('(np)')) return false;
+            if (!carrierLower.includes('(self)')) return false;
             if (so.rtoStatus && so.rtoStatus.trim() !== '') return false;
 
             const latestStatusLower = (so.latestStatus || '').toLowerCase();
