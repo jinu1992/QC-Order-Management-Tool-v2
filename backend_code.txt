@@ -15871,6 +15871,8 @@ function partnerListRequests_() {
       rto: status === PARTNER_STATUS_.RTO || !!po.rtoStatus || ee === "returned" || ee === "rto",
       // The return is GRN'd in EasyEcom: the order goes to Returned with a returned quantity
       returnReceived: po.returnedQty > 0 || ee === "returned",
+      pickupDate: po.pickupDate,
+      pickedUp: po.pickedUp,
       podUrl: link("POD"),
       shipTo: text("Ship To"),
       boxDetails: text("Box Details"),
@@ -15907,6 +15909,10 @@ function partnerIsoDate_(value) {
   return ist(new Date(s.replace(/-/g, " ")));
 }
 
+// PO_Database / EasyEcom statuses that mean the shipment has left the warehouse
+const PARTNER_PICKED_UP_STATUSES_ = ["dispatched", "shipped", "delivered", "grn pending", "grn updated", "closed"];
+const PARTNER_PICKED_UP_EE_STATUSES_ = ["shipped", "delivered", "closed", "returned", "rto"];
+
 // One summary per shipment (EE reference) of the PO_Database rows the partner portal
 // needs, looked up by EE reference, then invoice, then PO number
 function partnerPoDbInfo_() {
@@ -15917,7 +15923,8 @@ function partnerPoDbInfo_() {
     ref: idx("EE_reference_code"), inv: idx("Invoice Number"), po: idx("PO Number"),
     apptDate: idx("Appointment Date"), apptTime: idx("Appointment Time"), apptId: idx("Appointment ID"),
     store: idx("Store Code"), tracking: idx("Tracking Status"), delivered: idx("Delivered Date"),
-    rto: idx("RTO Status"), eeStatus: idx("EE_order_status"), returned: idx("EE_item_returned_quantity")
+    rto: idx("RTO Status"), eeStatus: idx("EE_order_status"), returned: idx("EE_item_returned_quantity"),
+    status: idx("Status"), manifest: idx("EE_manifest_date"), pickup: idx("Pickup Date")
   };
   const get = (row, c) => c === -1 ? "" : row[c];
   const str = (row, c) => partnerFormatCell_(get(row, c), "HH:mm");
@@ -15932,7 +15939,7 @@ function partnerPoDbInfo_() {
     if (!key) return;
     const info = infos[key] = infos[key] || {
       appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0
+      deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false
     };
     const fill = (field, value) => { if (!info[field] && value) info[field] = value; };
     fill("appointmentDate", partnerIsoDate_(get(row, col.apptDate)));
@@ -15943,6 +15950,12 @@ function partnerPoDbInfo_() {
     fill("deliveredDate", partnerIsoDate_(get(row, col.delivered)));
     fill("rtoStatus", str(row, col.rto));
     fill("eeStatus", str(row, col.eeStatus));
+    fill("pickupDate", partnerIsoDate_(get(row, col.pickup)));
+    // Picked up: the warehouse marked it Dispatched (Dispatch Manager) or later, or EasyEcom
+    // manifested / shipped it
+    if (PARTNER_PICKED_UP_STATUSES_.indexOf(str(row, col.status).toLowerCase()) !== -1 ||
+      PARTNER_PICKED_UP_EE_STATUSES_.indexOf(str(row, col.eeStatus).toLowerCase()) !== -1 ||
+      partnerIsoDate_(get(row, col.manifest))) info.pickedUp = true;
     info.returnedQty += Number(get(row, col.returned)) || 0;
     if (inv) byInvoice[inv] = info;
     const po = str(row, col.po);
@@ -15951,7 +15964,7 @@ function partnerPoDbInfo_() {
 
   const none = {
     appointmentDate: "", appointmentTime: "", appointmentId: "", storeCode: "", trackingStatus: "",
-    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0
+    deliveredDate: "", rtoStatus: "", eeStatus: "", returnedQty: 0, pickupDate: "", pickedUp: false
   };
   return {
     find: (ref, invoiceNumber, poNumbers) => (ref && infos[ref]) || byInvoice[invoiceNumber] ||

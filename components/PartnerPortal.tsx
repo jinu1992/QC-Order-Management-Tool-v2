@@ -58,6 +58,9 @@ interface ShipRequest {
     rto?: boolean;
     returnReceived?: boolean;
     podUrl?: string;
+    pickupDate?: string;
+    // false until the warehouse dispatches it (or EasyEcom ships it); absent from older backends
+    pickedUp?: boolean;
 }
 
 interface Check {
@@ -68,12 +71,13 @@ interface Check {
     detail: string;
 }
 
-type TabKey = 'all' | 'today' | 'tomorrow' | 'upcoming' | 'noAppt' | 'missed' | 'delivered' | 'rto';
+type TabKey = 'all' | 'pickup' | 'today' | 'tomorrow' | 'upcoming' | 'noAppt' | 'missed' | 'delivered' | 'rto';
 
 // Each tab's badge counts what needs the partner: shipments to create, appointments,
 // PODs to upload, returns not yet received
 const TABS: { key: TabKey; label: string; badge: string; tone: string }[] = [
     { key: 'all', label: 'All Shipments', badge: 'to create', tone: 'bg-blue-100 text-blue-700' },
+    { key: 'pickup', label: 'Pickup Pending', badge: 'awaiting pickup', tone: 'bg-teal-100 text-teal-700' },
     { key: 'today', label: "Today's Appts", badge: 'today', tone: 'bg-orange-100 text-orange-700' },
     { key: 'tomorrow', label: "Tomorrow's Appts", badge: 'tomorrow', tone: 'bg-sky-100 text-sky-700' },
     { key: 'upcoming', label: 'Upcoming Appts', badge: 'upcoming', tone: 'bg-indigo-100 text-indigo-700' },
@@ -128,6 +132,7 @@ const inTab = (r: ShipRequest, tab: TabKey): boolean => {
     const days = daysUntil(r.appointmentDate);
     switch (tab) {
         case 'all': return true;
+        case 'pickup': return isCreated(r) && isOpen(r) && r.pickedUp === false;
         case 'today': return isCreated(r) && isOpen(r) && days === 0;
         case 'tomorrow': return isCreated(r) && isOpen(r) && days === 1;
         case 'upcoming': return isCreated(r) && isOpen(r) && days !== null && days > 1;
@@ -713,6 +718,9 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
                                     ) : <span>{r.awb}</span>}
                                 </div>
                                 <div className="text-xs text-gray-500"><span className="font-medium">Carrier:</span> {courier.label}</div>
+                                {open && r.pickedUp === false && (
+                                    <div className="text-xs font-semibold text-teal-700 mt-0.5">Pickup pending{r.pickupDate ? ` · ${formatDate(r.pickupDate)}` : ''}</div>
+                                )}
                             </>
                         ) : (
                             <span className="text-sm text-gray-400 italic">{pending ? 'Shipment not created' : 'No AWB'}</span>
@@ -823,6 +831,7 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
 // Tab colours, as in the tool's Shipment Tracker
 const TAB_ACTIVE: Record<TabKey, string> = {
     all: 'border-indigo-500 text-indigo-600',
+    pickup: 'border-teal-500 text-teal-600',
     today: 'border-orange-500 text-orange-600',
     tomorrow: 'border-blue-500 text-blue-600',
     upcoming: 'border-sky-500 text-sky-600',
@@ -834,6 +843,7 @@ const TAB_ACTIVE: Record<TabKey, string> = {
 
 const EMPTY_TEXT: Record<TabKey, string> = {
     all: 'No shipments matching criteria',
+    pickup: 'No shipments waiting for pickup',
     today: 'No shipments with an appointment today',
     tomorrow: 'No shipments with an appointment tomorrow',
     upcoming: 'No shipments with later appointments',
@@ -851,6 +861,8 @@ const sortForTab = (tab: TabKey) => (a: ShipRequest, b: ShipRequest): number => 
         // POD still to upload first, then the latest delivery
         return Number(!!a.podUrl) - Number(!!b.podUrl) || (b.deliveredDate || '').localeCompare(a.deliveredDate || '');
     }
+    // Earliest pickup first
+    if (tab === 'pickup') return (a.pickupDate || '9999').localeCompare(b.pickupDate || '9999') || apptKey(a).localeCompare(apptKey(b));
     if (tab === 'rto') return Number(!!a.returnReceived) - Number(!!b.returnReceived) || b.bookedDate.localeCompare(a.bookedDate);
     return apptKey(a).localeCompare(apptKey(b)) || a.bookedDate.localeCompare(b.bookedDate);
 };
