@@ -2949,119 +2949,333 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
         }
     };
 
-    const handleUpdateGoogleSheet = async () => {
-        const inTransitOrders = allSalesOrders.filter(so => {
-            const channelLower = so.channel.toLowerCase();
-            const allowedChannels = ['instamart', 'zepto', 'bb', 'rbl', 'flipkart', 'blinkit', 'flipkartminute'];
-            const isAllowedChannel = allowedChannels.some(c => channelLower.includes(c));
-            if (!isAllowedChannel) return false;
-            const isAmazon = channelLower.includes('amazon');
-            const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
-            const isActuallyDelivered = (trackingStatusLower === 'delivered' || trackingStatusLower === 'successfully delivered' || !!so.deliveredDate);
-        
-            const carrierLower = (so.carrier || '').toLowerCase();
-            // Include all Urvi couriers, even if they contain "Self" or "Self Ship"
-            const isUrviCourier = carrierLower.includes('urvi');
-            if (!isUrviCourier) return false;
-            
-            if (so.rtoStatus && so.rtoStatus.trim() !== '') return false;
+    
+const handleUpdateGoogleSheet = async () => {
 
-            const latestStatusLower = (so.latestStatus || '').toLowerCase();
-            if (trackingStatusLower.includes('return') || latestStatusLower.includes('return') || 
-                trackingStatusLower.includes('cancelled') || latestStatusLower.includes('cancelled')) return false;
+    // Convert appointment date into a sortable YYYYMMDD number.
+    // Time is completely ignored.
+    const getAppointmentDateSortValue = (date: string | null | undefined): number | null => {
+        if (!date || date === 'N/A') return null;
 
-            if (so.status === 'Shipped' || so.status === 'RTO Initiated' || so.status === 'Returned') return true;
-            if (isAmazon && so.status === 'Delivered' && !isActuallyDelivered) return true;
+        const value = String(date).trim();
+
+        // YYYY-MM-DD, including ISO date-time strings
+        const isoMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])/);
+
+        if (isoMatch) {
+            return (
+                Number(isoMatch[1]) * 10000 +
+                Number(isoMatch[2]) * 100 +
+                Number(isoMatch[3])
+            );
+        }
+
+        // DD/MM/YYYY or DD-MM-YYYY
+        const dmyMatch = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+
+        if (dmyMatch) {
+            return (
+                Number(dmyMatch[3]) * 10000 +
+                Number(dmyMatch[2]) * 100 +
+                Number(dmyMatch[1])
+            );
+        }
+
+        // Unknown or missing dates go to the bottom
+        return null;
+    };
+
+    // STEP 1: Filter in-transit orders
+    const inTransitOrders = allSalesOrders.filter(so => {
+
+        const channelLower = (so.channel || '').toLowerCase();
+
+        const allowedChannels = [
+            'instamart',
+            'zepto',
+            'bb',
+            'rbl',
+            'flipkart',
+            'blinkit',
+            'flipkartminute'
+        ];
+
+        const isAllowedChannel = allowedChannels.some(c =>
+            channelLower.includes(c)
+        );
+
+        if (!isAllowedChannel) return false;
+
+        const isAmazon = channelLower.includes('amazon');
+
+        const trackingStatusLower = (so.trackingStatus || '').toLowerCase();
+
+        const isActuallyDelivered =
+            trackingStatusLower === 'delivered' ||
+            trackingStatusLower === 'successfully delivered' ||
+            !!so.deliveredDate;
+
+        // Include all couriers containing "urvi",
+        // including "Urvi (Self)", "Urvi Self Ship", etc.
+        const carrierLower = (so.carrier || '').toLowerCase();
+
+        if (!carrierLower.includes('urvi')) return false;
+
+        // Exclude orders with RTO status
+        if (so.rtoStatus && so.rtoStatus.trim() !== '') {
             return false;
-        }).sort((a, b) => {
-            const timeA = parseAppointmentDateTime(a.appointmentDate, a.appointmentTime);
-            const timeB = parseAppointmentDateTime(b.appointmentDate, b.appointmentTime);
-            return timeA - timeB; // Ascending order
-        });
+        }
 
-        if (inTransitOrders.length === 0) {
-            addNotification('No in-transit orders found to update.', 'warning');
+        // Exclude returned or cancelled tracking statuses
+        const latestStatusLower = (so.latestStatus || '').toLowerCase();
+
+        if (
+            trackingStatusLower.includes('return') ||
+            latestStatusLower.includes('return') ||
+            trackingStatusLower.includes('cancelled') ||
+            latestStatusLower.includes('cancelled')
+        ) {
+            return false;
+        }
+
+        // Existing shipment status filters
+        if (
+            so.status === 'Shipped' ||
+            so.status === 'RTO Initiated' ||
+            so.status === 'Returned'
+        ) {
+            return true;
+        }
+
+        if (
+            isAmazon &&
+            so.status === 'Delivered' &&
+            !isActuallyDelivered
+        ) {
+            return true;
+        }
+
+        return false;
+
+    }).sort((a, b) => {
+
+        // STEP 2: Sort by appointment DATE ONLY
+        const dateA = getAppointmentDateSortValue(a.appointmentDate);
+        const dateB = getAppointmentDateSortValue(b.appointmentDate);
+
+        // Missing dates at bottom
+        if (dateA === null && dateB === null) return 0;
+        if (dateA === null) return 1;
+        if (dateB === null) return -1;
+
+        // Ascending date order, with no time comparison
+        return dateA - dateB;
+    });
+
+    if (inTransitOrders.length === 0) {
+        addNotification(
+            'No in-transit orders found to update.',
+            'warning'
+        );
+        return;
+    }
+
+    // STEP 3: Google Authentication
+    if (!googleTokens) {
+        try {
+            const res = await fetch('/api/auth/google/url');
+
+            if (!res.ok) {
+                const errorText = await res.text();
+
+                console.error(
+                    'Failed to get auth URL:',
+                    errorText
+                );
+
+                throw new Error(
+                    `Server returned ${res.status}`
+                );
+            }
+
+            const { url } = await res.json();
+
+            window.open(
+                url,
+                'google_auth',
+                'width=600,height=700'
+            );
+
+            return;
+
+        } catch (err: any) {
+            console.error(
+                'Error initiating Google login:',
+                err
+            );
+
+            addNotification(
+                `Failed to initiate Google login: ${err.message || 'Unknown error'}`,
+                'error'
+            );
+
             return;
         }
+    }
 
-        if (!googleTokens) {
-            try {
-                const res = await fetch('/api/auth/google/url');
-                if (!res.ok) {
-                    const text = await res.text();
-                    console.error('Failed to get auth URL:', text);
-                    throw new Error(`Server returned ${res.status}`);
-                }
-                const { url } = await res.json();
-                window.open(url, 'google_auth', 'width=600,height=700');
-                return;
-            } catch (err: any) {
-                console.error('Error initiating Google login:', err);
-                addNotification(`Failed to initiate Google login: ${err.message || 'Unknown error'}`, 'error');
-                return;
-            }
-        }
+    setIsUpdatingSheet(true);
 
-        setIsUpdatingSheet(true);
-        try {
-            const headers = [
-                'Booked Date', 'PO Number', 'Channel', 'Store Code', 'AWB',
-                'Tracking Status', 'Latest Status', 'Current Location', 'EDD',
-                'Appointment Date & Time', 'Appointment ID', 'PO PDF', 'Invoice Url'
+    try {
+
+        // STEP 4: Google Sheet Headers
+        // Appointment Date and Appointment Time are separate
+        const headers = [
+            'Booked Date',
+            'PO Number',
+            'Channel',
+            'Store Code',
+            'AWB',
+            'Tracking Status',
+            'Latest Status',
+            'Current Location',
+            'EDD',
+            'Appointment Date',
+            'Appointment Time',
+            'Appointment ID',
+            'PO PDF',
+            'Invoice Url'
+        ];
+
+        // Escape strings used inside Google Sheets formulas
+        const escapeFormulaString = (value: unknown): string =>
+            String(value ?? '').replace(/"/g, '""');
+
+        // STEP 5: Prepare Rows
+        const rows = inTransitOrders.map(so => {
+
+            const appointmentDate =
+                so.appointmentDate || 'N/A';
+
+            const appointmentTime =
+                so.appointmentTime
+                    ? formatDisplayTime(so.appointmentTime)
+                    : 'N/A';
+
+            const poPdfValue =
+                so.poPdfUrl && so.poPdfUrl.startsWith('http')
+                    ? `=HYPERLINK("${escapeFormulaString(so.poPdfUrl)}", "${escapeFormulaString(so.awb || so.poReference)}_Purchase Order")`
+                    : (so.poPdfUrl || 'N/A');
+
+            const invoiceValue =
+                so.invoiceUrl && so.invoiceUrl.startsWith('http')
+                    ? `=HYPERLINK("${escapeFormulaString(so.invoiceUrl)}", "${escapeFormulaString(so.awb || so.poReference)}_Invoice")`
+                    : (so.invoiceUrl || 'N/A');
+
+            return [
+                so.manifestDate || so.batchCreatedAt || 'N/A',
+                so.poReference,
+                so.channel,
+                so.storeCode,
+                so.awb || 'N/A',
+                so.trackingStatus || 'N/A',
+                so.latestStatus || 'N/A',
+                so.currentLocation || 'N/A',
+                so.edd || 'N/A',
+                appointmentDate,
+                appointmentTime,
+                so.appointmentId || 'N/A',
+                poPdfValue,
+                invoiceValue
             ];
+        });
 
-            const rows = inTransitOrders.map(so => {
-                const appointmentDateTime = so.appointmentDate ? `${so.appointmentDate} ${formatDisplayTime(so.appointmentTime)}`.trim() : 'N/A';
-                return [
-                    so.manifestDate || so.batchCreatedAt || 'N/A',
-                    so.poReference,
-                    so.channel,
-                    so.storeCode,
-                    so.awb || 'N/A',
-                    so.trackingStatus || 'N/A',
-                    so.latestStatus || 'N/A',
-                    so.currentLocation || 'N/A',
-                    so.edd || 'N/A',
-                    appointmentDateTime,
-                    so.appointmentId || 'N/A',
-                    (so.poPdfUrl && so.poPdfUrl.startsWith('http')) ? `=HYPERLINK("${so.poPdfUrl}", "${so.awb || so.poReference}_Purchase Order")` : (so.poPdfUrl || 'N/A'),
-                    (so.invoiceUrl && so.invoiceUrl.startsWith('http')) ? `=HYPERLINK("${so.invoiceUrl}", "${so.awb || so.poReference}_Invoice")` : (so.invoiceUrl || 'N/A')
-                ];
-            });
+        // STEP 6: Google Sheet Configuration
+        const spreadsheetId =
+            import.meta.env.VITE_GOOGLE_SPREADSHEET_ID ||
+            '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
 
-            const spreadsheetId = import.meta.env.VITE_GOOGLE_SPREADSHEET_ID || '1NxB2W6zEB8qGf4QyHXVbvLCa09eBTgZTk-GCTJy4Zfk';
-            const sheetId = import.meta.env.VITE_GOOGLE_SHEET_ID || '1014733683';
+        const sheetId =
+            import.meta.env.VITE_GOOGLE_SHEET_ID ||
+            '1014733683';
 
-            const response = await fetch('/api/update-google-sheet', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tokens: googleTokens,
-                    spreadsheetId,
-                    sheetId,
-                    data: [headers, ...rows]
-                })
-            });
+        // STEP 7: Update Google Sheet
+        const response = await fetch('/api/update-google-sheet', {
+            method: 'POST',
 
-            const result = await response.json();
-            if (result.success) {
-                addNotification('Google Sheet updated successfully!', 'success');
-                addLog('Google Sheet Update', `Updated sheet with ${inTransitOrders.length} orders`);
-            } else {
-                if (result.error?.includes('invalid_grant') || result.error?.includes('expired')) {
-                    if (setGoogleTokens) setGoogleTokens(null);
-                    localStorage.removeItem('google_sheets_tokens');
-                    addNotification('Session expired. Please click again to reconnect Google account.', 'warning');
-                } else {
-                    addNotification('Failed to update Google Sheet: ' + result.error, 'error');
+            headers: {
+                'Content-Type': 'application/json'
+            },
+
+            body: JSON.stringify({
+                tokens: googleTokens,
+                spreadsheetId,
+                sheetId,
+                data: [headers, ...rows]
+            })
+        });
+
+        const result = await response.json();
+
+        // STEP 8: Handle Response
+        if (result.success) {
+
+            addNotification(
+                'Google Sheet updated successfully!',
+                'success'
+            );
+
+            addLog(
+                'Google Sheet Update',
+                `Updated sheet with ${inTransitOrders.length} Urvi orders, sorted by appointment date`
+            );
+
+        } else {
+
+            if (
+                result.error?.includes('invalid_grant') ||
+                result.error?.includes('expired')
+            ) {
+
+                if (setGoogleTokens) {
+                    setGoogleTokens(null);
                 }
+
+                localStorage.removeItem(
+                    'google_sheets_tokens'
+                );
+
+                addNotification(
+                    'Session expired. Please click again to reconnect Google account.',
+                    'warning'
+                );
+
+            } else {
+
+                addNotification(
+                    'Failed to update Google Sheet: ' +
+                    (result.error || 'Unknown error'),
+                    'error'
+                );
             }
-        } catch (err) {
-            addNotification('Network error updating Google Sheet', 'error');
-        } finally {
-            setIsUpdatingSheet(false);
         }
-    };
+
+    } catch (err) {
+
+        console.error(
+            'Error updating Google Sheet:',
+            err
+        );
+
+        addNotification(
+            'Network error updating Google Sheet',
+            'error'
+        );
+
+    } finally {
+
+        setIsUpdatingSheet(false);
+    }
+};
 
     const handleExportInTransitCSV = () => {
         const inTransitOrders = allSalesOrders.filter(so => {
