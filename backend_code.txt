@@ -15895,7 +15895,8 @@ function partnerListRequests_() {
       // The return is GRN'd in EasyEcom: the order goes to Returned with a returned quantity
       returnReceived: (Number(cell("Returned Qty")) || 0) > 0 || ee === "returned",
       pickupDate: partnerIsoDate_(cell("Pickup Date")),
-      pickedUp: text("Picked Up") === "Yes",
+      // Blank when the order isn't in PO_Database (e.g. replaced by a "-1" re-order): unknown, not pending
+      pickedUp: text("Picked Up") === "Yes" ? true : text("Picked Up") === "No" ? false : null,
       // The QR itself comes from partnerAppointmentQr_: the Drive files aren't public
       hasAppointmentQr: /^https?:\/\//i.test(text("Appointment QR")),
       podUrl: link("POD"),

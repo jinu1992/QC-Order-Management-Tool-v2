@@ -60,8 +60,9 @@ interface ShipRequest {
     returnReceived?: boolean;
     podUrl?: string;
     pickupDate?: string;
-    // false until the warehouse dispatches it (or EasyEcom ships it); absent from older backends
-    pickedUp?: boolean;
+    // false until the warehouse dispatches it (or EasyEcom ships it); null when the order isn't in
+    // PO_Database; absent from older backends
+    pickedUp?: boolean | null;
     // The order has an appointment pass QR (fetched separately from /api/partner/appointment-qr)
     hasAppointmentQr?: boolean;
 }
@@ -240,6 +241,7 @@ const StagePill: React.FC<{ request: ShipRequest }> = ({ request: r }) => {
     if (isRto(r)) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
     if (isDelivered(r)) return <span className={`${badge} bg-green-100 text-green-700`}><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
     if (days !== null && days < 0) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> Missed</span>;
+    if (r.pickedUp === false) return <span className={`${badge} bg-teal-100 text-teal-700`}><CubeIcon className="w-3 h-3" /> Pickup Pending</span>;
     if (r.appointmentDate) return <span className={`${badge} bg-blue-100 text-blue-700`}><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
     return <span className={`${badge} bg-orange-100 text-orange-700`}><TruckIcon className="w-3 h-3" /> In Transit</span>;
 };
