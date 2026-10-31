@@ -75,12 +75,12 @@ interface Check {
     detail: string;
 }
 
-type TabKey = 'all' | 'pickup' | 'today' | 'tomorrow' | 'upcoming' | 'noAppt' | 'missed' | 'delivered' | 'rto';
+type TabKey = 'lrn' | 'pickup' | 'today' | 'tomorrow' | 'upcoming' | 'noAppt' | 'missed' | 'delivered' | 'rto' | 'all';
 
 // Each tab's badge counts what needs the partner: shipments to create, appointments,
 // PODs to upload, returns not yet received
 const TABS: { key: TabKey; label: string; badge: string; tone: string }[] = [
-    { key: 'all', label: 'All Shipments', badge: 'to create', tone: 'bg-blue-100 text-blue-700' },
+    { key: 'lrn', label: 'Update LRN', badge: 'to create', tone: 'bg-blue-100 text-blue-700' },
     { key: 'pickup', label: 'Pickup Pending', badge: 'awaiting pickup', tone: 'bg-teal-100 text-teal-700' },
     { key: 'today', label: "Today's Appts", badge: 'today', tone: 'bg-orange-100 text-orange-700' },
     { key: 'tomorrow', label: "Tomorrow's Appts", badge: 'tomorrow', tone: 'bg-sky-100 text-sky-700' },
@@ -89,18 +89,7 @@ const TABS: { key: TabKey; label: string; badge: string; tone: string }[] = [
     { key: 'missed', label: 'Missed Deliveries', badge: 'missed', tone: 'bg-red-100 text-red-700' },
     { key: 'delivered', label: 'Delivered', badge: 'POD pending', tone: 'bg-green-100 text-green-700' },
     { key: 'rto', label: 'RTO / Returned', badge: 'not received', tone: 'bg-purple-100 text-purple-700' },
-];
-
-// "All Shipments" filter; the tab opens on shipments still to be created
-type StageFilter = 'pending' | 'created' | 'delivered' | 'rto' | 'cancelled' | 'any';
-
-const STAGE_FILTERS: { key: StageFilter; label: string }[] = [
-    { key: 'pending', label: 'Shipment pending' },
-    { key: 'created', label: 'Shipped, not delivered' },
-    { key: 'delivered', label: 'Delivered' },
-    { key: 'rto', label: 'RTO / Returned' },
-    { key: 'cancelled', label: 'Cancelled' },
-    { key: 'any', label: 'All statuses' },
+    { key: 'all', label: 'All Shipments', badge: 'shipments', tone: 'bg-indigo-100 text-indigo-700' },
 ];
 
 type CourierKey = 'delhivery' | 'scorpion' | 'bluedart';
@@ -138,7 +127,7 @@ const needsAppointment = (r: ShipRequest) => ['zepto', 'instamart', 'blinkit', '
 const inTab = (r: ShipRequest, tab: TabKey): boolean => {
     const days = daysUntil(r.appointmentDate);
     switch (tab) {
-        case 'all': return true;
+        case 'lrn': return r.status === 'Pending';
         case 'pickup': return isCreated(r) && isOpen(r) && r.pickedUp === false;
         case 'today': return isCreated(r) && isOpen(r) && days === 0;
         case 'tomorrow': return isCreated(r) && isOpen(r) && days === 1;
@@ -147,22 +136,14 @@ const inTab = (r: ShipRequest, tab: TabKey): boolean => {
         case 'missed': return isOpen(r) && days !== null && days < 0;
         case 'delivered': return isDelivered(r);
         case 'rto': return isRto(r);
+        case 'all': return true;
     }
 };
 
 const tabBadgeCount = (tab: TabKey, rows: ShipRequest[]) => rows.filter(r =>
-    tab === 'all' ? r.status === 'Pending'
-        : tab === 'delivered' ? isDelivered(r) && !r.podUrl
+    tab === 'delivered' ? isDelivered(r) && !r.podUrl
         : tab === 'rto' ? isRto(r) && !r.returnReceived
         : inTab(r, tab)).length;
-
-const inStage = (r: ShipRequest, stage: StageFilter) =>
-    stage === 'pending' ? r.status === 'Pending'
-        : stage === 'created' ? isCreated(r) && isOpen(r)
-        : stage === 'delivered' ? isDelivered(r)
-        : stage === 'rto' ? isRto(r)
-        : stage === 'cancelled' ? isCancelled(r)
-        : true;
 
 const SESSION_KEY = 'cubelelo.partnerPortal.session';
 
@@ -893,7 +874,7 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
 
 // Tab colours, as in the tool's Shipment Tracker
 const TAB_ACTIVE: Record<TabKey, string> = {
-    all: 'border-indigo-500 text-indigo-600',
+    lrn: 'border-blue-500 text-blue-600',
     pickup: 'border-teal-500 text-teal-600',
     today: 'border-orange-500 text-orange-600',
     tomorrow: 'border-blue-500 text-blue-600',
@@ -902,10 +883,11 @@ const TAB_ACTIVE: Record<TabKey, string> = {
     missed: 'border-red-500 text-red-600',
     delivered: 'border-green-500 text-green-600',
     rto: 'border-purple-500 text-purple-600',
+    all: 'border-indigo-500 text-indigo-600',
 };
 
 const EMPTY_TEXT: Record<TabKey, string> = {
-    all: 'No shipments matching criteria',
+    lrn: 'No shipments to create',
     pickup: 'No shipments waiting for pickup',
     today: 'No shipments with an appointment today',
     tomorrow: 'No shipments with an appointment tomorrow',
@@ -914,6 +896,7 @@ const EMPTY_TEXT: Record<TabKey, string> = {
     missed: 'No missed deliveries',
     delivered: 'No delivered shipments yet',
     rto: 'No returned shipments',
+    all: 'No shipments matching criteria',
 };
 
 // Appointment date then time; shipments without one go last
@@ -927,6 +910,10 @@ const sortForTab = (tab: TabKey) => (a: ShipRequest, b: ShipRequest): number => 
     // Earliest pickup first
     if (tab === 'pickup') return (a.pickupDate || '9999').localeCompare(b.pickupDate || '9999') || apptKey(a).localeCompare(apptKey(b));
     if (tab === 'rto') return Number(!!a.returnReceived) - Number(!!b.returnReceived) || b.bookedDate.localeCompare(a.bookedDate);
+    // Oldest request first
+    if (tab === 'lrn') return a.bookedDate.localeCompare(b.bookedDate);
+    // Newest first
+    if (tab === 'all') return b.bookedDate.localeCompare(a.bookedDate);
     return apptKey(a).localeCompare(apptKey(b)) || a.bookedDate.localeCompare(b.bookedDate);
 };
 
@@ -936,8 +923,7 @@ const PartnerPortal: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
-    const [tab, setTab] = useState<TabKey>('all');
-    const [stage, setStage] = useState<StageFilter>('pending');
+    const [tab, setTab] = useState<TabKey>('lrn');
     const [channel, setChannel] = useState('');
     const [query, setQuery] = useState('');
     const [awbQuery, setAwbQuery] = useState('');
@@ -991,17 +977,14 @@ const PartnerPortal: React.FC = () => {
     const visible = useMemo(() => {
         const q = query.trim().toLowerCase();
         const awb = awbQuery.trim().toLowerCase();
-        // A search on All Shipments looks through every status: the "Shipment pending"
-        // default shouldn't hide a PO the partner is looking for
-        const searching = !!(q || awb);
         return requests
-            .filter(r => inTab(r, tab) && (tab !== 'all' || searching || inStage(r, stage)))
+            .filter(r => inTab(r, tab))
             .filter(r => !channel || r.channel === channel)
             .filter(r => !awb || (r.awb || '').toLowerCase().includes(awb))
             .filter(r => !q || [r.invoiceNumber, r.channel, r.eeReference, r.storeCode || '', firstLine(r.shipTo), r.appointmentId, ...r.poNumbers]
                 .some(v => (v || '').toLowerCase().includes(q)))
             .sort(sortForTab(tab));
-    }, [requests, tab, stage, channel, query, awbQuery]);
+    }, [requests, tab, channel, query, awbQuery]);
 
     if (!session) return <LoginScreen onLogin={handleLogin} />;
 
@@ -1078,24 +1061,6 @@ const PartnerPortal: React.FC = () => {
                         <input type="text" placeholder="Filter by AWB / LRN / Docket..." value={awbQuery} onChange={e => setAwbQuery(e.target.value)}
                             className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-blue-50/30" />
                     </div>
-
-                    {tab === 'all' && (
-                        <div className="relative flex-1 min-w-[180px] max-w-[240px] flex items-center gap-1">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <FilterIcon className="h-4 w-4 text-gray-400" />
-                            </div>
-                            <select value={stage} onChange={e => setStage(e.target.value as StageFilter)} aria-label="Shipment status filter"
-                                className={`block w-full pl-10 pr-3 py-2 border rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 ${stage === 'any' ? 'border-gray-300 bg-white' : 'border-indigo-300 bg-indigo-50 text-indigo-700 font-medium'}`}>
-                                {STAGE_FILTERS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                            </select>
-                            {stage !== 'any' && (
-                                <button onClick={() => setStage('any')} title="Remove filter: show all statuses"
-                                    className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100">
-                                    <XIcon className="h-4 w-4" />
-                                </button>
-                            )}
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -1133,7 +1098,7 @@ const PartnerPortal: React.FC = () => {
                                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                                         <TruckIcon className="mx-auto h-12 w-12 text-gray-300 mb-3" />
                                         <p className="text-lg font-medium">
-                                            {tab === 'all' && stage === 'pending' && !query && !awbQuery && !channel ? 'No shipments to create' : EMPTY_TEXT[tab]}
+                                            {EMPTY_TEXT[tab]}
                                         </p>
                                         <p className="text-sm mt-1">Adjust filters or select another tab.</p>
                                     </td>

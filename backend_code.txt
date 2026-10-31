@@ -16266,6 +16266,34 @@ function previewPartnerTrackerBackfill() {
   return refs;
 }
 
+/**
+ * One-off, 2026-10-31: marks the old Ludhiana tracker row Cancelled. PO 3226810061761
+ * (invoice BSPL/26-27/890, LRN 321256357) was redone as 3226810061761-1 (invoice
+ * BSPL/26-27/970, LRN 321916746) and is no longer in PO_Database, so the tool's Cancel
+ * Shipment can't reach it. Only a row matching all three values is touched.
+ */
+function cancelOldLudhianaTrackerRow_20261031() {
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
+  const idx = selfShipHeaderIndex_(headers);
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  const text = (row, name) => partnerFormatCell_(row[idx(name)], "yyyy-MM-dd");
+  const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HH:mm");
+  const marked = [];
+  values.forEach((row, i) => {
+    if (text(row, "Invoice Number") !== "BSPL/26-27/890" || text(row, "AWB") !== "321256357" ||
+        text(row, "PO Number").split(",").map(s => s.trim()).indexOf("3226810061761") === -1) return;
+    if (partnerRowStatus_(row[idx("Status")], text(row, "AWB")) === PARTNER_STATUS_.CANCELLED) return;
+    sheet.getRange(i + 2, idx("Status") + 1).setValue(PARTNER_STATUS_.CANCELLED);
+    const prev = text(row, "Verification");
+    const line = `✗ ${stamp} Cancelled: order redone as 3226810061761-1 (LRN 321916746)`;
+    sheet.getRange(i + 2, idx("Verification") + 1).setValue(prev ? `${prev}\n${line}` : line);
+    marked.push(i + 2);
+  });
+  Logger.log(marked.length ? `Marked tracker row(s) ${marked.join(", ")} Cancelled` : "No matching open row found");
+  return marked;
+}
+
 // Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
 function partnerNormRef_(s) {
   return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
