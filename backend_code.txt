@@ -4467,13 +4467,16 @@ shipData.forEach(row => {
   }
 
   let updatedCellCount = 0;
+  let skippedMovedRows = 0;
+  const keyOf = (ref, sku) => `${String(ref).trim().toLowerCase()}|${String(sku).trim().toLowerCase()}`;
+  const cellKey = v => v instanceof Date ? v.getTime() : String(v === null || v === undefined ? "" : v);
+  const keyWidth = Math.max(dbEeRefCodeIndex, dbMasterSkuIndex) + 1;
 
-  /* ---------- STEP 3: UPDATE ONLY REQUIRED CELLS ---------- */
+  /* ---------- STEP 3: UPDATE ONLY CHANGED ROWS ---------- */
 
   for (let i = 1; i < dbValues.length; i++) {
     const row = dbValues[i];
-    const lookupKey =
-      `${String(row[dbEeRefCodeIndex]).trim().toLowerCase()}|${String(row[dbMasterSkuIndex]).trim().toLowerCase()}`;
+    const lookupKey = keyOf(row[dbEeRefCodeIndex], row[dbMasterSkuIndex]);
 
     if (!shipmentMap.has(lookupKey)) continue;
 
@@ -4495,22 +4498,99 @@ shipData.forEach(row => {
       details.item_returned_quantity
     ];
 
-    updates.forEach((val, offset) => {
-      if (val !== "" && val !== null && val !== undefined) {
-        dbSheet
-          .getRange(sheetRow, startUpdateIndex + 1 + offset)
-          .setValue(val);
-        updatedCellCount++;
-      }
-    });
+    // Blank values keep what the row already has
+    const current = row.slice(startUpdateIndex, startUpdateIndex + updates.length);
+    const merged = updates.map((val, offset) =>
+      val !== "" && val !== null && val !== undefined ? val : current[offset]);
+    const changed = merged.filter((val, offset) => cellKey(val) !== cellKey(current[offset])).length;
+    if (!changed) continue;
+
+    // Rows deleted or inserted in the sheet since the read above shift every row below them.
+    // Writing by the old index then puts this order's data on another PO's row (2026-10-31:
+    // Kundli 2011710134142 got Lucknow 52599110010444's order), so check the row first.
+    const live = sheetRow <= dbSheet.getLastRow() ? dbSheet.getRange(sheetRow, 1, 1, keyWidth).getValues()[0] : null;
+    if (!live || keyOf(live[dbEeRefCodeIndex], live[dbMasterSkuIndex]) !== lookupKey) {
+      skippedMovedRows++;
+      continue;
+    }
+
+    dbSheet.getRange(sheetRow, startUpdateIndex + 1, 1, merged.length).setValues([merged]);
+    updatedCellCount += changed;
   }
 
+  if (skippedMovedRows) {
+    Logger.log(`Skipped ${skippedMovedRows} row(s) that moved during the sync; the next run updates them`);
+  }
   Logger.log(
     updatedCellCount > 0
       ? `Successfully updated ${updatedCellCount} shipment-related cells`
       : "No matching shipment rows required updates"
   );
 }
+
+/**
+ * One-off repair, 2026-10-31. Rows were deleted from PO_Database while
+ * updateShipmentDetailsInPoDatabase was writing, so it wrote each order's EasyEcom data
+ * 5 rows too low. The rows that kept the wrong data are the ones with no EasyEcom order of
+ * their own (blank "EE Order Ref ID"): Kundli PO 2011710134142 got Lucknow 52599110010444's
+ * and 1735810087705's orders, and with them Lucknow's invoice, AWB, label and pickup date;
+ * three empty rows below quotation QT/26-27/151 got its order and invoice.
+ *
+ * Clears the borrowed data from those PO rows and sets them back to Confirmed (not yet
+ * pushed to EasyEcom), and clears the PO-less rows. Run from the editor with dryRun
+ * true first to see the rows, then false.
+ */
+function repairShiftedEeRows_20261031(dryRun) {
+  if (dryRun === undefined) dryRun = true;
+  const PO_ALLOWED = ["2011710134142"];
+  const CLEAR = ["Invoice Id", "Invoice Status", "Invoice Number", "Invoice Date", "Invoice Total", "Invoice Url",
+    "Invoice PDF Url", "EWB", "Box Data", "Carrier", "AWB", "Booked Date", "Tracking URL", "Tracking Status",
+    "Latest Status", "Latest Status Date", "Pickup Date", "Label URL"];
+  const EE_BLOCK = 12; // EE_reference_code .. EE_item_returned_quantity, as updateShipmentDetailsInPoDatabase writes
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Could not get the script lock" };
+  try {
+    const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0];
+    const idx = name => headers.indexOf(name);
+    const col = { po: idx("PO Number"), channel: idx("Channel Name"), status: idx("Status"),
+      ref: idx("EE_reference_code"), orderRef: idx("EE Order Ref ID") };
+    if (Object.values(col).some(c => c === -1)) return { status: "error", message: "PO_Database columns missing" };
+    const clearCols = CLEAR.map(idx).filter(c => c !== -1);
+    const text = v => String(v === null || v === undefined ? "" : v).trim();
+
+    const fixed = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const ref = text(row[col.ref]), po = text(row[col.po]);
+      if (!ref || text(row[col.orderRef]) || ref === po) continue;
+      const sheetRow = i + 1;
+      if (!po && !text(row[col.channel])) {
+        fixed.push({ row: sheetRow, po: "(none)", borrowedRef: ref, action: "clear row" });
+        if (!dryRun) sheet.getRange(sheetRow, 1, 1, headers.length).clearContent();
+      } else if (PO_ALLOWED.indexOf(po) !== -1) {
+        fixed.push({ row: sheetRow, po: po, borrowedRef: ref, status: text(row[col.status]), action: "clear borrowed data, Status Confirmed" });
+        if (!dryRun) {
+          sheet.getRange(sheetRow, col.ref + 1, 1, EE_BLOCK).clearContent();
+          clearCols.forEach(c => sheet.getRange(sheetRow, c + 1).clearContent());
+          sheet.getRange(sheetRow, col.status + 1).setValue("Confirmed");
+        }
+      } else {
+        fixed.push({ row: sheetRow, po: po, borrowedRef: ref, action: "left alone (not in the allowed list)" });
+      }
+    }
+    if (!dryRun) SpreadsheetApp.flush();
+    Logger.log(JSON.stringify(fixed, null, 1));
+    return { status: "success", dryRun: dryRun, rows: fixed };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function runRepairShiftedEeRowsDryRun() { return repairShiftedEeRows_20261031(true); }
+function runRepairShiftedEeRows() { return repairShiftedEeRows_20261031(false); }
 
 /**
  * **NEW FUNCTION 2: Updates Shipment Details.**
@@ -15403,6 +15483,12 @@ function syncSelfShipTrackers() {
     // The partner portal reads the Urvi Ent tracker alone: refresh the PO_Database data
     // copied onto it (appointments, dispatch, delivery, returns)
     try {
+      const added = partnerBackfillTrackerRows_(false);
+      if (added.length) updated.push(`Added to the ${SELF_SHIP_TRACKERS_.delhivery.label} tracker: ${added.join(", ")}`);
+    } catch (e) {
+      errors.push(`Urvi Ent orders not added to the tracker: ${e.message}`);
+    }
+    try {
       partnerSyncMasterToTracker_();
     } catch (e) {
       errors.push(`Master data not copied to the ${SELF_SHIP_TRACKERS_.delhivery.label} tracker: ${e.message}`);
@@ -16087,6 +16173,97 @@ function partnerSyncMasterToTracker_() {
     sheet.getRange(2, c + 1, column.length, 1).setValues(column);
   });
   return count;
+}
+
+/**
+ * Adds a tracker row for every Urvi Ent order in PO_Database (Carrier "Urvi Ent ...(Self)")
+ * that has no row on the tracker yet, so the partner portal shows all of them. An order
+ * matches a tracker row by EE reference, invoice or PO number, cancelled rows included.
+ * Pre-rename "Delhivery (Self)" orders are left out: most predate the portal. Runs with
+ * syncSelfShipTrackers before partnerSyncMasterToTracker_, which fills in the rest.
+ * Returns the EE references added (or that would be, with dryRun).
+ */
+function partnerBackfillTrackerRows_(dryRun) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const dbValues = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(dbValues[0]);
+  const col = name => idx(name);
+  const text = (row, name) => { const c = col(name); return c === -1 ? "" : String(row[c] === null || row[c] === undefined ? "" : row[c]).trim(); };
+
+  // Orders by EE reference, live rows only
+  const orders = {};
+  for (let i = 1; i < dbValues.length; i++) {
+    const row = dbValues[i];
+    if (!/^urvi\s*ent\b.*\(self\)$/i.test(text(row, "Carrier"))) continue;
+    if (text(row, "Status").toLowerCase() === "cancelled") continue;
+    const key = text(row, "EE_reference_code") || text(row, "Invoice Number");
+    if (!key) continue;
+    (orders[key] = orders[key] || []).push(row);
+  }
+
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const headers = ensureSelfShipColumns_(sheet, PARTNER_REQUEST_COLUMNS_);
+  const tIdx = selfShipHeaderIndex_(headers);
+  const lastRow = sheet.getLastRow();
+  const known = new Set();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, headers.length).getValues().forEach(r => {
+      const cell = name => tIdx(name) === -1 ? "" : partnerFormatCell_(r[tIdx(name)], "yyyy-MM-dd");
+      [cell("EE Reference"), cell("Invoice Number")].concat(cell("PO Number").split(","))
+        .map(partnerNormRef_).filter(Boolean).forEach(k => known.add(k));
+    });
+  }
+
+  // Ship To and Box Details read whole sheets per order, so a big backlog fills over a few runs
+  const MAX_PER_RUN = 15;
+  const missing = [];
+  const out = [];
+  Object.keys(orders).forEach(ref => {
+    const rows = orders[ref];
+    const first = name => { const hit = rows.find(r => text(r, name)); return hit ? hit[col(name)] : ""; };
+    const poNumbers = Array.from(new Set(rows.map(r => text(r, "PO Number")).filter(Boolean)));
+    const invoiceNumber = String(first("Invoice Number") || "").trim();
+    if ([ref, invoiceNumber].concat(poNumbers).map(partnerNormRef_).some(k => k && known.has(k))) return;
+    missing.push(ref);
+    if (dryRun || out.length >= MAX_PER_RUN) return;
+
+    const awb = String(first("AWB") || "").trim();
+    const courierCfg = SELF_SHIP_PARTNER_COURIERS_[/scorpion/i.test(first("Carrier")) ? "scorpion" : /bluedart/i.test(first("Carrier")) ? "bluedart" : "delhivery"];
+    const row = new Array(headers.length).fill("");
+    const put = (name, value) => { const c = tIdx(name); if (c !== -1) row[c] = value; };
+    const boxCol = col("Box Data");
+    put("Booked Date", first("Booked Date") || new Date());
+    put("PO Number", poNumbers.join(", "));
+    put("Channel", first("Channel Name"));
+    put("Invoice Number", invoiceNumber);
+    put("No. of Boxes", boxCol === -1 ? "" : Math.max(0, ...rows.map(r => Number(r[boxCol]) || 0)) || "");
+    put("PO PDF", hyperlinkFormula_(String(first("PO PDF") || "").trim(), `${poNumbers[0] || ref}_PO`));
+    put("Invoice Url", hyperlinkFormula_(String(first("Invoice Url") || "").trim(), `${invoiceNumber}_Invoice`));
+    put("Status", awb ? PARTNER_STATUS_.ACCEPTED : PARTNER_STATUS_.PENDING);
+    put("AWB", awb ? "'" + awb : "");
+    put("Tracking Link", awb ? courierCfg.trackingUrlBase + encodeURIComponent(awb) : "");
+    put("Box Label", String(first("Label URL") || "").trim());
+    put("EE Reference", ref);
+    put("Ship To", selfShipShipToText_(ss, first("EE Customer ID"), first("Store Code")));
+    put("Box Details", selfShipBoxDetailsText_(ss, ref));
+    put("Invoice Value", first("Invoice Total"));
+    put("EWB", first("EWB"));
+    put("Courier", courierCfg.label);
+    put("Submitted By", "Added from PO_Database");
+    out.push({ ref: ref, row: row });
+  });
+
+  if (out.length) {
+    sheet.getRange(lastRow + 1, 1, out.length, headers.length).setValues(out.map(o => o.row));
+  }
+  return dryRun ? missing : out.map(o => o.ref);
+}
+
+// Run from the editor to see which orders the next sync would add to the tracker
+function previewPartnerTrackerBackfill() {
+  const refs = partnerBackfillTrackerRows_(true);
+  Logger.log(`${refs.length} order(s) missing from the Urvi Ent tracker: ${refs.join(", ")}`);
+  return refs;
 }
 
 // Upper-case letters and digits only, so "BSPL/26-27/875" matches "BSPL-26-27-875"
