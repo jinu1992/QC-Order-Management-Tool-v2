@@ -575,6 +575,16 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
         );
     };
 
+    // Same rule as the partner portal's Missed Deliveries: the appointment has passed and the
+    // order is still open (not delivered, returned or cancelled), shipped or not. Without an
+    // appointment, a shipped order whose EDD has passed.
+    const checkIsMissed = (so: GroupedSalesOrder, today: Date): boolean => {
+        if (checkIsActuallyDelivered(so) || checkIsRTO(so)) return false;
+        if (so.status === 'Cancelled' || so.status === 'Closed') return false;
+        if (so.appointmentDate) return isPastDate(so.appointmentDate, today);
+        return so.status === 'Shipped' && isPastDate(so.edd, today);
+    };
+
     // 1. Group the raw purchaseOrders to match SalesOrderTable logic
     const allSalesOrders = useMemo(() => {
         const groups: Record<string, GroupedSalesOrder> = {};
@@ -618,10 +628,19 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
 
                 const rtoStatus = item.rtoStatus || po.rtoStatus;
                 const isRTOInitiated = eeStatusLower === 'shipped' && rtoStatus;
+                // Status ops set in PO_Database (Dispatch Manager / Mark Delivered), honoured the same
+                // way as SalesOrderTable. Self-shipped orders often never show as shipped in EasyEcom,
+                // so without this a dispatched order stayed "Label Generated" and fell out of Missed.
+                const poDbStatusLower = (po.poDbStatus || '').trim().toLowerCase();
+                const isFlipkartB2B = po.channel.toLowerCase().includes('flipkart') && !po.channel.toLowerCase().includes('minute');
 
                 if (eeStatusLower === 'returned' || eeStatusLower === 'rto') displayStatus = 'Returned';
                 else if (isRTOInitiated) displayStatus = 'RTO Initiated';
                 else if (rtoStatus) displayStatus = 'Returned';
+                else if (poDbStatusLower === 'rtd' || poDbStatusLower === 'ready to dispatch') displayStatus = 'Ready to Dispatch';
+                // GRN Pending / GRN Updated / Closed come after delivery (the partner portal counts them delivered too)
+                else if (poDbStatusLower === 'delivered' || poDbStatusLower.startsWith('grn') || poDbStatusLower === 'closed') displayStatus = 'Delivered';
+                else if (poDbStatusLower === 'dispatched') displayStatus = statusHasInvoice ? ((isAmazon || isFlipkartB2B) ? 'Delivered' : 'Shipped') : 'Batch Created';
                 else if (eeStatusLower === 'closed') displayStatus = 'Closed';
                 else if (isDeliveredStatus) displayStatus = statusHasInvoice ? 'Delivered' : 'Batch Created';
                 else if (eeStatusLower === 'shipped' || maniDate || trackingStatusLower === 'in transit' || isOutOfDelivery || (trackingStatusLower === 'booked' && eeStatusLower !== 'confirmed')) {
@@ -732,6 +751,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                         if (s === 'Closed') return 11;
                         if (s === 'Delivered') return 10;
                         if (s === 'Shipped') return 9;
+                        if (s === 'Ready to Dispatch') return 8.5;
                         if (s === 'Label Generated') return 8;
                         if (s === 'Create ASN') return 7;
                         if (s === 'Awaiting Appointment Confirmation') return 6;
@@ -842,9 +862,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             } else if (activeTab === 'Tomorrow') {
                 return isSameDay(so.appointmentDate, tomorrowDate) && !isActuallyDelivered && !isRTO;
             } else if (activeTab === 'Missed') {
-                const missedAppt = isPastDate(so.appointmentDate, todayDate);
-                const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                return (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
+                return checkIsMissed(so, todayDate);
             }
 
             return true;
@@ -904,9 +922,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
     const getStatusBadge = (so: GroupedSalesOrder) => {
         const isActuallyDelivered = checkIsActuallyDelivered(so);
         const isRTO = checkIsRTO(so);
-        const missedAppt = isPastDate(so.appointmentDate, todayDate);
-        const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-        const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
+        const isMissed = checkIsMissed(so, todayDate);
 
         if (isActuallyDelivered) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700 flex items-center gap-1 w-fit"><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
         if (isRTO) return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1 w-fit"><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
@@ -963,11 +979,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
             return so.status === 'Shipped' || !!so.appointmentDate;
         });
 
-        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => {
-            const missedAppt = isPastDate(so.appointmentDate, today);
-            const missedEdd = !so.appointmentDate && isPastDate(so.edd, today);
-            return (missedAppt || missedEdd) && so.status === 'Shipped';
-        });
+        const missedOrders = baseOrders.filter((so: GroupedSalesOrder) => checkIsMissed(so, today));
         const todayOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, today));
         const tomorrowOrders = baseOrders.filter((so: GroupedSalesOrder) => isSameDay(so.appointmentDate, tomorrow));
 
@@ -1555,9 +1567,7 @@ const ShipmentManager: React.FC<ShipmentManagerProps> = ({ purchaseOrders, curre
                                     const isTomorrow = isSameDay(so.appointmentDate, tomorrowDate);
                                     const isActuallyDelivered = checkIsActuallyDelivered(so);
                                     const isRTO = checkIsRTO(so);
-                                    const missedAppt = isPastDate(so.appointmentDate, todayDate);
-                                    const missedEdd = !so.appointmentDate && isPastDate(so.edd, todayDate);
-                                    const isMissed = (missedAppt || missedEdd) && !isActuallyDelivered && !isRTO && so.status === 'Shipped';
+                                    const isMissed = checkIsMissed(so, todayDate);
  
                                     let rowClass = "hover:bg-gray-50 transition-colors border-l-4 border-transparent cursor-pointer";
                                     if (isToday && !isActuallyDelivered) {
