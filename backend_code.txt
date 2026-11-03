@@ -10461,8 +10461,10 @@ function createAmazonFbaInboundPlan(data,poRef) {
 
     Logger.log("Updating Database");
 
-    // STEP 2 — Persist in DB
-    updatePoDatabase_(poRef, inboundPlanId,"","");
+    // STEP 2 — Persist in DB, on the base PO's rows. poRef is the "-1" variant when the push
+    // skips any lines (e.g. cancelled ones), and no PO_Database row carries that number until
+    // the EE push, so saving under it dropped the plan ID and the button stayed "Push to AMZ".
+    updatePoDatabase_(data.poNumber || poRef, inboundPlanId,"","");
 
     return {
       status: 'success',
@@ -11008,7 +11010,48 @@ function updatePoDatabase_(po, inboundPlanId, shipmentId, placementId, shipmentC
   );
 }
 
-function getATSTransportationOptionId_(transportationOptions) 
+/**
+ * One-off repair (2026-11-03): a PO whose Push to AMZ created the inbound plan on Amazon but
+ * never saved its ID (partial-push variant bug). Looks the plan up on Amazon by name (the PO
+ * number, or a "-N" variant of it) and writes it to the PO's rows. Writes only when exactly one
+ * ACTIVE plan matches; otherwise it logs the matches so the right one can be picked by hand.
+ */
+function backfillFbaInboundPlanForPo_(poNumber) {
+  const token = getAmazonAccessToken();
+  if (!token) throw new Error('Amazon access token missing');
+  const base = String(poNumber || '').trim();
+  if (!base) throw new Error('poNumber required');
+
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nameRe = new RegExp(`^${escaped}(-\\d+)?$`, 'i');
+  const matches = [];
+  let paginationToken = '';
+  for (let page = 0; page < 5; page++) {
+    let url = `${AMAZON.endpoint}${AMAZON.apiPath}/inboundPlans?pageSize=30&sortBy=CREATION_TIME&sortOrder=DESC`;
+    if (paginationToken) url += `&paginationToken=${encodeURIComponent(paginationToken)}`;
+    const res = fetchSigned_(token, { method: 'GET', url }, [200]);
+    (res.inboundPlans || []).forEach(p => {
+      if (nameRe.test(String(p.name || '').trim())) {
+        matches.push({ inboundPlanId: p.inboundPlanId, name: p.name, status: p.status, createdAt: p.createdAt });
+      }
+    });
+    paginationToken = res.pagination && res.pagination.nextToken;
+    if (!paginationToken) break;
+  }
+
+  Logger.log(`Inbound plans matching ${base}: ${JSON.stringify(matches, null, 1)}`);
+  const active = matches.filter(m => String(m.status || '').toUpperCase() === 'ACTIVE');
+  if (active.length !== 1) {
+    Logger.log(`Expected exactly 1 ACTIVE plan, found ${active.length}. Nothing written.`);
+    return { status: 'error', matches: matches };
+  }
+  updatePoDatabase_(base, active[0].inboundPlanId, '', '');
+  return { status: 'success', inboundPlanId: active[0].inboundPlanId, matches: matches };
+}
+
+function runBackfillFbaPlan_AZ20261102_1() { return backfillFbaInboundPlanForPo_('AZ20261102-1'); }
+
+function getATSTransportationOptionId_(transportationOptions)
 {
   if (!transportationOptions || !transportationOptions.length) {
     throw new Error('No transportation options available');
