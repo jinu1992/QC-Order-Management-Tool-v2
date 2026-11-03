@@ -203,19 +203,33 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
                 const packs = new Set<PackKind>();
                 if (doc.mimeType === 'application/pdf') {
                     const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+                    // Some label files carry more than labels: Scorpion's has the box labels plus an
+                    // A4-wide docket page. When a label file has label-sized pages, its bigger pages are
+                    // documents and go to A4; a label file of only big pages is a big label, scaled to 4x6.
+                    const sizes = src.getPages().map(p => p.getSize());
+                    const hasLabelPages = sizes.some(s => isLabelSized(s.width, s.height));
                     for (const i of src.getPageIndices()) {
                         const srcPage = src.getPage(i);
-                        const { width, height } = srcPage.getSize();
-                        const pack: PackKind = doc.kind === 'label' || isLabelSized(width, height) ? 'label' : 'a4';
+                        const { width, height } = sizes[i];
+                        const labelSized = isLabelSized(width, height);
+                        const pack: PackKind = labelSized || (doc.kind === 'label' && !hasLabelPages) ? 'label' : 'a4';
                         packs.add(pack);
                         const target = out[pack];
-                        // A label bigger than 4x6 is scaled down onto a 4x6 page; everything else is copied as is
-                        if (pack === 'label' && !fitsIn(width, height, LABEL_SIZE) && srcPage.getRotation().angle % 360 === 0) {
+                        const unrotated = srcPage.getRotation().angle % 360 === 0;
+                        if (pack === 'label' && !fitsIn(width, height, LABEL_SIZE) && unrotated) {
+                            // A label bigger than 4x6, scaled down onto a 4x6 page
                             const embedded = await target.embedPage(srcPage);
                             const [pw, ph] = width > height ? [LABEL_SIZE[1], LABEL_SIZE[0]] : LABEL_SIZE;
                             const scale = Math.min(pw / width, ph / height);
                             const page = target.addPage([pw, ph]);
                             page.drawPage(embedded, { x: (pw - width * scale) / 2, y: (ph - height * scale) / 2, xScale: scale, yScale: scale });
+                        } else if (pack === 'a4' && unrotated && width <= A4_SIZE[0] * 1.03 && height < A4_SIZE[1] * 0.9) {
+                            // A part-page document (the Scorpion docket): full size at the top of an A4 sheet,
+                            // so the printer doesn't blow it up to fill the page
+                            const embedded = await target.embedPage(srcPage);
+                            const scale = Math.min(1, A4_SIZE[0] / width);
+                            const page = target.addPage(A4_SIZE);
+                            page.drawPage(embedded, { x: (A4_SIZE[0] - width * scale) / 2, y: A4_SIZE[1] - height * scale, xScale: scale, yScale: scale });
                         } else {
                             const [copied] = await target.copyPages(src, [i]);
                             target.addPage(copied);
