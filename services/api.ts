@@ -124,9 +124,16 @@ export interface BoxScanStatus {
     code?: string;
     referenceCode?: string;
     awb?: string;
-    expectedBoxIds: string[];
+    // Box IDs are not sent: only how many there are and SHA-256 of "<referenceCode>|<boxId>",
+    // so a scan can be checked instantly without showing the IDs to copy from the screen.
+    expectedCount?: number;
+    expectedBoxHashes?: string[];
+    expectedBoxIds?: string[]; // older backend only
+    // Scans of the current session (or of the session that completed the order)
     scans: { boxId: string; scannedBy: string; scannedAt: string }[];
     complete: boolean;
+    // Boxes scanned in an earlier session that was left before every box was scanned
+    abandonedCount?: number;
     duplicate?: boolean;
 }
 
@@ -139,14 +146,16 @@ export interface PrintPackDocument {
     error?: string;
 }
 
-export const getBoxScanStatus = async (referenceCode: string): Promise<BoxScanStatus> => {
-    const json = await getFromScript(`${API_URL}?action=getBoxScanStatus&referenceCode=${encodeURIComponent(referenceCode)}`);
-    return { expectedBoxIds: [], scans: [], complete: false, ...json };
+// sessionId: one per opening of the scan window. Scans only count toward printing when a
+// single session covers every box, so leaving halfway means scanning everything again.
+export const getBoxScanStatus = async (referenceCode: string, sessionId: string): Promise<BoxScanStatus> => {
+    const json = await getFromScript(`${API_URL}?action=getBoxScanStatus&referenceCode=${encodeURIComponent(referenceCode)}&sessionId=${encodeURIComponent(sessionId)}`);
+    return { scans: [], complete: false, ...json };
 };
 
-export const recordBoxScan = async (referenceCode: string, boxId: string, userName: string): Promise<BoxScanStatus> => {
-    const res = await postToScript({ action: 'recordBoxScan', referenceCode, boxId, userName });
-    return { expectedBoxIds: [], scans: [], complete: false, ...res };
+export const recordBoxScan = async (referenceCode: string, boxId: string, userName: string, sessionId: string): Promise<BoxScanStatus> => {
+    const res = await postToScript({ action: 'recordBoxScan', referenceCode, boxId, userName, sessionId });
+    return { scans: [], complete: false, ...res };
 };
 
 // Not retried: it downloads every document again on each attempt

@@ -143,7 +143,7 @@ function doGet(e) {
       case 'getPackingData' :  return getPackingData(e.parameter.referenceCode);
       case 'getQuotations' : return getQuotations();
       case 'getSalesOrders': return getSalesOrders(e.parameter.referenceCode);
-      case 'getBoxScanStatus': return responseJSON(getBoxScanStatus({ referenceCode: e.parameter.referenceCode }));
+      case 'getBoxScanStatus': return responseJSON(getBoxScanStatus({ referenceCode: e.parameter.referenceCode, sessionId: e.parameter.sessionId }));
       case 'getPrintPack': return responseJSON(getPrintPack({ referenceCode: e.parameter.referenceCode }));
 
 
@@ -17028,10 +17028,15 @@ function partnerAppointmentQr_(data) {
  * "Reference Code"); each scan is logged on the Box_Scan_Log sheet against the
  * order's current AWB, so a new AWB (courier reassigned) needs a fresh scan.
  * The print pack (label, invoice, docket, PO) is served only once every box is scanned.
+ *
+ * Each opening of the scan window is a session (Session ID column). Only a session that
+ * covers every box completes the order, so a scan left halfway has to start over. The app
+ * is never sent the expected Box IDs, only their hashes (boxIdHash_), so they can't be
+ * copied from the screen instead of scanning the boxes.
  */
 
 const SHEET_BOX_SCAN_LOG_ = "Box_Scan_Log";
-const BOX_SCAN_HEADERS_ = ["Reference Code", "AWB", "Box ID", "Scanned By", "Scanned At"];
+const BOX_SCAN_HEADERS_ = ["Reference Code", "AWB", "Box ID", "Scanned By", "Scanned At", "Session ID"];
 const PRINT_PACK_MAX_BYTES_ = 25 * 1024 * 1024; // keep the JSON response well under Apps Script's limit
 
 // Scanners send the barcode text; packing data may hold it as a number or with a CSV backtick
@@ -17046,8 +17051,17 @@ function getBoxScanSheet_(ss) {
     sheet.getRange(1, 1, 1, BOX_SCAN_HEADERS_.length).setValues([BOX_SCAN_HEADERS_]).setFontWeight("bold");
     sheet.getRange(1, 1, sheet.getMaxRows(), 3).setNumberFormat("@"); // ref, AWB and box ID stay text
     sheet.setFrozenRows(1);
+  } else if (String(sheet.getRange(1, BOX_SCAN_HEADERS_.length).getValue()).trim() !== BOX_SCAN_HEADERS_[BOX_SCAN_HEADERS_.length - 1]) {
+    // Sheets made before the Session ID column existed
+    sheet.getRange(1, BOX_SCAN_HEADERS_.length).setValue(BOX_SCAN_HEADERS_[BOX_SCAN_HEADERS_.length - 1]).setFontWeight("bold");
   }
   return sheet;
+}
+
+// SHA-256 hex of "<referenceCode>|<boxId>"; the app hashes each scan the same way to check it
+function boxIdHash_(referenceCode, boxId) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, referenceCode + "|" + boxId, Utilities.Charset.UTF_8);
+  return bytes.map(b => ((b + 256) % 256).toString(16).padStart(2, "0")).join("");
 }
 
 // Reference Code -> its Box IDs, and Box ID -> Reference Code (reads only those two columns)
@@ -17074,6 +17088,8 @@ function loadPackingBoxIndex_(ss) {
   return { byRef: byRef, byBox: byBox };
 }
 
+// The order's scans against this AWB, one per box per session (rows from before sessions
+// existed share the session "")
 function readBoxScans_(ss, referenceCode, awb) {
   const sheet = getBoxScanSheet_(ss);
   if (sheet.getLastRow() < 2) return [];
@@ -17083,24 +17099,42 @@ function readBoxScans_(ss, referenceCode, awb) {
   values.forEach(r => {
     if (String(r[0]).trim() !== referenceCode || String(r[1]).trim() !== awb) return;
     const box = normalizeBoxId_(r[2]);
-    if (!box || seen[box]) return;
-    seen[box] = true;
+    const session = String(r[5] || "").trim();
+    if (!box || seen[session + "|" + box]) return;
+    seen[session + "|" + box] = true;
     const at = r[4] instanceof Date ? Utilities.formatDate(r[4], "Asia/Kolkata", "dd MMM yyyy, HH:mm") : String(r[4] || "");
-    scans.push({ boxId: box, scannedBy: String(r[3] || ""), scannedAt: at });
+    scans.push({ boxId: box, scannedBy: String(r[3] || ""), scannedAt: at, sessionId: session });
   });
   return scans;
 }
 
-function boxScanStatus_(ss, referenceCode, awb, index) {
+/**
+ * Complete when one session has scanned every expected box; its scans are returned. Otherwise
+ * only the given session's scans count, and abandonedCount says how many boxes the largest
+ * earlier, unfinished session had (so the app can say the scan has to start over).
+ */
+function boxScanStatus_(ss, referenceCode, awb, index, sessionId) {
   const expected = (index || loadPackingBoxIndex_(ss)).byRef[referenceCode] || [];
-  const scans = readBoxScans_(ss, referenceCode, awb).filter(s => expected.indexOf(s.boxId) !== -1);
+  const bySession = {};
+  readBoxScans_(ss, referenceCode, awb).forEach(s => {
+    if (expected.indexOf(s.boxId) === -1) return;
+    (bySession[s.sessionId] = bySession[s.sessionId] || []).push(s);
+  });
+  const current = String(sessionId || "").trim();
+  const completeKey = expected.length ? Object.keys(bySession).find(k => bySession[k].length === expected.length) : undefined;
+  const chosen = completeKey !== undefined ? bySession[completeKey] : (bySession[current] || []);
+  const abandonedCount = Object.keys(bySession)
+    .filter(k => k !== current && k !== completeKey)
+    .reduce((m, k) => Math.max(m, bySession[k].length), 0);
   return {
     status: "success",
     referenceCode: referenceCode,
     awb: awb,
-    expectedBoxIds: expected,
-    scans: scans,
-    complete: expected.length > 0 && scans.length === expected.length
+    expectedCount: expected.length,
+    expectedBoxHashes: expected.map(b => boxIdHash_(referenceCode, b)),
+    scans: chosen.map(s => ({ boxId: s.boxId, scannedBy: s.scannedBy, scannedAt: s.scannedAt })),
+    complete: completeKey !== undefined,
+    abandonedCount: abandonedCount
   };
 }
 
@@ -17123,19 +17157,20 @@ function currentAwbForReference_(ss, referenceCode) {
   return "";
 }
 
-/** data: { referenceCode } */
+/** data: { referenceCode, sessionId } */
 function getBoxScanStatus(data) {
   const referenceCode = String((data && data.referenceCode) || "").trim();
   if (!referenceCode) return { status: "error", message: "No reference code provided." };
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  return boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode));
+  return boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode), null, data.sessionId);
 }
 
-/** data: { referenceCode, boxId, userName } */
+/** data: { referenceCode, boxId, userName, sessionId } */
 function recordBoxScan(data) {
   const referenceCode = String((data && data.referenceCode) || "").trim();
   const boxId = normalizeBoxId_(data && data.boxId);
   const userName = String((data && data.userName) || "Unknown").trim();
+  const sessionId = String((data && data.sessionId) || "").trim();
   if (!referenceCode || !boxId) return { status: "error", message: "Reference code and Box ID are required." };
 
   const lock = LockService.getScriptLock();
@@ -17158,13 +17193,15 @@ function recordBoxScan(data) {
       };
     }
 
-    const already = readBoxScans_(ss, referenceCode, awb).some(s => s.boxId === boxId);
+    // Already complete (another session finished it): nothing to add
+    const before = boxScanStatus_(ss, referenceCode, awb, index, sessionId);
+    const already = before.complete || before.scans.some(s => s.boxId === boxId);
     if (!already) {
       // Apostrophes keep long numeric AWBs / box IDs as text (no rounding, no 1.2E+13)
-      getBoxScanSheet_(ss).appendRow(["'" + referenceCode, awb ? "'" + awb : "", "'" + boxId, userName, new Date()]);
+      getBoxScanSheet_(ss).appendRow(["'" + referenceCode, awb ? "'" + awb : "", "'" + boxId, userName, new Date(), sessionId]);
       SpreadsheetApp.flush();
     }
-    const result = boxScanStatus_(ss, referenceCode, awb, index);
+    const result = boxScanStatus_(ss, referenceCode, awb, index, sessionId);
     result.duplicate = already;
     result.message = already ? `Box ${boxId} was already scanned.` : `Box ${boxId} scanned.`;
     return result;
@@ -17261,7 +17298,7 @@ function getPrintPack(data) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const scan = boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode));
   if (!scan.complete) {
-    return { status: "error", code: "SCAN_INCOMPLETE", message: `Scan all boxes first (${scan.scans.length}/${scan.expectedBoxIds.length} scanned).` };
+    return { status: "error", code: "SCAN_INCOMPLETE", message: `Scan all ${scan.expectedCount} boxes in one go first.` };
   }
 
   let total = 0;
