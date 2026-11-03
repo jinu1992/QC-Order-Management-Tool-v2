@@ -11014,9 +11014,10 @@ function updatePoDatabase_(po, inboundPlanId, shipmentId, placementId, shipmentC
  * One-off repair (2026-11-03): a PO whose Push to AMZ created the inbound plan on Amazon but
  * never saved its ID (partial-push variant bug). Looks the plan up on Amazon by name (the PO
  * number, or a "-N" variant of it) and writes it to the PO's rows. Writes only when exactly one
- * ACTIVE plan matches; otherwise it logs the matches so the right one can be picked by hand.
+ * ACTIVE plan matches, unless opts.pick === 'newest', which keeps the newest ACTIVE plan and
+ * logs the others' IDs to void in Seller Central.
  */
-function backfillFbaInboundPlanForPo_(poNumber) {
+function backfillFbaInboundPlanForPo_(poNumber, opts) {
   const token = getAmazonAccessToken();
   if (!token) throw new Error('Amazon access token missing');
   const base = String(poNumber || '').trim();
@@ -11040,16 +11041,24 @@ function backfillFbaInboundPlanForPo_(poNumber) {
   }
 
   Logger.log(`Inbound plans matching ${base}: ${JSON.stringify(matches, null, 1)}`);
-  const active = matches.filter(m => String(m.status || '').toUpperCase() === 'ACTIVE');
-  if (active.length !== 1) {
+  const active = matches
+    .filter(m => String(m.status || '').toUpperCase() === 'ACTIVE')
+    .sort((x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || '')));
+  const pickNewest = opts && opts.pick === 'newest';
+  if (!active.length || (active.length > 1 && !pickNewest)) {
     Logger.log(`Expected exactly 1 ACTIVE plan, found ${active.length}. Nothing written.`);
     return { status: 'error', matches: matches };
   }
-  updatePoDatabase_(base, active[0].inboundPlanId, '', '');
-  return { status: 'success', inboundPlanId: active[0].inboundPlanId, matches: matches };
+  const keep = active[0];
+  updatePoDatabase_(base, keep.inboundPlanId, '', '');
+  const toVoid = active.slice(1).map(m => m.inboundPlanId);
+  Logger.log(`Kept ${keep.inboundPlanId} (created ${keep.createdAt}) on ${base}.`);
+  if (toVoid.length) Logger.log(`VOID THESE in Seller Central: ${toVoid.join(', ')}`);
+  return { status: 'success', inboundPlanId: keep.inboundPlanId, toVoid: toVoid, matches: matches };
 }
 
-function runBackfillFbaPlan_AZ20261102_1() { return backfillFbaInboundPlanForPo_('AZ20261102-1'); }
+// AZ20261102-1 had 4 ACTIVE plans (Push to AMZ clicked 4 times); keep the newest, void the rest.
+function runBackfillFbaPlan_AZ20261102_1() { return backfillFbaInboundPlanForPo_('AZ20261102-1', { pick: 'newest' }); }
 
 function getATSTransportationOptionId_(transportationOptions)
 {
