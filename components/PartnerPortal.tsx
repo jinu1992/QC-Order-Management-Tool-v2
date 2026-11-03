@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     RefreshIcon, XCircleIcon, CheckCircleIcon, TruckIcon, CalendarIcon, SearchIcon, UploadIcon,
-    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon, PrinterIcon
+    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon, PrinterIcon, DownloadIcon
 } from './icons/Icons';
 import AppointmentPass from './AppointmentPass';
 
@@ -213,18 +213,96 @@ const AppointmentBadge: React.FC<{ date: string }> = ({ date }) => {
 
 const todayIst = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+type Stage = 'Cancelled' | 'Shipment Pending' | 'RTO / Returned' | 'Delivered' | 'Missed' | 'Pickup Pending' | 'Appt Confirmed' | 'In Transit';
+
+// The shipment's badge text (also the CSV's Status column)
+const stageOf = (r: ShipRequest): Stage => {
+    const days = daysUntil(r.appointmentDate);
+    if (isCancelled(r)) return 'Cancelled';
+    if (r.status === 'Pending') return 'Shipment Pending';
+    if (isRto(r)) return 'RTO / Returned';
+    if (isDelivered(r)) return 'Delivered';
+    if (days !== null && days < 0) return 'Missed';
+    if (r.pickedUp === false) return 'Pickup Pending';
+    if (r.appointmentDate) return 'Appt Confirmed';
+    return 'In Transit';
+};
+
+const STAGE_STYLE: Record<Stage, { tone: string; Icon: React.FC<{ className?: string }> }> = {
+    'Cancelled': { tone: 'bg-gray-100 text-gray-700', Icon: XCircleIcon },
+    'Shipment Pending': { tone: 'bg-blue-100 text-blue-700', Icon: UploadIcon },
+    'RTO / Returned': { tone: 'bg-red-100 text-red-700', Icon: AlertIcon },
+    'Delivered': { tone: 'bg-green-100 text-green-700', Icon: CheckCircleIcon },
+    'Missed': { tone: 'bg-red-100 text-red-700', Icon: AlertIcon },
+    'Pickup Pending': { tone: 'bg-teal-100 text-teal-700', Icon: CubeIcon },
+    'Appt Confirmed': { tone: 'bg-blue-100 text-blue-700', Icon: CalendarIcon },
+    'In Transit': { tone: 'bg-orange-100 text-orange-700', Icon: TruckIcon },
+};
+
 // Same badges as the tool's Shipment Tracker
 const StagePill: React.FC<{ request: ShipRequest }> = ({ request: r }) => {
-    const days = daysUntil(r.appointmentDate);
-    const badge = 'px-2 py-1 text-xs font-medium rounded-full flex items-center gap-1 w-fit whitespace-nowrap';
-    if (isCancelled(r)) return <span className={`${badge} bg-gray-100 text-gray-700`}><XCircleIcon className="w-3 h-3" /> Cancelled</span>;
-    if (r.status === 'Pending') return <span className={`${badge} bg-blue-100 text-blue-700`}><UploadIcon className="w-3 h-3" /> Shipment Pending</span>;
-    if (isRto(r)) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> RTO / Returned</span>;
-    if (isDelivered(r)) return <span className={`${badge} bg-green-100 text-green-700`}><CheckCircleIcon className="w-3 h-3" /> Delivered</span>;
-    if (days !== null && days < 0) return <span className={`${badge} bg-red-100 text-red-700`}><AlertIcon className="w-3 h-3" /> Missed</span>;
-    if (r.pickedUp === false) return <span className={`${badge} bg-teal-100 text-teal-700`}><CubeIcon className="w-3 h-3" /> Pickup Pending</span>;
-    if (r.appointmentDate) return <span className={`${badge} bg-blue-100 text-blue-700`}><CalendarIcon className="w-3 h-3" /> Appt Confirmed</span>;
-    return <span className={`${badge} bg-orange-100 text-orange-700`}><TruckIcon className="w-3 h-3" /> In Transit</span>;
+    const stage = stageOf(r);
+    const { tone, Icon } = STAGE_STYLE[stage];
+    return <span className={`px-2 py-1 text-xs font-medium rounded-full flex items-center gap-1 w-fit whitespace-nowrap ${tone}`}><Icon className="w-3 h-3" /> {stage}</span>;
+};
+
+// --- CSV export of the rows on screen ---
+const CSV_COLUMNS: [string, (r: ShipRequest) => string | number | undefined][] = [
+    ['Status', stageOf],
+    ['Channel', r => r.channel],
+    ['Store', r => r.storeCode],
+    ['PO Number', r => r.poNumbers.join(', ')],
+    ['Invoice Number', r => r.invoiceNumber],
+    ['EE Reference', r => r.eeReference],
+    ['Boxes', r => r.boxes],
+    ['Invoice Value', r => r.invoiceValue],
+    ['Courier', r => r.courier || (isCreated(r) ? 'Delhivery' : '')],
+    ['AWB / LRN', r => r.awb],
+    ['Tracking Status', r => r.trackingStatus],
+    ['EWB', r => r.ewb],
+    ['Booked Date', r => r.bookedDate],
+    ['Pickup Date', r => r.pickupDate],
+    ['Picked Up', r => r.pickedUp === true ? 'Yes' : r.pickedUp === false ? 'No' : ''],
+    ['Appointment Date', r => r.appointmentDate],
+    ['Appointment Time', r => r.appointmentTime],
+    ['Appointment ID', r => r.appointmentId],
+    ['Delivered Date', r => r.deliveredDate],
+    ['RTO Marked At', r => r.rtoMarkedAt],
+    ['Ship To', r => r.shipTo],
+    ['Submitted By', r => r.submittedBy],
+    ['Submitted At', r => r.submittedAt],
+    ['Tracking URL', r => r.trackingUrl],
+    ['Label URL', r => r.labelUrl],
+    ['Docket URL', r => r.docketUrl],
+    ['POD URL', r => r.podUrl],
+    ['Invoice URL', r => r.invoiceUrl],
+    ['PO PDF URL', r => r.poPdfUrl],
+];
+
+const csvCell = (value: string | number | undefined): string => {
+    let s = value === undefined || value === null ? '' : String(value);
+    // Long digit strings (AWBs, PO numbers) as text, or Excel shows them as 1.23E+13
+    if (/^\d{11,}$/.test(s)) return `="${s}"`;
+    // A leading = + - @ would run as a formula when opened in Excel / Sheets
+    if (/^[=+\-@]/.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const downloadCsv = (rows: ShipRequest[], tabLabel: string) => {
+    const lines = [
+        CSV_COLUMNS.map(([name]) => csvCell(name)).join(','),
+        ...rows.map(r => CSV_COLUMNS.map(([, get]) => csvCell(get(r))).join(',')),
+    ];
+    // BOM so Excel reads it as UTF-8
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `shipments-${tabLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${todayIst()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 type ActionResult = { status: string; message: string; checks?: Check[] };
@@ -1061,6 +1139,14 @@ const PartnerPortal: React.FC = () => {
                         <input type="text" placeholder="Filter by AWB / LRN / Docket..." value={awbQuery} onChange={e => setAwbQuery(e.target.value)}
                             className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500 bg-blue-50/30" />
                     </div>
+
+                    <button
+                        onClick={() => downloadCsv(visible, TABS.find(t => t.key === tab)?.label || tab)}
+                        disabled={!visible.length}
+                        title={visible.length ? `Download the ${visible.length} shipment(s) shown` : 'No shipments to download'}
+                        className="ml-auto flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                        <DownloadIcon className="h-4 w-4" /> Download CSV{visible.length ? ` (${visible.length})` : ''}
+                    </button>
                 </div>
             </div>
 
