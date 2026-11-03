@@ -143,6 +143,8 @@ function doGet(e) {
       case 'getPackingData' :  return getPackingData(e.parameter.referenceCode);
       case 'getQuotations' : return getQuotations();
       case 'getSalesOrders': return getSalesOrders(e.parameter.referenceCode);
+      case 'getBoxScanStatus': return responseJSON(getBoxScanStatus({ referenceCode: e.parameter.referenceCode }));
+      case 'getPrintPack': return responseJSON(getPrintPack({ referenceCode: e.parameter.referenceCode }));
 
 
       default: return responseJSON({status: 'error', message: 'Invalid action'});
@@ -227,6 +229,7 @@ function doPost(e) {
     else if (action === 'syncSelfShipTrackers') result = syncSelfShipTrackers();
     else if (action === 'recordOtherSelfShipment') result = recordOtherSelfShipment(data);
     else if (action === 'cancelShipment') result = cancelShipment(data);
+    else if (action === 'recordBoxScan') result = recordBoxScan(data);
     else if (action === 'sendBBOrderConfirmationEmail') 
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
@@ -16962,4 +16965,267 @@ function partnerAppointmentQr_(data) {
   const bytes = blob.getBytes();
   if (bytes.length > 3 * 1024 * 1024) return { status: "error", message: "The appointment QR image is too large to show." };
   return { status: "success", mimeType: blob.getContentType() || "image/jpeg", base64: Utilities.base64Encode(bytes) };
+}
+
+// ==========================================
+// BOX SCAN GATE (box scan.js)
+// ==========================================
+/**
+ * Before anything is printed for a shipment, the packer scans every box's EasyEcom
+ * Box ID barcode. Expected boxes come from Master_Packing_Data ("Box ID" per
+ * "Reference Code"); each scan is logged on the Box_Scan_Log sheet against the
+ * order's current AWB, so a new AWB (courier reassigned) needs a fresh scan.
+ * The print pack (label, invoice, docket, PO) is served only once every box is scanned.
+ */
+
+const SHEET_BOX_SCAN_LOG_ = "Box_Scan_Log";
+const BOX_SCAN_HEADERS_ = ["Reference Code", "AWB", "Box ID", "Scanned By", "Scanned At"];
+const PRINT_PACK_MAX_BYTES_ = 25 * 1024 * 1024; // keep the JSON response well under Apps Script's limit
+
+// Scanners send the barcode text; packing data may hold it as a number or with a CSV backtick
+function normalizeBoxId_(value) {
+  return String(value === null || value === undefined ? "" : value).trim().replace(/^[`']/, "").replace(/\.0+$/, "").toUpperCase();
+}
+
+function getBoxScanSheet_(ss) {
+  let sheet = ss.getSheetByName(SHEET_BOX_SCAN_LOG_);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_BOX_SCAN_LOG_);
+    sheet.getRange(1, 1, 1, BOX_SCAN_HEADERS_.length).setValues([BOX_SCAN_HEADERS_]).setFontWeight("bold");
+    sheet.getRange(1, 1, sheet.getMaxRows(), 3).setNumberFormat("@"); // ref, AWB and box ID stay text
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+// Reference Code -> its Box IDs, and Box ID -> Reference Code (reads only those two columns)
+function loadPackingBoxIndex_(ss) {
+  const sheet = ss.getSheetByName(SHEET_MASTER_DATA);
+  if (!sheet || sheet.getLastRow() < 2) return { byRef: {}, byBox: {} };
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim());
+  const refCol = headers.indexOf("Reference Code");
+  const boxCol = headers.indexOf("Box ID");
+  if (refCol === -1 || boxCol === -1) throw new Error("Master_Packing_Data is missing the 'Reference Code' or 'Box ID' column.");
+  const n = sheet.getLastRow() - 1;
+  const refs = sheet.getRange(2, refCol + 1, n, 1).getValues();
+  const boxes = sheet.getRange(2, boxCol + 1, n, 1).getValues();
+  const byRef = {};
+  const byBox = {};
+  for (let i = 0; i < n; i++) {
+    const ref = String(refs[i][0]).trim();
+    const box = normalizeBoxId_(boxes[i][0]);
+    if (!ref || !box) continue;
+    if (!byRef[ref]) byRef[ref] = [];
+    if (byRef[ref].indexOf(box) === -1) byRef[ref].push(box);
+    if (!byBox[box]) byBox[box] = ref;
+  }
+  return { byRef: byRef, byBox: byBox };
+}
+
+function readBoxScans_(ss, referenceCode, awb) {
+  const sheet = getBoxScanSheet_(ss);
+  if (sheet.getLastRow() < 2) return [];
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, BOX_SCAN_HEADERS_.length).getValues();
+  const seen = {};
+  const scans = [];
+  values.forEach(r => {
+    if (String(r[0]).trim() !== referenceCode || String(r[1]).trim() !== awb) return;
+    const box = normalizeBoxId_(r[2]);
+    if (!box || seen[box]) return;
+    seen[box] = true;
+    const at = r[4] instanceof Date ? Utilities.formatDate(r[4], "Asia/Kolkata", "dd MMM yyyy, HH:mm") : String(r[4] || "");
+    scans.push({ boxId: box, scannedBy: String(r[3] || ""), scannedAt: at });
+  });
+  return scans;
+}
+
+function boxScanStatus_(ss, referenceCode, awb, index) {
+  const expected = (index || loadPackingBoxIndex_(ss)).byRef[referenceCode] || [];
+  const scans = readBoxScans_(ss, referenceCode, awb).filter(s => expected.indexOf(s.boxId) !== -1);
+  return {
+    status: "success",
+    referenceCode: referenceCode,
+    awb: awb,
+    expectedBoxIds: expected,
+    scans: scans,
+    complete: expected.length > 0 && scans.length === expected.length
+  };
+}
+
+// The order's current AWB from PO_Database ("" when it has none, e.g. Flipkart B2B)
+function currentAwbForReference_(ss, referenceCode) {
+  const sheet = ss.getSheetByName(SHEET_PO_DB);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim());
+  const refCol = headers.indexOf("EE_reference_code");
+  const awbCol = headers.indexOf("AWB");
+  const n = sheet.getLastRow() - 1;
+  if (refCol === -1 || awbCol === -1 || n < 1) return "";
+  const refs = sheet.getRange(2, refCol + 1, n, 1).getValues();
+  const awbs = sheet.getRange(2, awbCol + 1, n, 1).getValues();
+  for (let i = 0; i < n; i++) {
+    if (String(refs[i][0]).trim() === referenceCode) {
+      const awb = String(awbs[i][0] || "").trim();
+      if (awb && awb !== "PROCESSING") return awb;
+    }
+  }
+  return "";
+}
+
+/** data: { referenceCode } */
+function getBoxScanStatus(data) {
+  const referenceCode = String((data && data.referenceCode) || "").trim();
+  if (!referenceCode) return { status: "error", message: "No reference code provided." };
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode));
+}
+
+/** data: { referenceCode, boxId, userName } */
+function recordBoxScan(data) {
+  const referenceCode = String((data && data.referenceCode) || "").trim();
+  const boxId = normalizeBoxId_(data && data.boxId);
+  const userName = String((data && data.userName) || "Unknown").trim();
+  if (!referenceCode || !boxId) return { status: "error", message: "Reference code and Box ID are required." };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { status: "error", code: "BUSY", message: "Another scan is being saved. Scan the box again." };
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const index = loadPackingBoxIndex_(ss);
+    const expected = index.byRef[referenceCode] || [];
+    const awb = currentAwbForReference_(ss, referenceCode);
+
+    if (!expected.length) {
+      return { status: "error", code: "NO_BOXES", message: `No box data for ${referenceCode} in Master_Packing_Data. Upload the box data first.` };
+    }
+    if (expected.indexOf(boxId) === -1) {
+      const owner = index.byBox[boxId];
+      return {
+        status: "error",
+        code: "WRONG_BOX",
+        message: owner ? `Box ${boxId} belongs to ${owner}, not ${referenceCode}. Keep it aside.` : `Box ${boxId} is not in the packing data of any order.`
+      };
+    }
+
+    const already = readBoxScans_(ss, referenceCode, awb).some(s => s.boxId === boxId);
+    if (!already) {
+      // Apostrophes keep long numeric AWBs / box IDs as text (no rounding, no 1.2E+13)
+      getBoxScanSheet_(ss).appendRow(["'" + referenceCode, awb ? "'" + awb : "", "'" + boxId, userName, new Date()]);
+      SpreadsheetApp.flush();
+    }
+    const result = boxScanStatus_(ss, referenceCode, awb, index);
+    result.duplicate = already;
+    result.message = already ? `Box ${boxId} was already scanned.` : `Box ${boxId} scanned.`;
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Every printable document saved for the order, deduplicated, in print order
+function collectPrintDocuments_(ss, referenceCode) {
+  const values = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
+  const refCol = col("EE_reference_code");
+  const rows = values.filter((r, i) => i > 0 && String(r[refCol]).trim() === referenceCode);
+  if (!rows.length) throw new Error(`Order ${referenceCode} not found in PO_Database.`);
+
+  const docs = [];
+  const seen = {};
+  const cell = (r, name) => col(name) === -1 ? "" : String(r[col(name)] || "").trim();
+  const add = (kind, label, url) => {
+    if (!/^https?:\/\//i.test(url) || seen[url]) return;
+    seen[url] = true;
+    docs.push({ kind: kind, label: label, url: url });
+  };
+
+  rows.forEach(r => add("label", "Shipping Label", cell(r, "Label URL")));
+  rows.forEach(r => {
+    const inv = cell(r, "Invoice Number");
+    add("invoice", inv ? `Invoice ${inv}` : "Invoice", cell(r, "Invoice PDF Url"));
+  });
+
+  // Self-ship docket copy from the Urvi Ent tracker (skips cancelled requests)
+  try {
+    const tValues = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery).getDataRange().getValues();
+    const t = selfShipHeaderIndex_(tValues[0]);
+    if (t("EE Reference") !== -1 && t("Docket Copy") !== -1) {
+      tValues.slice(1).forEach(r => {
+        if (String(r[t("EE Reference")]).trim() !== referenceCode) return;
+        if (t("Status") !== -1 && /cancel/i.test(String(r[t("Status")]))) return;
+        add("docket", "Docket Copy", String(r[t("Docket Copy")] || "").trim());
+      });
+    }
+  } catch (e) {
+    Logger.log(`collectPrintDocuments_: tracker not read for ${referenceCode}: ${e.message}`);
+  }
+
+  rows.forEach(r => {
+    const po = cell(r, "PO Number");
+    add("po", po ? `PO ${po}` : "Purchase Order", cell(r, "PO PDF"));
+  });
+  return docs;
+}
+
+// One document as a blob: Drive files (Google Sheets/Docs exported to PDF), Zoho invoice
+// API links (need the Zoho token), or public links (Nimbus / Shiprocket S3)
+function fetchPrintDocumentBlob_(url) {
+  const driveId = /google\.com/i.test(url) ? (url.match(/\/d\/([\w-]{20,})/) || url.match(/[?&]id=([\w-]{20,})/) || [])[1] : "";
+  if (driveId) {
+    const file = DriveApp.getFileById(driveId);
+    return /^application\/vnd\.google-apps\./.test(file.getMimeType()) ? file.getAs(MimeType.PDF) : file.getBlob();
+  }
+  const zohoInvoice = url.match(/zoho(?:apis)?\.in\/(?:api\/v3|books\/v3)\/invoices\/(\d+)/i);
+  if (zohoInvoice) {
+    const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+    const res = UrlFetchApp.fetch(
+      `https://www.zohoapis.in/books/v3/invoices/${zohoInvoice[1]}?organization_id=${orgId}&accept=pdf`,
+      { method: "get", headers: { Authorization: `Zoho-oauthtoken ${getZohoAccessToken()}` }, muteHttpExceptions: true }
+    );
+    if (res.getResponseCode() !== 200) throw new Error(`Zoho returned ${res.getResponseCode()}`);
+    return res.getBlob();
+  }
+  const res = UrlFetchApp.fetch(url, { followRedirects: true, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error(`Download failed (${res.getResponseCode()})`);
+  return res.getBlob();
+}
+
+// What the bytes really are (S3 links often say octet-stream)
+function sniffPrintMime_(bytes, fallback) {
+  const b = (i) => bytes[i] & 0xff;
+  if (b(0) === 0x25 && b(1) === 0x50 && b(2) === 0x44 && b(3) === 0x46) return "application/pdf"; // %PDF
+  if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4e && b(3) === 0x47) return "image/png";
+  if (b(0) === 0xff && b(1) === 0xd8 && b(2) === 0xff) return "image/jpeg";
+  return fallback || "application/octet-stream";
+}
+
+/**
+ * The shipment's documents as base64, for the app to merge into one PDF.
+ * Refused until every box of the order is scanned against its current AWB.
+ * data: { referenceCode }
+ */
+function getPrintPack(data) {
+  const referenceCode = String((data && data.referenceCode) || "").trim();
+  if (!referenceCode) return { status: "error", message: "No reference code provided." };
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const scan = boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode));
+  if (!scan.complete) {
+    return { status: "error", code: "SCAN_INCOMPLETE", message: `Scan all boxes first (${scan.scans.length}/${scan.expectedBoxIds.length} scanned).` };
+  }
+
+  let total = 0;
+  const documents = collectPrintDocuments_(ss, referenceCode).map(doc => {
+    try {
+      const blob = fetchPrintDocumentBlob_(doc.url);
+      const bytes = blob.getBytes();
+      const mimeType = sniffPrintMime_(bytes, blob.getContentType());
+      if (!/^(application\/pdf|image\/(png|jpeg))$/.test(mimeType)) throw new Error(`Not a PDF or image (${mimeType})`);
+      if (total + bytes.length > PRINT_PACK_MAX_BYTES_) throw new Error("Too large to include, open it from the order instead");
+      total += bytes.length;
+      return Object.assign({}, doc, { mimeType: mimeType, base64: Utilities.base64Encode(bytes) });
+    } catch (e) {
+      Logger.log(`getPrintPack ${referenceCode}: ${doc.label} failed: ${e.message}`);
+      return Object.assign({}, doc, { error: e.message });
+    }
+  });
+  return { status: "success", referenceCode: referenceCode, documents: documents };
 }

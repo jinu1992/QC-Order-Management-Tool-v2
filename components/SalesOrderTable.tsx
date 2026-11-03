@@ -37,6 +37,7 @@ import {
 import OrderNotesTimeline from './OrderNotesTimeline';
 import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, recordOtherSelfShipment, cancelShipment, syncSelfShipTrackers, triggerEasyEcomFetch } from '../services/api';
 import AppointmentPass from './AppointmentPass';
+import BoxScanPrintModal, { type ExtraPrintAction } from './BoxScanPrintModal';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
 
@@ -1965,6 +1966,8 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [isSyncingEE, setIsSyncingEE] = useState(false);
     const [portalHelper, setPortalHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
+    // Once a label exists, printing goes through the box scan (every box scanned first)
+    const [scanPrintSo, setScanPrintSo] = useState<GroupedSalesOrder | null>(null);
     const [shippingConfirm, setShippingConfirm] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [zeptoASNHelper, setZeptoASNHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartApptModal, setInstamartApptModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -2894,6 +2897,31 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
 
         printWindow.document.write(html);
         printWindow.document.close();
+    };
+
+    // A label exists and the boxes are still in the warehouse (not yet RTD or shipped):
+    // printing waits for the box scan
+    const isPrintGated = (so: GroupedSalesOrder) => {
+        const status = (so.status || '').toLowerCase().trim();
+        const hasLabel = so.status === 'Label Generated' || !!so.awb;
+        const isPastWarehouse = ['ready to dispatch', 'rtd', 'shipped', 'delivered', 'rto initiated', 'returned', 'closed', 'cancelled'].includes(status);
+        return hasLabel && !isPastWarehouse;
+    };
+
+    // Channel documents drawn in the browser; the scan modal unlocks them with the rest
+    const getChannelPrintActions = (so: GroupedSalesOrder): ExtraPrintAction[] => {
+        const channel = so.channel.toLowerCase();
+        const actions: ExtraPrintAction[] = [];
+        if (channel.includes('blinkit') && so.appointmentId) {
+            actions.push({ label: 'Appointment Pass', onClick: () => { setScanPrintSo(null); setActiveAppointmentPass(so); } });
+        }
+        if (channel.includes('flipkart') && so.appointmentId) {
+            actions.push({ label: 'Flipkart Box Labels', onClick: () => handlePrintFlipkartLabels(so) });
+        }
+        if (channel.includes('instamart') && so.boxCount > 0) {
+            actions.push({ label: 'Instamart Box Labels', onClick: () => { setScanPrintSo(null); setInstamartPrintPackModal({ isOpen: true, so }); } });
+        }
+        return actions;
     };
 
     useEffect(() => {
@@ -4181,6 +4209,15 @@ const handleUpdateGoogleSheet = async () => {
                     addNotification={addNotification}
                 />
             )}
+            {scanPrintSo && (
+                <BoxScanPrintModal
+                    so={scanPrintSo}
+                    userName={currentUser?.name || currentUser?.email || 'Unknown'}
+                    onClose={() => setScanPrintSo(null)}
+                    addNotification={addNotification}
+                    extraPrints={getChannelPrintActions(scanPrintSo)}
+                />
+            )}
 
             {instamartApptModal.isOpen && instamartApptModal.so && (
                 <AppointmentUpdateModal
@@ -4452,8 +4489,10 @@ const handleUpdateGoogleSheet = async () => {
                                 const hasLabel = so.status === 'Label Generated' || so.status === 'Shipped' || so.status === 'Delivered' || !!so.awb;
                                 const hasAppointmentId = !!so.appointmentId; // Stores the Consignment ID for Flipkart
 
-                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus && !isRTD;
-                                const showFlipkartPrintAction = (isFlipkart || isFlipkartMinutes) && hasAppointmentId && !isFinalStatus && !isRTD;
+                                // Label exists: every print moves behind the box scan (Scan & Print)
+                                const printGated = isPrintGated(so);
+                                const showInstamartPrintAction = isInstamart && so.boxCount > 0 && hasLabel && !isFinalStatus && !isRTD && !printGated;
+                                const showFlipkartPrintAction = (isFlipkart || isFlipkartMinutes) && hasAppointmentId && !isFinalStatus && !isRTD && !printGated;
 
                                 const showFlipkartDownload = (isFlipkart || isFlipkartMinutes) && hasLabel && !isFinalStatus && !isRTD;
                                 const showZeptoDownload = false;
@@ -4564,7 +4603,16 @@ const handleUpdateGoogleSheet = async () => {
                                                                     <DownloadIcon className="h-3.5 w-3.5" /> ASN CSV
                                                                 </button>
                                                             )}
-                                                            {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                            {printGated && (
+                                                                <button
+                                                                    onClick={(e: any) => { e.stopPropagation(); setScanPrintSo(so); }}
+                                                                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
+                                                                    title="Scan every box, then print the label, invoice, PO and docket"
+                                                                >
+                                                                    <PrinterIcon className="h-3.5 w-3.5" /> Scan & Print
+                                                                </button>
+                                                            )}
+                                                            {showBlinkitAppointmentBtn && so.status?.toLowerCase().trim() !== 'ready to dispatch' && !(hasAppointmentId && printGated) && (
                                                                 <button
                                                                     onClick={(e: any) => {
                                                                         e.stopPropagation();
@@ -4623,7 +4671,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                     <PrinterIcon className="h-3.5 w-3.5" /> Print Labels
                                                                 </button>
                                                             )}
-                                                            {so.labelUrl && so.status?.toLowerCase().trim() !== 'ready to dispatch' && (
+                                                            {so.labelUrl && so.status?.toLowerCase().trim() !== 'ready to dispatch' && !printGated && (
                                                                 <a
                                                                     href={so.labelUrl}
                                                                     target="_blank"
@@ -4974,7 +5022,15 @@ const handleUpdateGoogleSheet = async () => {
                                                             <div className="flex justify-between items-center mb-4">
                                                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2"><GlobeIcon className="h-4 w-4 text-blue-600" /> Logistics & Shipment Status</h4>
                                                                 <div className="flex items-center gap-3">
-                                                                    {so.labelUrl && so.status !== 'Ready to Dispatch' && (
+                                                                    {printGated && (
+                                                                        <button
+                                                                            onClick={(e: any) => { e.stopPropagation(); setScanPrintSo(so); }}
+                                                                            className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-emerald-700 transition-all active:scale-95"
+                                                                        >
+                                                                            <PrinterIcon className="h-4 w-4" /> Scan Boxes & Print
+                                                                        </button>
+                                                                    )}
+                                                                    {so.labelUrl && so.status !== 'Ready to Dispatch' && !printGated && (
                                                                         <a
                                                                             href={so.labelUrl}
                                                                             target="_blank"
@@ -5008,7 +5064,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                             <GlobeIcon className="h-4 w-4" /> Update ASN
                                                                         </button>
                                                                     )}
-                                                                    {showBlinkitAppointmentBtn && so.status !== 'Ready to Dispatch' && (
+                                                                    {showBlinkitAppointmentBtn && so.status !== 'Ready to Dispatch' && !(hasAppointmentId && printGated) && (
                                                                         <button
                                                                             onClick={(e: any) => {
                                                                                 e.stopPropagation();
@@ -5040,7 +5096,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                             <GlobeIcon className="h-4 w-4" /> Link Consignment Details
                                                                         </button>
                                                                     )}
-                                                                    {(isFlipkart || isFlipkartMinutes) && hasAppointmentId && so.status !== 'Ready to Dispatch' && (
+                                                                    {(isFlipkart || isFlipkartMinutes) && hasAppointmentId && so.status !== 'Ready to Dispatch' && !printGated && (
                                                                         <button
                                                                             onClick={(e: any) => { e.stopPropagation(); handlePrintFlipkartLabels(so); }}
                                                                             className="flex items-center gap-2 px-6 py-2 bg-partners-green text-white text-[11px] font-bold rounded-lg shadow-md hover:bg-green-700 transition-all active:scale-95"
@@ -5048,7 +5104,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                             <PrinterIcon className="h-4 w-4" /> Print Box Labels
                                                                         </button>
                                                                     )}
-                                                                    {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0 && so.status !== 'Ready to Dispatch') && (
+                                                                    {(so.channel.toLowerCase().includes('instamart') && so.boxCount > 0 && so.status !== 'Ready to Dispatch' && !printGated) && (
                                                                         <div className="flex gap-2">
                                                                             <button
                                                                                 onClick={(e: any) => { e.stopPropagation(); setInstamartPrintPackModal({ isOpen: true, so }); }}

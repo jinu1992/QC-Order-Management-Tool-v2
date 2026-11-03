@@ -117,6 +117,44 @@ export const fetchPackingData = async (referenceCode: string): Promise<any[]> =>
     } catch (error) { return []; }
 };
 
+// --- Box scan gate: every box of a shipment is scanned before its documents print ---
+export interface BoxScanStatus {
+    status: string;
+    message?: string;
+    code?: string;
+    referenceCode?: string;
+    awb?: string;
+    expectedBoxIds: string[];
+    scans: { boxId: string; scannedBy: string; scannedAt: string }[];
+    complete: boolean;
+    duplicate?: boolean;
+}
+
+export interface PrintPackDocument {
+    kind: 'label' | 'invoice' | 'docket' | 'po';
+    label: string;
+    url: string;
+    mimeType?: string;
+    base64?: string;
+    error?: string;
+}
+
+export const getBoxScanStatus = async (referenceCode: string): Promise<BoxScanStatus> => {
+    const json = await getFromScript(`${API_URL}?action=getBoxScanStatus&referenceCode=${encodeURIComponent(referenceCode)}`);
+    return { expectedBoxIds: [], scans: [], complete: false, ...json };
+};
+
+export const recordBoxScan = async (referenceCode: string, boxId: string, userName: string): Promise<BoxScanStatus> => {
+    const res = await postToScript({ action: 'recordBoxScan', referenceCode, boxId, userName });
+    return { expectedBoxIds: [], scans: [], complete: false, ...res };
+};
+
+// Not retried: it downloads every document again on each attempt
+export const getPrintPack = async (referenceCode: string): Promise<{ status: string; message?: string; documents?: PrintPackDocument[] }> => {
+    const response = await fetch(`${API_URL}?action=getPrintPack&referenceCode=${encodeURIComponent(referenceCode)}`, { redirect: 'follow' });
+    return await response.json();
+};
+
 export const logFileUpload = async (functionId: string, userName: string, fileData?: string, fileName?: string): Promise<{ status: string, message?: string, fileUrl?: string }> => {
     return await postToScript({ action: 'logFileUpload', functionId, userName, fileData, fileName });
 };
