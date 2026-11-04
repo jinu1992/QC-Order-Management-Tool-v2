@@ -9,7 +9,6 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "start": "node server.ts",
-    "automate": "tsx scripts/automateEasyEcom.ts",
     "migrate:auth": "tsx scripts/migration/getSheetsRefreshToken.ts",
     "migrate:run": "tsx scripts/migration/migrateSheetsToSupabase.ts",
     "migrate:validate": "tsx scripts/migration/validateMigration.ts"
@@ -27,7 +26,6 @@
     "unpdf": "^1.8.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.5",
     "@types/react": "^19.0.0",
