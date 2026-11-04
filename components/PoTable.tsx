@@ -84,6 +84,26 @@ const getCalculatedStatus = (po: PurchaseOrder): POStatus => {
     return POStatus.NewPO;
 };
 
+// Single rule for which tab a PO is listed under; the tab badges count with the same rule.
+const STALE_NEW_PO_DAYS = 30;
+const matchesPoTab = (po: PurchaseOrder, tab: string): boolean => {
+    if (tab === 'All POs') return true;
+    const status = getCalculatedStatus(po);
+    if (tab === 'New POs') {
+        const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
+        if (!isNewStatus) return false;
+        // Hide stale unpushed POs (>30 days old) from the New POs tab
+        const orderTime = parseDate(po.orderDate);
+        if (orderTime > 0 && (Date.now() - orderTime) / (1000 * 60 * 60 * 24) > STALE_NEW_PO_DAYS) return false;
+        return true;
+    }
+    if (tab === 'Below Threshold POs') return status === POStatus.BelowThreshold;
+    if (tab === 'Pushed POs') return status === POStatus.Pushed;
+    if (tab === 'Partially Pushed POs') return status === POStatus.PartiallyProcessed;
+    if (tab === 'Cancelled POs') return status === POStatus.Cancelled;
+    return true;
+};
+
 // --- Sub-Components ---
 
 interface OrderRowProps {
@@ -626,7 +646,6 @@ interface PoTableProps {
     setActiveFilter: (filter: string) => void;
     purchaseOrders: PurchaseOrder[];
     setPurchaseOrders: React.Dispatch<React.SetStateAction<PurchaseOrder[]>>;
-    tabCounts: { [key: string]: number };
     addLog: (action: string, details: string) => void;
     addNotification: (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void;
     onSync: () => void;
@@ -637,7 +656,7 @@ interface PoTableProps {
 }
 
 const PoTable: React.FC<PoTableProps> = ({
-    activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, tabCounts, onSync, isSyncing, addLog, addNotification, channelConfigs, currentUser
+    activeFilter, setActiveFilter, purchaseOrders, setPurchaseOrders, onSync, isSyncing, addLog, addNotification, channelConfigs, currentUser
 }) => {
     const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
     const [selectedPoItems, setSelectedPoItems] = useState<{ [key: string]: string[] }>({});
@@ -675,30 +694,14 @@ const PoTable: React.FC<PoTableProps> = ({
 
     const uniqueChannels = useMemo(() => Array.from(new Set(purchaseOrders.map(p => p.channel))), [purchaseOrders]);
 
-    const processedOrders = useMemo(() => {
-        let orders = [...purchaseOrders];
-        if (activeFilter !== 'All POs') {
-            orders = orders.filter(po => {
-                const status = getCalculatedStatus(po);
-                if (activeFilter === 'New POs') {
-                    const isNewStatus = status === POStatus.NewPO || status === POStatus.ConfirmedToSend || status === POStatus.WaitingForConfirmation;
-                    if (!isNewStatus) return false;
+    const tabCounts = useMemo(() => {
+        const counts: { [key: string]: number } = {};
+        tabs.forEach(t => { counts[t.name] = purchaseOrders.filter(po => matchesPoTab(po, t.name)).length; });
+        return counts;
+    }, [purchaseOrders]);
 
-                    // Hide stale unpushed POs (>30 days old) from the New POs tab
-                    const orderTime = parseDate(po.orderDate);
-                    if (orderTime > 0) {
-                        const daysOld = (Date.now() - orderTime) / (1000 * 60 * 60 * 24);
-                        if (daysOld > 30) return false;
-                    }
-                    return true;
-                }
-                if (activeFilter === 'Below Threshold POs') return status === POStatus.BelowThreshold;
-                if (activeFilter === 'Pushed POs') return status === POStatus.Pushed;
-                if (activeFilter === 'Partially Pushed POs') return status === POStatus.PartiallyProcessed;
-                if (activeFilter === 'Cancelled POs') return status === POStatus.Cancelled;
-                return true;
-            });
-        }
+    const processedOrders = useMemo(() => {
+        let orders = purchaseOrders.filter(po => matchesPoTab(po, activeFilter));
         Object.keys(columnFilters).forEach(key => {
             const val = columnFilters[key].toLowerCase();
             if (!val) return;
