@@ -75,6 +75,10 @@ function parseLogHumanMetadata(log: NetworkLog) {
                 displayName = 'Fetch Packing Details';
                 displayDescription = 'Loading dimensions, box counts, and packaging metadata.';
                 break;
+            case 'syncPackingListFromEasyEcom':
+                displayName = 'Fetch Box Data from EasyEcom';
+                displayDescription = 'Pulling the B2B packing list report from EasyEcom and importing box data.';
+                break;
             case 'logFileUpload':
                 displayName = 'File Upload Log';
                 displayDescription = 'Registering a newly uploaded file attachment in the master database.';

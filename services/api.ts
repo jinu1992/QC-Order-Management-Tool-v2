@@ -730,26 +730,18 @@ export const cancelShipment = async (eeReferenceCode: string, userName?: string)
 export const syncSelfShipTrackers = async (): Promise<{ status: string, message: string, updated?: string[] }> => {
     return await postToScript({ action: 'syncSelfShipTrackers' });
 };
-export const triggerEasyEcomFetch = async (eeReferenceCode: string): Promise<{ status: string, message?: string }> => {
-    try {
-        const response = await fetch('/api/trigger-easyecom-fetch', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ eeReferenceCode })
-        });
-        const text = await response.text();
-        try {
-            return JSON.parse(text);
-        } catch (e) {
-            console.error("Non-JSON response from /api/trigger-easyecom-fetch:", text);
-            return { status: 'error', message: `Server returned non-JSON response (Status: ${response.status})` };
-        }
-    } catch (err: any) {
-        console.error("Network error in triggerEasyEcomFetch:", err);
-        throw err;
-    }
+export type PackingSyncOutcome = 'added' | 'alreadyHasBoxData' | 'notReady' | 'notInReport' | 'invalidDimensions' | 'incompleteQty' | 'notFound' | 'unknown';
+
+// Pulls EasyEcom's B2B Packing List Report through its Reports API and imports it like a
+// File Uploader upload (backend "packing list sync.js"). `order` says what happened to the
+// order the button was clicked on. Not retried: each call queues a report in EasyEcom.
+export const syncPackingListFromEasyEcom = async (referenceCode: string, userName?: string): Promise<{
+    status: string,
+    message: string,
+    appendedCount?: number,
+    order?: { referenceCode: string, outcome: PackingSyncOutcome, boxCount?: number, message: string } | null
+}> => {
+    return await postToScript({ action: 'syncPackingListFromEasyEcom', referenceCode, userName });
 };
 
 export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[], pushTarget?: 'AMZ' | 'EE') => {

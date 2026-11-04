@@ -230,6 +230,7 @@ function doPost(e) {
     else if (action === 'recordOtherSelfShipment') result = recordOtherSelfShipment(data);
     else if (action === 'cancelShipment') result = cancelShipment(data);
     else if (action === 'recordBoxScan') result = recordBoxScan(data);
+    else if (action === 'syncPackingListFromEasyEcom') result = syncPackingListFromEasyEcom(data);
     else if (action === 'sendBBOrderConfirmationEmail') 
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
@@ -996,7 +997,7 @@ function logFileUpload(data)
         if (typeof UpdatePackingListData !== "function") {
           throw new Error("Function 'UpdatePackingListData' is not defined in the backend.");
         }
-        const packingResult = UpdatePackingListData(data.fileData, data.fileName);
+        const packingResult = updatePackingListDataLocked_(data.fileData, data.fileName); // packing list sync.js
         if (packingResult && packingResult.status === 'success') {
           const hadSkips = (packingResult.skippedNotProcessable || []).length > 0 ||
             (packingResult.skippedInvalidDimensions || []).length > 0 ||
@@ -17317,4 +17318,303 @@ function getPrintPack(data) {
     }
   });
   return { status: "success", referenceCode: referenceCode, documents: documents };
+}
+
+// ==========================================
+// B2B PACKING LIST SYNC FROM EASYECOM (packing list sync.js)
+// ==========================================
+/**
+ * B2B packing list sync from EasyEcom (2026-11-04)
+ *
+ * Box data reaches the app through EasyEcom's "B2B Packing List Report". It used to be
+ * downloaded by hand and uploaded in File Uploader, or fetched by a Playwright bot that
+ * only ran on a PC (and never on Vercel, so the "Fetch Box Data" button always failed).
+ * EasyEcom has no box-details API, but its public Reports API queues the same report:
+ * reportType B2B_PACKING_LIST_REPORT, ready in ~10s, same columns as the manual file
+ * (checked live 2026-11-04). This file queues it, downloads the CSV and runs it through
+ * UpdatePackingListData exactly like a File Uploader upload.
+ *
+ * - doPost action syncPackingListFromEasyEcom: the "Fetch Box Data" button. Always runs,
+ *   then explains what happened to the order the button was clicked on.
+ * - runPackingListAutoSync: time-driven trigger, every 15 min. Create it on the editor's
+ *   Triggers page (Add Trigger > runPackingListAutoSync > Time-driven > Minutes timer >
+ *   Every 15 minutes). Not from code: ScriptApp triggers need the script.scriptapp scope,
+ *   which the manifest's explicit oauthScopes leave out, and adding a scope makes every
+ *   trigger owner re-authorize. Runs only in working hours and only calls EasyEcom when
+ *   an order invoiced in the report's window is still missing box data, so old orders
+ *   that will never be in the report don't queue a report every run.
+ */
+const PACKING_SYNC_REPORT_TYPE_ = 'B2B_PACKING_LIST_REPORT';
+const PACKING_SYNC_LOOKBACK_DAYS_ = 7;          // same window the team downloaded by hand
+const PACKING_SYNC_HOURS_IST_ = { from: 8, to: 22 }; // timer skips runs outside 08:00-22:00
+
+/** doPost: { action: 'syncPackingListFromEasyEcom', referenceCode?, userName? } */
+function syncPackingListFromEasyEcom(data) {
+  const ref = cleanPackingRef_(data && data.referenceCode);
+  const userName = (data && data.userName) || 'Fetch Box Data button';
+  try {
+    const result = syncPackingListCore_({ userName: userName, fromTimer: false, maxWaitMs: 90000 });
+    const order = ref ? packingOrderOutcome_(ref, result) : null;
+    return {
+      status: 'success',
+      message: order ? order.message : result.message,
+      appendedCount: result.appendedCount,
+      order: order,
+      summary: result.message
+    };
+  } catch (e) {
+    Logger.log('syncPackingListFromEasyEcom failed: ' + e.message);
+    return { status: 'error', message: e.message };
+  }
+}
+
+/** Time-driven trigger handler. Throws on EasyEcom failures so Google's trigger failure emails fire. */
+function runPackingListAutoSync() {
+  const hour = Number(Utilities.formatDate(new Date(), 'Asia/Kolkata', 'H'));
+  if (hour < PACKING_SYNC_HOURS_IST_.from || hour >= PACKING_SYNC_HOURS_IST_.to) return;
+  const result = syncPackingListCore_({ userName: 'EasyEcom Auto-Sync', fromTimer: true, maxWaitMs: 180000 });
+  Logger.log(result.message);
+}
+
+/**
+ * Same gate as UpdatePackingListData: the order needs box data when any of its rows is
+ * EE_order_status "Confirmed" with an EE_invoice_date and a blank "Box Data".
+ * Returns { pending: {ref: latest invoice Date|null}, rowsByRef: {ref: [{status, invoiceDate, boxData}]} }.
+ */
+function readPackingPendingOrders_() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_PO_DB);
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift().map(h => String(h).trim());
+  const col = name => {
+    const i = headers.indexOf(name);
+    if (i === -1) throw new Error('PO_Database has no "' + name + '" column.');
+    return i;
+  };
+  const statusI = col('EE_order_status'), invI = col('EE_invoice_date'), boxI = col('Box Data'), refI = col('EE_reference_code');
+
+  const pending = {}, rowsByRef = {};
+  values.forEach(row => {
+    const ref = cleanPackingRef_(row[refI]);
+    if (!ref) return;
+    const info = { status: String(row[statusI]).trim(), invoiceDate: row[invI], boxData: String(row[boxI]).trim() };
+    (rowsByRef[ref] = rowsByRef[ref] || []).push(info);
+    if (info.status === 'Confirmed' && String(info.invoiceDate).trim() !== '' && info.boxData === '') {
+      const d = packingToDate_(info.invoiceDate);
+      if (!(ref in pending) || (d && (!pending[ref] || d > pending[ref]))) pending[ref] = d;
+    }
+  });
+  return { pending: pending, rowsByRef: rowsByRef };
+}
+
+/**
+ * Queues the report, waits for it and downloads the CSV.
+ * Returns { bytes, fileName, reportId }.
+ */
+function downloadEasyEcomPackingList_(maxWaitMs) {
+  const token = getEasyEcomToken();
+  if (!token) throw new Error('Could not log in to the EasyEcom API (token request failed). Try again in a minute.');
+  const headers = {
+    Authorization: 'Bearer ' + token,
+    'x-api-key': PropertiesService.getScriptProperties().getProperty('EASY_ECOM_API_KEY'),
+    'Content-Type': 'application/json'
+  };
+  const base = 'https://api.easyecom.io';
+  const tz = Session.getScriptTimeZone();
+  const now = new Date();
+  const params = {
+    startDate: Utilities.formatDate(new Date(now.getTime() - PACKING_SYNC_LOOKBACK_DAYS_ * 86400000), tz, 'yyyy-MM-dd'),
+    endDate: Utilities.formatDate(now, tz, 'yyyy-MM-dd')
+  };
+
+  const q = UrlFetchApp.fetch(base + '/reports/queue', {
+    method: 'post', headers: headers, muteHttpExceptions: true,
+    payload: JSON.stringify({ reportType: PACKING_SYNC_REPORT_TYPE_, params: params })
+  });
+  const qText = q.getContentText().trim();
+  let qJson = null;
+  try { qJson = JSON.parse(qText); } catch (e) {}
+  const reportId = qJson && qJson.data && qJson.data.reportId;
+  if (!reportId) {
+    throw new Error('EasyEcom would not queue the B2B packing list (HTTP ' + q.getResponseCode() + '): ' + qText.slice(0, 200));
+  }
+
+  const started = Date.now();
+  let lastStatus = 'QUEUED';
+  while (Date.now() - started < maxWaitMs) {
+    Utilities.sleep(5000);
+    const dl = UrlFetchApp.fetch(base + '/reports/download?reportId=' + encodeURIComponent(reportId), {
+      method: 'get', headers: headers, muteHttpExceptions: true
+    });
+    let dJson = null;
+    try { dJson = JSON.parse(dl.getContentText().trim()); } catch (e) {}
+    const d = (dJson && dJson.data) || {};
+    lastStatus = String(d.reportStatus || lastStatus);
+    if (d.downloadUrl) {
+      const file = UrlFetchApp.fetch(d.downloadUrl, { muteHttpExceptions: true });
+      if (file.getResponseCode() !== 200) {
+        throw new Error('Could not download the packing list file from EasyEcom (HTTP ' + file.getResponseCode() + ').');
+      }
+      return {
+        bytes: file.getBlob().getBytes(),
+        fileName: 'EasyEcom_B2B_Packing_List_' + reportId + '.csv',
+        reportId: reportId
+      };
+    }
+    if (/FAIL|ERROR|CANCEL/i.test(lastStatus)) {
+      throw new Error('EasyEcom could not build the packing list (report #' + reportId + ', status ' + lastStatus + ').');
+    }
+  }
+  throw new Error('EasyEcom is still preparing the packing list (report #' + reportId + ', status ' + lastStatus +
+    '). Try again in a minute.');
+}
+
+/**
+ * The shared sync. opts: { userName, fromTimer, maxWaitMs }.
+ * Returns { appendedCount, message, pendingInfo, csvRefs, csvBoxes, result } where result
+ * is UpdatePackingListData's return value (null when it wasn't called).
+ */
+function syncPackingListCore_(opts) {
+  const pendingInfo = readPackingPendingOrders_();
+  const lookbackStart = new Date(Date.now() - PACKING_SYNC_LOOKBACK_DAYS_ * 86400000);
+  let pendingRefs = Object.keys(pendingInfo.pending);
+  const base = { appendedCount: 0, pendingInfo: pendingInfo, csvRefs: {}, csvBoxes: {}, result: null };
+
+  // The timer only chases orders invoiced inside the report's window; anything older
+  // would never show up and would queue a report every run. The button always tries.
+  if (opts.fromTimer) {
+    pendingRefs = pendingRefs.filter(ref => {
+      const d = pendingInfo.pending[ref];
+      return d && d >= lookbackStart;
+    });
+  }
+  if (pendingRefs.length === 0) {
+    return Object.assign(base, { message: 'No invoiced orders are waiting for box data.' });
+  }
+
+  const file = downloadEasyEcomPackingList_(opts.maxWaitMs);
+
+  // Which orders (and how many distinct boxes each) does the report contain?
+  const csv = Utilities.parseCsv(Utilities.newBlob(file.bytes).getDataAsString());
+  const hdr = (csv[0] || []).map(h => String(h).trim().replace(/^﻿/, ''));
+  const refI = hdr.indexOf('Reference Code'), boxI = hdr.indexOf('Box ID');
+  if (refI === -1 || boxI === -1) {
+    throw new Error('The EasyEcom packing list has no "Reference Code"/"Box ID" column; its format may have changed.');
+  }
+  const boxSets = {};
+  csv.slice(1).forEach(row => {
+    const ref = cleanPackingRef_(row[refI]);
+    if (!ref) return;
+    base.csvRefs[ref] = true;
+    const box = String(row[boxI] || '').trim();
+    (boxSets[ref] = boxSets[ref] || {});
+    if (box) boxSets[ref][box] = true;
+  });
+  Object.keys(boxSets).forEach(ref => { base.csvBoxes[ref] = Object.keys(boxSets[ref]).length; });
+
+  const inReport = pendingRefs.filter(ref => base.csvRefs[ref]);
+  if (inReport.length === 0) {
+    return Object.assign(base, {
+      message: 'EasyEcom\'s packing list (last ' + PACKING_SYNC_LOOKBACK_DAYS_ + ' days) has none of the ' +
+        pendingRefs.length + ' order(s) waiting for box data yet.'
+    });
+  }
+
+  let result;
+  try {
+    result = updatePackingListDataLocked_(Utilities.base64Encode(file.bytes), file.fileName);
+  } catch (e) {
+    // Another run (timer, button or a manual upload) may have just filled them in.
+    if (/No processable orders/i.test(e.message)) {
+      return Object.assign(base, { message: 'No invoiced orders are waiting for box data.' });
+    }
+    throw e;
+  }
+  base.result = result;
+  base.appendedCount = result.appendedCount || 0;
+  base.message = result.message;
+
+  // Log it like a File Uploader upload. The timer only logs runs that added something,
+  // so a stuck order doesn't add a row every 15 minutes.
+  if (!opts.fromTimer || base.appendedCount > 0) {
+    const hadSkips = (result.skippedNotProcessable || []).length > 0 ||
+      (result.skippedInvalidDimensions || []).length > 0 ||
+      (result.skippedIncompleteQty || []).length > 0;
+    SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_UPLOAD_LOGS).appendRow([
+      'b2b-packing-list', 'B2B Packing List Data', opts.userName, new Date().toLocaleString(),
+      hadSkips ? 'Partial' : 'Success', file.fileName, result.message
+    ]);
+  }
+  return base;
+}
+
+/** UpdatePackingListData under the script lock, so two syncs can't append the same order twice. */
+function updatePackingListDataLocked_(base64Data, fileName) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('Another packing list update is running. Try again in a minute.');
+  try {
+    return UpdatePackingListData(base64Data, fileName);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** What happened to one order, in words for the button's notification. */
+function packingOrderOutcome_(ref, sync) {
+  const rows = sync.pendingInfo.rowsByRef[ref] || [];
+  const result = sync.result || {};
+  const boxes = sync.csvBoxes[ref] || 0;
+  const days = PACKING_SYNC_LOOKBACK_DAYS_;
+  const has = list => (list || []).indexOf(ref) !== -1;
+
+  if (!rows.length) {
+    return { referenceCode: ref, outcome: 'notFound', message: ref + ' is not in PO_Database.' };
+  }
+  if (!(ref in sync.pendingInfo.pending)) {
+    if (rows.some(r => r.boxData !== '')) {
+      return { referenceCode: ref, outcome: 'alreadyHasBoxData', message: ref + ' already has box data. Refreshing.' };
+    }
+    const statuses = rows.map(r => r.status || 'blank').filter((s, i, a) => a.indexOf(s) === i).join(', ');
+    return {
+      referenceCode: ref, outcome: 'notReady',
+      message: ref + ' can\'t take box data yet: it needs EasyEcom status Confirmed and an invoice date (status now: ' + statuses + ').'
+    };
+  }
+  if (!sync.csvRefs[ref]) {
+    return {
+      referenceCode: ref, outcome: 'notInReport',
+      message: ref + ' isn\'t in EasyEcom\'s B2B packing list (last ' + days + ' days) yet. Finish packing it in EasyEcom, then try again.'
+    };
+  }
+  if (has(result.skippedInvalidDimensions)) {
+    return {
+      referenceCode: ref, outcome: 'invalidDimensions',
+      message: ref + ': EasyEcom has a box without weight or size. Add the box dimensions in EasyEcom, then try again.'
+    };
+  }
+  if (has(result.skippedIncompleteQty)) {
+    return {
+      referenceCode: ref, outcome: 'incompleteQty',
+      message: ref + ': the packed quantity in EasyEcom doesn\'t match the ordered quantity yet (another invoice split may still be unpacked).'
+    };
+  }
+  if (sync.result) {
+    return {
+      referenceCode: ref, outcome: 'added', boxCount: boxes,
+      message: 'Box data added for ' + ref + ': ' + boxes + ' box' + (boxes === 1 ? '' : 'es') + '.'
+    };
+  }
+  return { referenceCode: ref, outcome: 'unknown', message: sync.message };
+}
+
+function cleanPackingRef_(v) {
+  return String(v == null ? '' : v).replace(/`/g, '').trim();
+}
+
+function packingToDate_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const s = String(v || '').trim();
+  if (!s) return null;
+  let d = new Date(s);
+  if (isNaN(d.getTime())) d = new Date(s.replace(' ', 'T'));
+  return isNaN(d.getTime()) ? null : d;
 }
