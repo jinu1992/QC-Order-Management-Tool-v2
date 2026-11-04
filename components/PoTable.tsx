@@ -22,7 +22,7 @@ import {
     ClockIcon,
     MessageIcon
 } from './icons/Icons';
-import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation, sendBBOrderConfirmationEmail } from '../services/api';
+import { pushToEasyEcom, requestZohoSync, syncZohoContacts, updatePOStatus, updateRTOStatus, fetchPurchaseOrder, syncSinglePO, cancelPOLineItem, manualInventoryAllocation, sendBBOrderConfirmationEmail } from '../services/api';
 import OrderNotesTimeline from './OrderNotesTimeline';
 import { User } from '../types';
 
@@ -123,6 +123,8 @@ interface OrderRowProps {
     onTrackNotifyDetails?: () => void;
     onCancel: () => void;
     isCancelling: boolean;
+    onMarkRtoDelivered: () => void;
+    isMarkingRto: boolean;
     onMarkThreshold: () => void;
     isMarkingThreshold: boolean;
     channelConfigs: ChannelConfig[];
@@ -144,7 +146,7 @@ interface OrderRowProps {
 const OrderRow: React.FC<OrderRowProps> = ({
     po, isExpanded, onToggle, isSelected, onItemToggle, onSelectAll,
     isPushing, onPush, isSyncingZoho, onSyncZoho, isSyncingEE, onSyncEE, onTrackNotify, onCancel, isCancelling,
-    onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
+    onMarkRtoDelivered, isMarkingRto, onMarkThreshold, isMarkingThreshold, channelConfigs, onUpdateStatus, isUpdatingStatus, onRefresh, isRefreshing,
     onCancelLineItem, cancellingLineItemId, onSendBBConfirmation, isSendingBBConfirmation, currentUser,
     onLocalNoteUpdate, isPoSelected, onPoSelectToggle
 }: OrderRowProps) => {
@@ -268,7 +270,13 @@ const OrderRow: React.FC<OrderRowProps> = ({
     const actualBelowThreshold = config ? po.amount < config.minOrderThreshold : false;
     const canMarkThreshold = poStatus === POStatus.NewPO && actualBelowThreshold;
 
-    const canCancel = (poStatus === POStatus.NewPO || poStatus === POStatus.BelowThreshold || poStatus === POStatus.WaitingForConfirmation) && selectedCount === 0;
+    const canCancel = (poStatus === POStatus.NewPO || poStatus === POStatus.BelowThreshold || poStatus === POStatus.WaitingForConfirmation || poStatus === POStatus.ConfirmedToSend) && selectedCount === 0;
+    // A partly pushed PO whose pushed lines came back (EasyEcom: Returned, e.g. the PO expired before delivery)
+    // would otherwise sit in Partially Pushed forever with its never-pushed lines still open.
+    const pushedActiveItems = activeItems.filter(i => !!i.eeOrderRefId);
+    const isReturnedInEE = (s?: string) => (s || '').trim().toLowerCase() === 'returned';
+    const canMarkRtoDelivered = poStatus === POStatus.PartiallyProcessed && pushedActiveItems.length > 0 &&
+        pushedActiveItems.every(i => isReturnedInEE(i.itemStatus) || isReturnedInEE(i.eeOrderStatus));
     const canConfirm = poStatus === POStatus.NewPO || poStatus === POStatus.WaitingForConfirmation || poStatus === POStatus.ConfirmedToSend;
 
     return (
@@ -423,6 +431,18 @@ const OrderRow: React.FC<OrderRowProps> = ({
                                                 className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 border-t border-gray-50 disabled:opacity-50"
                                             >
                                                 <TrashIcon className="h-4 w-4" /> {isCancelling ? 'Cancelling...' : 'Cancel PO'}
+                                            </button>
+                                        )}
+
+                                        {canMarkRtoDelivered && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); setIsMenuOpen(false); onMarkRtoDelivered(); }}
+                                                disabled={isMarkingRto}
+                                                className="w-full text-left px-4 py-2.5 text-[11px] font-bold text-purple-700 hover:bg-purple-50 flex items-center gap-2 border-t border-gray-50 disabled:opacity-50"
+                                                title="EasyEcom shows the pushed lines as Returned"
+                                            >
+                                                <RefreshIcon className={`h-4 w-4 ${isMarkingRto ? 'animate-spin' : ''}`} /> {isMarkingRto ? 'Marking RTO...' : 'Mark RTO Delivered'}
                                             </button>
                                         )}
                                     </div>
@@ -662,6 +682,7 @@ const PoTable: React.FC<PoTableProps> = ({
     const [selectedPoItems, setSelectedPoItems] = useState<{ [key: string]: string[] }>({});
     const [pushingToEasyEcom, setPushingToEasyEcom] = useState<{ [key: string]: boolean }>({});
     const [cancellingPoId, setCancellingPoId] = useState<string | null>(null);
+    const [markingRtoPoId, setMarkingRtoPoId] = useState<string | null>(null);
     const [markingThresholdId, setMarkingThresholdId] = useState<string | null>(null);
     const [syncingZohoId, setSyncingZohoId] = useState<string | null>(null);
     const [syncingEEId, setSyncingEEId] = useState<string | null>(null);
@@ -946,6 +967,59 @@ const PoTable: React.FC<PoTableProps> = ({
             } else { addNotification('Cancel Failed: ' + res.message, 'error'); }
         } catch (e) { addNotification('Network error.', 'error'); }
         finally { setCancellingPoId(null); }
+    };
+
+    // Pushed lines that EasyEcom shows as Returned get Status "RTO Delivered" plus the same RTO Status timestamp the
+    // Sales Orders "Mark as RTO" button writes (Shipment Tracking's RTO tab). Lines never pushed can no longer ship,
+    // so they're cancelled, and the PO leaves Partially Pushed.
+    const handleMarkRtoDeliveredAction = async (po: PurchaseOrder) => {
+        const items = po.items || [];
+        const isActive = (i: POItem) => (i.itemStatus || '').toLowerCase() !== 'cancelled';
+        const pushedLines = items.filter(i => isActive(i) && !!i.eeOrderRefId);
+        const unpushedLines = items.filter(i => isActive(i) && !i.eeOrderRefId);
+        const refOf = (i: POItem) => String(i.eeReferenceCode || i.eeOrderRefId || '').trim();
+        const refs = Array.from(new Set(pushedLines.map(refOf).filter(Boolean)));
+        const invoiceNumbers = Array.from(new Set(pushedLines.map(i => i.invoiceNumber).filter(Boolean)));
+        if (refs.length === 0) { addNotification(`PO ${po.poNumber} has no EasyEcom reference to mark.`, 'error'); return; }
+
+        const confirmMessage = `Mark PO ${po.poNumber} as RTO Delivered?\n\n` +
+            `${pushedLines.length} line(s) on ${refs.join(', ')} (Returned in EasyEcom) will be marked RTO Delivered.` +
+            (unpushedLines.length ? `\n${unpushedLines.length} line(s) never pushed to EasyEcom (SKU ${unpushedLines.map(i => i.articleCode.trim()).join(', ')}) will be cancelled.` : '') +
+            (invoiceNumbers.length ? `\n\nZoho invoice ${invoiceNumbers.join(', ')} is not changed. Raise a credit note in Zoho if one is needed.` : '');
+        if (!window.confirm(confirmMessage)) return;
+
+        setMarkingRtoPoId(po.id);
+        try {
+            // Cancel the never-pushed lines first: when an EasyEcom reference equals the PO number,
+            // updatePOStatus(ref) matches those rows too, and it skips rows that are already Cancelled.
+            for (const line of unpushedLines) {
+                const res = await cancelPOLineItem(po.poNumber, line.articleCode.trim());
+                if (res.status !== 'success') throw new Error(`Couldn't cancel SKU ${line.articleCode.trim()}: ${res.message}`);
+            }
+            const stamp = new Date().toLocaleString('en-IN', {
+                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }).replace(/\//g, '-');
+            for (const ref of refs) {
+                const res = await updatePOStatus(ref, 'RTO Delivered');
+                if (res.status !== 'success') throw new Error(`Couldn't update ${ref}: ${res.message}`);
+                if (!pushedLines.some(i => refOf(i) === ref && i.rtoStatus)) {
+                    const rto = await updateRTOStatus(ref, stamp);
+                    if (rto.status !== 'success') throw new Error(`Couldn't set the RTO date on ${ref}: ${rto.message}`);
+                }
+            }
+            setPurchaseOrders(prev => prev.map(p => p.poNumber !== po.poNumber ? p : {
+                ...p,
+                items: (p.items || []).map(i => !isActive(i) ? i
+                    : i.eeOrderRefId ? { ...i, rtoStatus: i.rtoStatus || stamp }
+                    : { ...i, itemStatus: 'Cancelled' })
+            }));
+            addNotification(`PO ${po.poNumber} marked RTO Delivered${unpushedLines.length ? ` and ${unpushedLines.length} unpushed line(s) cancelled` : ''}.`, 'success');
+            addLog('RTO Delivered', `Marked PO ${po.poNumber} (${refs.join(', ')}) RTO Delivered; cancelled ${unpushedLines.length} unpushed line(s)`);
+            refreshSinglePOState(po.poNumber);
+        } catch (e: any) {
+            addNotification(e?.message || 'Network error.', 'error');
+            refreshSinglePOState(po.poNumber);
+        } finally { setMarkingRtoPoId(null); }
     };
 
     const handleUpdateStatusAction = async (po: PurchaseOrder, newStatus: string) => {
@@ -1326,6 +1400,8 @@ const PoTable: React.FC<PoTableProps> = ({
                                     onTrackNotify={() => addNotification('Navigate to Sales Orders to track fulfillment.', 'info')}
                                     onCancel={() => handleCancelPoAction(po)}
                                     isCancelling={cancellingPoId === po.id}
+                                    onMarkRtoDelivered={() => handleMarkRtoDeliveredAction(po)}
+                                    isMarkingRto={markingRtoPoId === po.id}
                                     onMarkThreshold={() => handleThresholdAction(po)}
                                     isMarkingThreshold={markingThresholdId === po.id}
                                     channelConfigs={channelConfigs}
