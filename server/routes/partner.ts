@@ -17,6 +17,7 @@ import { parseDelhiveryLabel, parseScorpionDocs } from '../partner/labelParser.j
 
 const SESSION_HOURS = 12;
 const MAX_LABEL_BYTES = 3 * 1024 * 1024; // Vercel caps request bodies at 4.5 MB; base64 adds a third
+const MAX_NOTE_CHARS = 1000; // same limit as Apps Script (PARTNER_NOTE_MAX_CHARS_)
 
 // File type from the first bytes, so a renamed file can't pass as a PDF / photo
 function sniffMimeType(file: Buffer): string {
@@ -306,6 +307,16 @@ export function createPartnerRouter(redirectUri: string): Router {
     if (pod === undefined) return;
     if (!invoiceNumber || !pod) return res.status(400).json({ status: 'error', message: 'Shipment and POD file are required.' });
     await forwardAction('partnerUploadPod', { invoiceNumber: String(invoiceNumber), ...pod }, req, res);
+  });
+
+  // A remark on the shipment, added to the order's Order Remarks & Timeline in the tool. The
+  // name comes from the signed session; Apps Script uses the access list's name for partners.
+  router.post('/api/partner/note', requirePartner, async (req: PartnerRequest, res: Response) => {
+    const invoiceNumber = String(req.body?.invoiceNumber || '');
+    const note = String(req.body?.note || '').trim();
+    if (!invoiceNumber || !note) return res.status(400).json({ status: 'error', message: 'Shipment and remark are required.' });
+    if (note.length > MAX_NOTE_CHARS) return res.status(400).json({ status: 'error', message: `Keep the remark under ${MAX_NOTE_CHARS} characters.` });
+    await forwardAction('partnerAddNote', { invoiceNumber, note, actorName: req.partner!.name }, req, res);
   });
 
   return router;

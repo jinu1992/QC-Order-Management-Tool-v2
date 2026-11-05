@@ -9,9 +9,13 @@ interface OrderNotesTimelineProps {
     currentUser: User | null;
     onNoteAdded: (updatedNotesString?: string) => void;
     onLocalNoteUpdate?: (newNotes: string) => void;
+    // Partner portal: who is posting, and how a remark is saved (its own server route, which
+    // returns the shipment's whole timeline as saved). The tool leaves both out.
+    authorName?: string;
+    saveNote?: (note: string) => Promise<{ status: string; message?: string; orderNotes?: string }>;
 }
 
-const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notesString, currentUser, onNoteAdded, onLocalNoteUpdate }) => {
+const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notesString, currentUser, onNoteAdded, onLocalNoteUpdate, authorName, saveNote }) => {
     const [newNote, setNewNote] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [localNotesString, setLocalNotesString] = useState(notesString || '');
@@ -24,11 +28,11 @@ const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notes
     const notes = localNotesString.split(' ## ').filter(n => n.trim() !== '').reverse();
 
     const handleAddNote = async () => {
-        if (!newNote.trim() || !currentUser) return;
-        
+        if (!newNote.trim() || (!authorName && !currentUser)) return;
+        const userName = authorName || currentUser!.name;
+
         setIsSubmitting(true);
         const noteText = newNote.trim();
-        const userName = currentUser.name;
         
         // Optimistic local update
         const now = new Date();
@@ -46,9 +50,14 @@ const OrderNotesTimeline: React.FC<OrderNotesTimelineProps> = ({ poNumber, notes
         setNewNote('');
 
         try {
-            const result = await saveOrderNote(poNumber, noteText, userName);
+            const result = saveNote ? await saveNote(noteText) : await saveOrderNote(poNumber, noteText, userName);
              if (result.status === 'success') {
-                onNoteAdded(updatedNotesString);
+                if (saveNote && result.orderNotes !== undefined) {
+                    setLocalNotesString(result.orderNotes);
+                    onNoteAdded(result.orderNotes);
+                } else {
+                    onNoteAdded(updatedNotesString);
+                }
             } else {
                 alert('Failed to add note: ' + result.message);
                 setLocalNotesString(notesString || '');

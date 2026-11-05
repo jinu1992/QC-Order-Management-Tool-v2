@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     RefreshIcon, XCircleIcon, CheckCircleIcon, TruckIcon, CalendarIcon, SearchIcon, UploadIcon,
-    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon, PrinterIcon, DownloadIcon
+    ExternalLinkIcon, LogoutIcon, CubeIcon, XIcon, AlertIcon, LockClosedIcon, ChevronDownIcon, ChevronUpIcon, FilterIcon, PrinterIcon, DownloadIcon,
+    MessageIcon
 } from './icons/Icons';
 import AppointmentPass from './AppointmentPass';
+import OrderNotesTimeline from './OrderNotesTimeline';
 
 // Self-ship partner portal, served at /partner: a shipment tracker for Urvi Ent's requests
 // (the Urvi Ent tracker sheet, joined with PO_Database for live appointments, deliveries
@@ -17,6 +19,8 @@ import AppointmentPass from './AppointmentPass';
 // read with OCR, which reliably reads only the printed AWB.
 // Once shipped, the partner marks each shipment delivered (with the proof of delivery) or
 // RTO; returns stay flagged until EasyEcom shows them received at the warehouse.
+// Each row also opens the order's remarks timeline, the same one the tool shows under
+// Order Notes & Remarks: both sides read and post there.
 
 interface PartnerUser {
     email: string;
@@ -65,6 +69,9 @@ interface ShipRequest {
     pickedUp?: boolean | null;
     // The order has an appointment pass QR (fetched separately from /api/partner/appointment-qr)
     hasAppointmentQr?: boolean;
+    // The tool's Order Remarks & Timeline for the order: "[yyyy-MM-dd HH:mm] Name: text" entries
+    // joined by " ## ", shared with Cubelelo's team
+    orderNotes?: string;
 }
 
 interface Check {
@@ -305,7 +312,7 @@ const downloadCsv = (rows: ShipRequest[], tabLabel: string) => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-type ActionResult = { status: string; message: string; checks?: Check[] };
+type ActionResult = { status: string; message: string; checks?: Check[]; orderNotes?: string };
 
 // POSTs to a partner route. Resolves null when the session has expired (the caller signs out).
 const partnerPost = async (path: string, token: string, body: Record<string, unknown>): Promise<ActionResult | null> => {
@@ -774,7 +781,12 @@ const AppointmentPassLoader: React.FC<{ request: ShipRequest; token: string; onC
 const smallButton = 'px-2 py-0.5 rounded text-[10px] font-bold transition-colors flex items-center gap-1 w-fit border';
 
 // One shipment, laid out like a row of the tool's Shipment Tracker table
-const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction) => void }> = ({ request: r, onAction }) => {
+const ShipmentRow: React.FC<{
+    request: ShipRequest;
+    onAction: (action: RowAction) => void;
+    authorName: string;
+    saveNote: (note: string) => Promise<ActionResult>;
+}> = ({ request: r, onAction, authorName, saveNote }) => {
     const [expanded, setExpanded] = useState(false);
     const pending = r.status === 'Pending';
     const lastFailure = pending && r.verification.startsWith('✗') ? r.verification : '';
@@ -810,7 +822,10 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
 
                 {/* PO Details */}
                 <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-medium text-gray-900">{r.poNumbers.join(', ') || '-'}</div>
+                    <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                        {r.poNumbers.join(', ') || '-'}
+                        {r.orderNotes && <MessageIcon className="h-4 w-4 text-orange-500 flex-shrink-0" title="Has remarks" />}
+                    </div>
                     <div className="text-xs text-gray-500">Invoice: {r.invoiceNumber}</div>
                     <div className="text-xs text-gray-500">Requested: {formatDate(r.bookedDate)}</div>
                     {lastFailure && <div className="text-xs text-red-500 mt-0.5 flex items-center gap-1"><XCircleIcon className="h-3 w-3" /> Last submission rejected</div>}
@@ -943,6 +958,20 @@ const ShipmentRow: React.FC<{ request: ShipRequest; onAction: (action: RowAction
                                 <DocLink href={r.trackingUrl}>Track</DocLink>
                             </div>
                         </div>
+                        {/* Same timeline as the tool's Order Notes & Remarks: both sides read and post here */}
+                        <div className="mt-4">
+                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-3">
+                                <MessageIcon className="h-4 w-4 text-orange-500" /> Order Notes &amp; Remarks
+                            </h4>
+                            <OrderNotesTimeline
+                                poNumber={r.poNumbers.join(', ') || r.invoiceNumber}
+                                notesString={r.orderNotes}
+                                currentUser={null}
+                                authorName={authorName}
+                                saveNote={saveNote}
+                                onNoteAdded={() => {}}
+                            />
+                        </div>
                     </td>
                 </tr>
             )}
@@ -1068,6 +1097,25 @@ const PartnerPortal: React.FC = () => {
 
     const expireSession = () => { setActive(null); signOut('Your session has expired. Please sign in again.'); };
 
+    // Shown on a remark until the server's copy replaces it (Apps Script names partners the same way)
+    const authorName = session.user.internal
+        ? session.user.name || session.user.email
+        : `${session.user.name || session.user.email} (Urvi Ent)`;
+
+    // A remark on one shipment. The server returns the shipment's whole timeline as saved.
+    const saveNote = async (r: ShipRequest, note: string): Promise<ActionResult> => {
+        const data = await partnerPost('/api/partner/note', session.token, { invoiceNumber: r.invoiceNumber, note });
+        if (!data) {
+            expireSession();
+            return { status: 'error', message: 'Your session has expired. Please sign in again.' };
+        }
+        if (data.status === 'success' && typeof data.orderNotes === 'string') {
+            const orderNotes = data.orderNotes;
+            setRequests(prev => prev.map(x => x.invoiceNumber === r.invoiceNumber ? { ...x, orderNotes } : x));
+        }
+        return data;
+    };
+
     return (
         <div className="min-h-screen bg-gray-50 font-sans flex flex-col">
             <header className="flex flex-col md:flex-row justify-between md:items-center bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sticky top-0 z-40">
@@ -1178,7 +1226,10 @@ const PartnerPortal: React.FC = () => {
                                     </td>
                                 </tr>
                             ) : visible.length ? (
-                                visible.map(r => <ShipmentRow key={`${r.row}-${r.invoiceNumber}`} request={r} onAction={action => setActive({ action, request: r })} />)
+                                visible.map(r => (
+                                    <ShipmentRow key={`${r.row}-${r.invoiceNumber}`} request={r} onAction={action => setActive({ action, request: r })}
+                                        authorName={authorName} saveNote={note => saveNote(r, note)} />
+                                ))
                             ) : (
                                 <tr>
                                     <td colSpan={6} className="px-6 py-12 text-center text-gray-500">

@@ -804,6 +804,15 @@ function addOrderNote(data) {
 
     sheet.getRange(rowIndex, notesCol + 1).setValue(updatedNotes);
 
+    // Partner portal: copy the timeline to the order's self-ship tracker row now rather than
+    // at the next sync (partner portal.js). Never fails the note.
+    try {
+      values[rowIndex - 1][notesCol] = updatedNotes;
+      partnerPushNotesToTracker_(values, String(poNumber).trim());
+    } catch (e) {
+      Logger.log("addOrderNote: tracker copy not updated: " + e.message);
+    }
+
     return { 
       status: 'success', 
       message: 'Note added successfully',
@@ -15926,6 +15935,7 @@ function handlePartnerPortalAction_(data) {
     if (data.action === "partnerMarkRto") return partnerMarkRto_(data, access);
     if (data.action === "partnerUploadPod") return partnerUploadPod_(data, access);
     if (data.action === "partnerAppointmentQr") return partnerAppointmentQr_(data);
+    if (data.action === "partnerAddNote") return partnerAddNote_(data, access);
     return { status: "error", message: "Invalid partner action: " + data.action };
   } catch (e) {
     Logger.log(`handlePartnerPortalAction_ ${data && data.action}: ${e.message}`);
@@ -15979,7 +15989,7 @@ function partnerCellUrl_(value, formula) {
 // are existing tracker columns, refreshed the same way.
 const PARTNER_MASTER_COLUMNS_ = [
   "Store", "Order Status", "EE Status", "Tracking Status", "Pickup Date", "Picked Up",
-  "RTO Status", "Returned Qty", "Appointment QR"
+  "RTO Status", "Returned Qty", "Appointment QR", "Order Notes"
 ];
 
 function partnerListRequests_() {
@@ -16041,6 +16051,8 @@ function partnerListRequests_() {
       pickedUp: text("Picked Up") === "Yes" ? true : text("Picked Up") === "No" ? false : null,
       // The QR itself comes from partnerAppointmentQr_: the Drive files aren't public
       hasAppointmentQr: /^https?:\/\//i.test(text("Appointment QR")),
+      // The order's Order Remarks & Timeline (partnerAddNote_ adds to it)
+      orderNotes: text("Order Notes"),
       podUrl: link("POD"),
       shipTo: text("Ship To"),
       boxDetails: text("Box Details"),
@@ -16099,7 +16111,8 @@ function partnerPoDbInfo_() {
     apptDate: idx("Appointment Date"), apptTime: idx("Appointment Time"), apptId: idx("Appointment ID"),
     store: idx("Store Code"), tracking: idx("Tracking Status"), delivered: idx("Delivered Date"),
     rto: idx("RTO Status"), eeStatus: idx("EE_order_status"), returned: idx("EE_item_returned_quantity"),
-    status: idx("Status"), manifest: idx("EE_manifest_date"), pickup: idx("Pickup Date"), qr: idx("QR Code URL")
+    status: idx("Status"), manifest: idx("EE_manifest_date"), pickup: idx("Pickup Date"), qr: idx("QR Code URL"),
+    notes: idx("Order Notes")
   };
   const get = (row, c) => c === -1 ? "" : row[c];
   const str = (row, c) => partnerFormatCell_(get(row, c), "HH:mm");
@@ -16143,10 +16156,15 @@ function partnerPoDbInfo_() {
     if (po) byPo[po] = info;
   });
 
+  const notesIndex = partnerNotesIndex_(values.map(row => ({
+    po: str(row, col.po), ref: str(row, col.ref), inv: str(row, col.inv), notes: str(row, col.notes)
+  })));
   const none = blank();
   return {
     find: (ref, invoiceNumber, poNumbers) => (ref && infos[ref]) || byInvoice[invoiceNumber] ||
-      poNumbers.map(p => byPo[p]).find(Boolean) || none
+      poNumbers.map(p => byPo[p]).find(Boolean) || none,
+    // The shipment's remarks timeline, merged across its POs
+    notesFor: notesIndex.notesFor
   };
 }
 
@@ -16180,6 +16198,7 @@ function partnerSyncMasterToTracker_() {
     ["RTO Status", TEXT, p => p.rtoStatus],
     ["Returned Qty", NUM, p => p.returnedQty || ""],
     ["Appointment QR", TEXT, p => p.qrCodeUrl],
+    ["Order Notes", TEXT, p => p.orderNotes],
     ["Appointment Date", DATE, p => p.appointmentDate],
     ["Appointment Time", TEXT, p => p.appointmentTime],
     ["Appointment ID", TEXT, p => p.appointmentId],
@@ -16206,8 +16225,10 @@ function partnerSyncMasterToTracker_() {
     const invoiceNumber = partnerFormatCell_(row[idx("Invoice Number")], "yyyy-MM-dd");
     const poNumbers = partnerFormatCell_(row[idx("PO Number")], "yyyy-MM-dd").split(",").map(s => s.trim()).filter(Boolean);
     if (!invoiceNumber && !poNumbers.length) return;
-    const p = poInfo.find(partnerFormatCell_(row[idx("EE Reference")], "yyyy-MM-dd"), invoiceNumber, poNumbers);
-    if (!p.found) return;
+    const eeRef = partnerFormatCell_(row[idx("EE Reference")], "yyyy-MM-dd");
+    const found = poInfo.find(eeRef, invoiceNumber, poNumbers);
+    if (!found.found) return;
+    const p = Object.assign({}, found, { orderNotes: poInfo.notesFor(eeRef, invoiceNumber, poNumbers) });
     fields.forEach(f => {
       const next = String(f.get(p) === null || f.get(p) === undefined ? "" : f.get(p));
       if (f.onlyFill && !next) return;
@@ -17018,6 +17039,168 @@ function partnerAppointmentQr_(data) {
   const bytes = blob.getBytes();
   if (bytes.length > 3 * 1024 * 1024) return { status: "error", message: "The appointment QR image is too large to show." };
   return { status: "success", mimeType: blob.getContentType() || "image/jpeg", base64: Utilities.base64Encode(bytes) };
+}
+
+/**
+ * Order remarks on the partner portal: the tool's Order Remarks & Timeline (PO_Database
+ * "Order Notes": "[yyyy-MM-dd HH:mm] Name: text" entries joined by " ## ", kept on one row
+ * per PO). Each tracker row holds a copy ("Order Notes", merged across the shipment's POs),
+ * refreshed by partnerSyncMasterToTracker_ and straight away when a remark is added, from
+ * the portal (partnerAddNote_) or from the tool (addOrderNote).
+ */
+const PARTNER_NOTE_MAX_CHARS_ = 1000;
+const PARTNER_NOTES_CELL_MAX_CHARS_ = 45000; // a sheet cell holds 50,000
+
+// rows: PO_Database rows in sheet order, as { po, ref, inv, notes }
+function partnerNotesIndex_(rows) {
+  const noteRow = Object.create(null); // PO -> the row holding its timeline: its first row with notes, else its first row
+  const posBy = Object.create(null);   // "ref:<EE reference>" / "inv:<invoice>" -> PO numbers
+  rows.forEach((r, i) => {
+    if (!r.po) return;
+    if (!(r.po in noteRow) || (!rows[noteRow[r.po]].notes && r.notes)) noteRow[r.po] = i;
+    [["ref:", r.ref], ["inv:", r.inv]].forEach(([prefix, key]) => {
+      if (!key) return;
+      const pos = posBy[prefix + key] = posBy[prefix + key] || [];
+      if (pos.indexOf(r.po) === -1) pos.push(r.po);
+    });
+  });
+  // The shipment's POs: the tracker row's own that are in PO_Database, then any other PO on
+  // its EE reference (or invoice), e.g. a "-1" re-order
+  const posFor = (eeRef, invoiceNumber, poNumbers) => {
+    const pos = poNumbers.filter(p => p in noteRow);
+    ((eeRef && posBy["ref:" + eeRef]) || (invoiceNumber && posBy["inv:" + invoiceNumber]) || [])
+      .forEach(p => { if (pos.indexOf(p) === -1) pos.push(p); });
+    return pos;
+  };
+  return {
+    rows: rows,
+    noteRow: noteRow,
+    posFor: posFor,
+    notesFor: (eeRef, invoiceNumber, poNumbers) =>
+      partnerMergeNotes_(posFor(eeRef, invoiceNumber, poNumbers).map(p => rows[noteRow[p]].notes))
+  };
+}
+
+// One timeline from several POs' remarks: each entry once, oldest first, and short enough
+// for a cell (the oldest entries are dropped)
+function partnerMergeNotes_(noteStrings) {
+  const sources = noteStrings.map(s => String(s || "").trim()).filter(Boolean);
+  const entries = [];
+  sources.forEach(s => s.split(" ## ").forEach(e => {
+    e = e.trim();
+    if (e && entries.indexOf(e) === -1) entries.push(e);
+  }));
+  if (sources.length > 1) {
+    const stamp = (e) => (e.match(/^\[([^\]]*)\]/) || [])[1] || "";
+    entries.sort((a, b) => stamp(a).localeCompare(stamp(b)));
+  }
+  while (entries.length > 1 && entries.join(" ## ").length > PARTNER_NOTES_CELL_MAX_CHARS_) entries.shift();
+  return entries.join(" ## ").slice(-PARTNER_NOTES_CELL_MAX_CHARS_);
+}
+
+// PO_Database's remarks and the columns that tie them to a shipment, read column by column
+// (reading the whole sheet is slow)
+function partnerPoNotesColumns_() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const idx = selfShipHeaderIndex_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  const notesCol = idx("Order Notes");
+  if (notesCol === -1) throw new Error("PO_Database has no Order Notes column.");
+  const n = sheet.getLastRow() - 1;
+  const read = (c) => c === -1 || n < 1 ? [] : sheet.getRange(2, c + 1, n, 1).getValues().map(r => partnerFormatCell_(r[0], "HH:mm"));
+  const po = read(idx("PO Number")), ref = read(idx("EE_reference_code")), inv = read(idx("Invoice Number")), notes = read(notesCol);
+  return {
+    sheet: sheet,
+    notesCol: notesCol,
+    index: partnerNotesIndex_(po.map((p, i) => ({ po: p, ref: ref[i] || "", inv: inv[i] || "", notes: notes[i] || "" })))
+  };
+}
+
+// Rewrites the "Order Notes" copy on every tracker row whose shipment includes PO po.
+// values / idx: the tracker's values (header row first) and its header lookup.
+function partnerWriteTrackerNotes_(sheet, values, idx, index, po) {
+  const c = idx("Order Notes");
+  if (c === -1) return 0;
+  const cell = (row, name) => idx(name) === -1 ? "" : partnerFormatCell_(row[idx(name)], "yyyy-MM-dd");
+  let count = 0;
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const poNumbers = cell(row, "PO Number").split(",").map(s => s.trim()).filter(Boolean);
+    const eeRef = cell(row, "EE Reference");
+    const invoiceNumber = cell(row, "Invoice Number");
+    if (index.posFor(eeRef, invoiceNumber, poNumbers).indexOf(po) === -1) continue;
+    const notes = index.notesFor(eeRef, invoiceNumber, poNumbers);
+    if (partnerFormatCell_(row[c], "yyyy-MM-dd") === notes) continue;
+    sheet.getRange(r + 1, c + 1).setValue(notes ? "'" + notes : "");
+    row[c] = notes;
+    count++;
+  }
+  return count;
+}
+
+// A remark on one request (created or not), added to the order's timeline in the tool and
+// to the tracker row's copy. Returns the shipment's merged timeline.
+// data: { invoiceNumber, note, actorName? (the portal session's name, for @cubelelo.com users) }
+function partnerAddNote_(data, access) {
+  const invoiceNumber = String(data.invoiceNumber || "").trim();
+  // One line, without the "##" that separates entries
+  const note = String(data.note || "").replace(/#{2,}/g, "#").replace(/\s+/g, " ").trim();
+  if (!invoiceNumber) return { status: "error", message: "No shipment selected." };
+  if (!note) return { status: "error", message: "Type a remark first." };
+  if (note.length > PARTNER_NOTE_MAX_CHARS_) return { status: "error", message: `Keep the remark under ${PARTNER_NOTE_MAX_CHARS_} characters.` };
+  const actorEmail = String(data.actorEmail || "").trim().toLowerCase();
+  // The name the tool's timeline shows, with partners marked as such; no ":" (it ends the name)
+  const author = (access.internal ? String(data.actorName || "").trim() || actorEmail
+    : `${access.name || actorEmail} (${SELF_SHIP_PARTNER_NAME_})`).replace(/:/g, " ").replace(/#{2,}/g, "#");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return { status: "error", message: "Another update is in progress, please retry in a moment." };
+  try {
+    const tracker = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+    const headers = ensureSelfShipColumns_(tracker, PARTNER_REQUEST_COLUMNS_.concat(PARTNER_MASTER_COLUMNS_));
+    const idx = selfShipHeaderIndex_(headers);
+    const values = tracker.getRange(1, 1, Math.max(tracker.getLastRow(), 1), headers.length).getValues();
+    const cell = (row, name) => idx(name) === -1 ? "" : partnerFormatCell_(row[idx(name)], "yyyy-MM-dd");
+    const matches = [];
+    values.forEach((row, i) => { if (i > 0 && cell(row, "Invoice Number") === invoiceNumber) matches.push(i); });
+    if (!matches.length) return { status: "error", message: `Shipment ${invoiceNumber} not found. Refresh the list.` };
+    const open = matches.filter(i => partnerRowStatus_(values[i][idx("Status")], cell(values[i], "AWB")) !== PARTNER_STATUS_.CANCELLED);
+    const pick = open.length ? open : matches;
+    const row = values[pick[pick.length - 1]];
+    const eeRef = cell(row, "EE Reference");
+    const poNumbers = cell(row, "PO Number").split(",").map(s => s.trim()).filter(Boolean);
+
+    const db = partnerPoNotesColumns_();
+    const po = db.index.posFor(eeRef, invoiceNumber, poNumbers)[0];
+    if (!po) return { status: "error", message: "This order isn't in Cubelelo's order list, so the remark can't be saved here. Please send it to Cubelelo directly." };
+    // The same entry the tool's addOrderNote writes, on the row holding the PO's timeline
+    const i = db.index.noteRow[po];
+    const stamp = Utilities.formatDate(new Date(), "GMT+5:30", "yyyy-MM-dd HH:mm");
+    const current = db.index.rows[i].notes;
+    const updated = (current ? current + " ## " : "") + `[${stamp}] ${author}: ${note}`;
+    db.sheet.getRange(i + 2, db.notesCol + 1).setValue(updated);
+    db.index.rows[i].notes = updated;
+
+    partnerWriteTrackerNotes_(tracker, values, idx, db.index, po);
+    SpreadsheetApp.flush();
+    return { status: "success", message: "Remark added.", orderNotes: db.index.notesFor(eeRef, invoiceNumber, poNumbers) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// The tool added a remark to PO po (addOrderNote): copy the timeline to the PO's tracker rows
+// now. dbValues: PO_Database's values, header row first, with the new remark in.
+function partnerPushNotesToTracker_(dbValues, po) {
+  const idx = selfShipHeaderIndex_(dbValues[0]);
+  const c = { po: idx("PO Number"), ref: idx("EE_reference_code"), inv: idx("Invoice Number"), notes: idx("Order Notes") };
+  const str = (row, i) => i === -1 ? "" : partnerFormatCell_(row[i], "HH:mm");
+  const index = partnerNotesIndex_(dbValues.slice(1).map(row => ({
+    po: str(row, c.po), ref: str(row, c.ref), inv: str(row, c.inv), notes: str(row, c.notes)
+  })));
+  if (!(po in index.noteRow)) return 0;
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  const values = sheet.getDataRange().getValues();
+  return partnerWriteTrackerNotes_(sheet, values, selfShipHeaderIndex_(values[0]), index, po);
 }
 
 // ==========================================
