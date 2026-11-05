@@ -79,7 +79,7 @@ const App: React.FC = () => {
   const [activeInventoryTab, setActiveInventoryTab] = useState<'mapping' | 'shortfall'>('mapping');
   const [activeShipmentTab, setActiveShipmentTab] = useState<'All' | 'Today' | 'Tomorrow' | 'Missed' | 'RTO' | 'Delivered'>('All');
   const [activeDispatchTab, setActiveDispatchTab] = useState<'Missed' | 'Today' | 'Upcoming' | 'All'>('Missed');
-  const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'logs'>('users');
+  const [adminTab, setAdminTab] = useState<'users' | 'roles' | 'channels' | 'integrations' | 'automation' | 'logs'>('users');
   const [isManualSyncRunning, setIsManualSyncRunning] = useState(false);
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);

@@ -231,6 +231,9 @@ function doPost(e) {
     else if (action === 'cancelShipment') result = cancelShipment(data);
     else if (action === 'recordBoxScan') result = recordBoxScan(data);
     else if (action === 'syncPackingListFromEasyEcom') result = syncPackingListFromEasyEcom(data);
+    else if (action === 'getAutoShipSettings') result = getAutoShipSettings();
+    else if (action === 'saveAutoShipSettings') result = saveAutoShipSettings(data);
+    else if (action === 'previewAutoShip') result = previewAutoShip(data);
     else if (action === 'sendBBOrderConfirmationEmail') 
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
@@ -15818,6 +15821,12 @@ function cancelShipment(data) {
       });
     }
     SpreadsheetApp.flush();
+    // Auto-send (auto ship.js) leaves this order to ops from now on
+    try {
+      autoShipRemember_(eeReferenceCode);
+    } catch (e) {
+      Logger.log(`cancelShipment: auto-send not told about ${eeReferenceCode}: ${e.message}`);
+    }
     Logger.log(`cancelShipment: ${eeReferenceCode} AWB ${awb || "(awaiting)"} (${carrier}) cancelled by ${userName || "unknown"}. ${note}`);
 
     return { status: "success", message: `Shipment cancelled for ${eeReferenceCode}; the order is back at Invoiced. ${note}` };
@@ -17551,12 +17560,28 @@ function syncPackingListFromEasyEcom(data) {
   }
 }
 
-/** Time-driven trigger handler. Throws on EasyEcom failures so Google's trigger failure emails fire. */
+/**
+ * Time-driven trigger handler. Throws on EasyEcom failures so Google's trigger failure emails fire.
+ * Then sends the orders that now have everything to the shipping partner (auto ship.js), even
+ * when the EasyEcom step failed.
+ */
 function runPackingListAutoSync() {
+  const startedAt = Date.now();
   const hour = Number(Utilities.formatDate(new Date(), 'Asia/Kolkata', 'H'));
   if (hour < PACKING_SYNC_HOURS_IST_.from || hour >= PACKING_SYNC_HOURS_IST_.to) return;
-  const result = syncPackingListCore_({ userName: 'EasyEcom Auto-Sync', fromTimer: true, maxWaitMs: 180000 });
-  Logger.log(result.message);
+  let syncError = null;
+  try {
+    const result = syncPackingListCore_({ userName: 'EasyEcom Auto-Sync', fromTimer: true, maxWaitMs: 180000 });
+    Logger.log(result.message);
+  } catch (e) {
+    syncError = e;
+  }
+  try {
+    Logger.log(runAutoShipToPartner_(startedAt).message);
+  } catch (e) {
+    Logger.log('Auto-send to the shipping partner failed: ' + e.message);
+  }
+  if (syncError) throw syncError;
 }
 
 /**
@@ -17800,4 +17825,351 @@ function packingToDate_(v) {
   let d = new Date(s);
   if (isNaN(d.getTime())) d = new Date(s.replace(' ', 'T'));
   return isNaN(d.getTime()) ? null : d;
+}
+
+
+// ==========================================
+// AUTO-SEND FOR SHIPPING (auto ship.js)
+// ==========================================
+/**
+ * Auto-send for shipping (Settings → Shipping Automation)
+ * Marketplace orders go to the shipping partner by themselves once they have everything
+ * the tool's Ship Order button needs: an invoice, the box count (fetched from EasyEcom by
+ * the packing-list timer) and, where the channel books one, the appointment
+ *   Zepto: the ASN (Appointment ID)
+ *   Instamart, BB: an appointment date or ID
+ *   RBL: a confirmed appointment, if one was requested
+ * Runs at the end of runPackingListAutoSync (every 15 minutes, 08:00-22:00 IST, as the
+ * trigger's owner). Off until switched on in Settings.
+ *
+ * Each order is sent at most once. Orders it sent, and orders whose shipment someone
+ * cancelled in the tool (cancelShipment), are remembered and left to ops after that, as
+ * are orders already on the Urvi Ent tracker and orders invoiced more than
+ * AUTO_SHIP_MAX_INVOICE_AGE_DAYS_ ago. An order that fails AUTO_SHIP_MAX_FAILS_ times is
+ * no longer retried.
+ *
+ * Partner: Urvi Ent, through createSelfShipBooking (the tool's "Self Ship: Urvi Ent").
+ */
+
+const AUTO_SHIP_CONFIG_KEY_ = "AUTO_SHIP_CONFIG";
+const AUTO_SHIP_STATE_KEY_ = "AUTO_SHIP_STATE";     // last check and recent sends, for Settings
+const AUTO_SHIP_HANDLED_KEY_ = "AUTO_SHIP_HANDLED"; // { EE ref: "yyyy-MM-dd" }: sent or cancelled, never sent again
+const AUTO_SHIP_FAILS_KEY_ = "AUTO_SHIP_FAILS";     // { EE ref: { count, message } }
+
+// Channel Name, lower-cased (the marketplace channels of B2B_NIMBUS_CHANNELS_)
+const AUTO_SHIP_CHANNELS_ = [
+  { key: "blinkit", label: "Blinkit" },
+  { key: "zepto", label: "Zepto", note: "Sent once the ASN (Appointment ID) is in." },
+  { key: "instamart", label: "Instamart", note: "Skips the tool's \"labels pasted on all boxes?\" check." },
+  { key: "bb", label: "BB (BigBasket)", note: "Sent once the appointment is in." },
+  { key: "rbl", label: "RBL", note: "Waits for the appointment if one was requested." },
+  { key: "flipkartminutes", label: "Flipkart Minutes" }
+];
+const AUTO_SHIP_PARTNERS_ = [
+  { key: "urvi_ent", label: "Urvi Ent (self-ship partner portal)" }
+];
+const AUTO_SHIP_DEFAULT_CHANNELS_ = ["blinkit", "zepto"];
+
+const AUTO_SHIP_MAX_PER_RUN_ = 5;
+const AUTO_SHIP_MAX_FAILS_ = 3;
+const AUTO_SHIP_MAX_INVOICE_AGE_DAYS_ = 14;
+const AUTO_SHIP_LIST_INVOICE_AGE_DAYS_ = 30; // older invoices aren't listed in the preview at all
+const AUTO_SHIP_KEEP_HANDLED_DAYS_ = 30;
+const AUTO_SHIP_TIME_BUDGET_MS_ = 270000;    // the trigger has 6 minutes; the packing sync goes first
+
+// PO_Database statuses of an invoiced order that hasn't shipped (the tool shows it as Invoiced)
+const AUTO_SHIP_OPEN_STATUSES_ = ["", "new", "confirmed", "invoiced"];
+// EasyEcom statuses past this stage
+const AUTO_SHIP_EE_DONE_ = ["shipped", "dispatched", "manifested", "delivered", "closed", "returned", "rto", "rtd", "ready to dispatch", "cancelled"];
+const AUTO_SHIP_TRACKING_DONE_ = ["booked", "in transit", "out for delivery", "delivered", "successfully delivered"];
+
+function autoShipReadJson_(key, fallback) {
+  try {
+    const value = PropertiesService.getScriptProperties().getProperty(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function autoShipWriteJson_(key, value) {
+  PropertiesService.getScriptProperties().setProperty(key, JSON.stringify(value));
+}
+
+function autoShipToday_() {
+  return Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd");
+}
+
+function autoShipConfig_() {
+  const saved = autoShipReadJson_(AUTO_SHIP_CONFIG_KEY_, {}) || {};
+  const keys = AUTO_SHIP_CHANNELS_.map(c => c.key);
+  return {
+    enabled: saved.enabled === true,
+    channels: Array.isArray(saved.channels) ? saved.channels.filter(k => keys.indexOf(k) !== -1) : AUTO_SHIP_DEFAULT_CHANNELS_.slice(),
+    partner: AUTO_SHIP_PARTNERS_.some(p => p.key === saved.partner) ? saved.partner : AUTO_SHIP_PARTNERS_[0].key,
+    updatedBy: saved.updatedBy || "",
+    updatedAt: saved.updatedAt || ""
+  };
+}
+
+// The order won't be sent automatically again: it was sent, or a person cancelled its
+// shipment (cancelShipment). Entries older than AUTO_SHIP_KEEP_HANDLED_DAYS_ are dropped:
+// by then the invoice is past AUTO_SHIP_MAX_INVOICE_AGE_DAYS_ anyway.
+function autoShipRemember_(eeReferenceCode) {
+  const ref = String(eeReferenceCode || "").trim();
+  if (!ref) return;
+  const handled = autoShipReadJson_(AUTO_SHIP_HANDLED_KEY_, {}) || {};
+  handled[ref] = autoShipToday_();
+  const cutoff = Utilities.formatDate(new Date(Date.now() - AUTO_SHIP_KEEP_HANDLED_DAYS_ * 86400000), "Asia/Kolkata", "yyyy-MM-dd");
+  let refs = Object.keys(handled).filter(k => handled[k] >= cutoff).sort((a, b) => handled[a].localeCompare(handled[b]));
+  // A Script Property holds 9 KB: drop the oldest if it ever gets close
+  while (refs.length > 1 && JSON.stringify(refs.reduce((o, k) => (o[k] = handled[k], o), {})).length > 8000) refs.shift();
+  autoShipWriteJson_(AUTO_SHIP_HANDLED_KEY_, refs.reduce((o, k) => (o[k] = handled[k], o), {}));
+}
+
+// Invoice numbers and EE references with a row on the Urvi Ent tracker, cancelled ones included
+function autoShipTrackerKeys_() {
+  const keys = Object.create(null);
+  const sheet = getSelfShipTrackerSheet_(SELF_SHIP_TRACKERS_.delhivery);
+  if (sheet.getLastRow() < 2) return keys;
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  const idx = selfShipHeaderIndex_(values[0]);
+  ["Invoice Number", "EE Reference"].forEach(name => {
+    const c = idx(name);
+    if (c === -1) return;
+    for (let r = 1; r < values.length; r++) {
+      const v = String(values[r][c] || "").trim();
+      if (v) keys[v] = true;
+    }
+  });
+  return keys;
+}
+
+/**
+ * Every invoiced, not yet shipped order on the chosen channels, with whether it can be
+ * sent now and, if not, why. channels: lower-case Channel Names.
+ * Returns [{ ref, channel, poNumbers, invoiceNumber, invoiceDate, boxes, ready, reason }],
+ * oldest invoice first.
+ */
+function autoShipReview_(channels) {
+  const values = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values.shift());
+  const col = {
+    ref: idx("EE_reference_code"), channel: idx("Channel Name"), po: idx("PO Number"),
+    inv: idx("Invoice Number"), invDate: idx("Invoice Date"), invStatus: idx("Invoice Status"),
+    status: idx("Status"), ee: idx("EE_order_status"), manifest: idx("EE_manifest_date"),
+    box: idx("Box Data"), carrier: idx("Carrier"), awb: idx("AWB"), tracking: idx("Tracking Status"),
+    delivered: idx("Delivered Date"), rto: idx("RTO Status"),
+    apptId: idx("Appointment ID"), apptDate: idx("Appointment Date"),
+    apptReqId: idx("Appointment Request ID"), apptReqTs: idx("Appointment Request Timestamp")
+  };
+  if (col.ref === -1 || col.channel === -1) throw new Error("PO_Database has no EE_reference_code / Channel Name column.");
+
+  const orders = {};
+  values.forEach(row => {
+    const ref = String(row[col.ref] || "").trim();
+    if (!ref || channels.indexOf(String(row[col.channel] || "").trim().toLowerCase()) === -1) return;
+    (orders[ref] = orders[ref] || []).push(row);
+  });
+
+  const handled = autoShipReadJson_(AUTO_SHIP_HANDLED_KEY_, {}) || {};
+  const fails = autoShipReadJson_(AUTO_SHIP_FAILS_KEY_, {}) || {};
+  const onTracker = autoShipTrackerKeys_();
+  const today = new Date(autoShipToday_() + "T00:00:00");
+  const list = [];
+
+  Object.keys(orders).forEach(ref => {
+    const rows = orders[ref];
+    const text = (row, c) => c === -1 || row[c] === null || row[c] === undefined ? "" : String(row[c]).trim();
+    const firstRow = (c) => rows.find(row => text(row, c) !== "");
+    const first = (c) => { const row = firstRow(c); return row ? text(row, c) : ""; };
+    const any = (c) => !!firstRow(c);
+
+    const invoiceNumber = first(col.inv);
+    if (!invoiceNumber || first(col.invStatus).toLowerCase() === "void") return;
+    const live = rows.filter(row => !/^cancel/i.test(text(row, col.status)));
+    if (!live.length) return; // every line cancelled
+    // Past this stage, or already sent some other way: not listed
+    if (any(col.awb) || any(col.carrier) || any(col.manifest) || any(col.delivered) || any(col.rto)) return;
+    if (live.some(row => AUTO_SHIP_OPEN_STATUSES_.indexOf(text(row, col.status).toLowerCase()) === -1)) return;
+    if (rows.some(row => AUTO_SHIP_EE_DONE_.indexOf(text(row, col.ee).toLowerCase()) !== -1)) return;
+    if (AUTO_SHIP_TRACKING_DONE_.indexOf(first(col.tracking).toLowerCase()) !== -1) return;
+
+    const invoiceRow = firstRow(col.invDate);
+    const invoiceDate = invoiceRow ? partnerIsoDate_(invoiceRow[col.invDate]) : "";
+    const ageDays = invoiceDate ? Math.round((new Date(invoiceDate + "T00:00:00") - today) / -86400000) : null;
+    if (ageDays !== null && ageDays > AUTO_SHIP_LIST_INVOICE_AGE_DAYS_) return;
+
+    const channel = first(col.channel);
+    const ch = channel.toLowerCase();
+    const boxes = col.box === -1 ? 0 : Math.max(0, ...rows.map(row => Number(row[col.box]) || 0));
+    const hasApptId = any(col.apptId), hasApptDate = any(col.apptDate);
+    const apptRequested = any(col.apptReqId) || any(col.apptReqTs);
+    const fail = fails[ref];
+
+    let reason = "";
+    if (handled[ref]) reason = `Its shipment was cancelled on ${handled[ref]}: ship it from the tool`;
+    else if (onTracker[invoiceNumber] || onTracker[ref]) reason = "Already on the Urvi Ent tracker from an earlier request: ship it from the tool";
+    else if (ageDays !== null && ageDays > AUTO_SHIP_MAX_INVOICE_AGE_DAYS_) reason = `Invoiced ${ageDays} days ago (over ${AUTO_SHIP_MAX_INVOICE_AGE_DAYS_}): ship it from the tool`;
+    else if (!boxes) reason = "Waiting for the box details from EasyEcom";
+    else if (ch.indexOf("zepto") !== -1 && !hasApptId) reason = hasApptDate ? "Waiting for the Zepto ASN (Appointment ID)" : "Waiting for the Zepto appointment";
+    else if ((ch.indexOf("instamart") !== -1 || ch.indexOf("bb") !== -1) && !hasApptId && !hasApptDate) reason = "Waiting for the appointment";
+    else if (ch.indexOf("rbl") !== -1 && apptRequested && !hasApptId && !hasApptDate) reason = "Waiting for the appointment confirmation";
+    else if (fail && fail.count >= AUTO_SHIP_MAX_FAILS_) reason = `Failed ${fail.count} times (${fail.message}): ship it from the tool`;
+
+    list.push({
+      ref: ref,
+      channel: channel,
+      poNumbers: Array.from(new Set(rows.map(row => text(row, col.po)).filter(Boolean))),
+      invoiceNumber: invoiceNumber,
+      invoiceDate: invoiceDate,
+      boxes: boxes,
+      ready: !reason,
+      reason: reason,
+      lastError: fail && fail.count < AUTO_SHIP_MAX_FAILS_ ? fail.message : ""
+    });
+  });
+  return list.sort((a, b) => (a.invoiceDate || "9999").localeCompare(b.invoiceDate || "9999"));
+}
+
+function autoShipPartnerLabel_(key) {
+  const p = AUTO_SHIP_PARTNERS_.find(x => x.key === key);
+  return p ? p.label.replace(/\s*\(.*\)$/, "") : key;
+}
+
+// Re-read just before sending: someone may have shipped the order from the tool since the
+// review (a NimbusPost push in flight holds AWB "PROCESSING")
+function autoShipStillUnshipped_(ref) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return false;
+  const idx = selfShipHeaderIndex_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  const read = (name) => idx(name) === -1 ? [] : sheet.getRange(2, idx(name) + 1, n, 1).getValues();
+  const refs = read("EE_reference_code"), carriers = read("Carrier"), awbs = read("AWB");
+  let found = false;
+  for (let i = 0; i < refs.length; i++) {
+    if (String(refs[i][0] || "").trim() !== ref) continue;
+    found = true;
+    if (String((carriers[i] || [""])[0] || "").trim() || String((awbs[i] || [""])[0] || "").trim()) return false;
+  }
+  return found;
+}
+
+function autoShipSend_(partner, order) {
+  if (!autoShipStillUnshipped_(order.ref)) return { status: "skipped", message: "Shipped from the tool in the meantime" };
+  if (partner === "urvi_ent") return createSelfShipBooking({ eeReferenceCode: order.ref, provider: "delhivery" });
+  return { status: "error", message: "Unknown shipping partner: " + partner };
+}
+
+/**
+ * Sends the ready orders (at most AUTO_SHIP_MAX_PER_RUN_, oldest invoice first) and records
+ * the run for Settings. startedAt: when the trigger started, so the run ends inside the
+ * 6-minute limit. Returns { status, message }.
+ */
+function runAutoShipToPartner_(startedAt) {
+  const config = autoShipConfig_();
+  if (!config.enabled || !config.channels.length) return { status: "success", message: "Auto-send is off." };
+  if (Date.now() - startedAt > AUTO_SHIP_TIME_BUDGET_MS_ - 60000) return { status: "success", message: "Auto-send skipped: no time left in this run." };
+
+  const review = autoShipReview_(config.channels);
+  const fails = autoShipReadJson_(AUTO_SHIP_FAILS_KEY_, {}) || {};
+  // Orders that failed before go after the rest
+  const ready = review.filter(o => o.ready)
+    .sort((a, b) => ((fails[a.ref] || {}).count || 0) - ((fails[b.ref] || {}).count || 0));
+  const state = autoShipReadJson_(AUTO_SHIP_STATE_KEY_, {}) || {};
+  const recent = Array.isArray(state.recent) ? state.recent : [];
+  const partnerLabel = autoShipPartnerLabel_(config.partner);
+  const sent = [], failed = [];
+
+  for (let i = 0; i < ready.length && sent.length + failed.length < AUTO_SHIP_MAX_PER_RUN_; i++) {
+    if (Date.now() - startedAt > AUTO_SHIP_TIME_BUDGET_MS_) break;
+    const order = ready[i];
+    let res;
+    try {
+      res = autoShipSend_(config.partner, order);
+    } catch (e) {
+      res = { status: "error", message: e.message };
+    }
+    if (res && res.status === "skipped") continue;
+    if (res && res.status === "success") {
+      autoShipRemember_(order.ref);
+      delete fails[order.ref];
+      sent.push(order.ref);
+      recent.unshift({ ref: order.ref, channel: order.channel, invoiceNumber: order.invoiceNumber, partner: partnerLabel, at: new Date().toISOString() });
+      // On the order's timeline in the tool and the partner portal
+      try {
+        if (order.poNumbers.length) {
+          addOrderNote({
+            poNumber: order.poNumbers[0],
+            userName: "Auto-ship",
+            note: `[System] Sent to ${partnerLabel} for shipping automatically: the invoice and ${order.boxes} box(es) are in. Cancel the shipment in the tool to ship it another way.`
+          });
+        }
+      } catch (e) {
+        Logger.log(`runAutoShipToPartner_: no timeline note for ${order.ref}: ${e.message}`);
+      }
+    } else {
+      const message = String((res && res.message) || "No response").slice(0, 200);
+      const count = ((fails[order.ref] || {}).count || 0) + 1;
+      fails[order.ref] = { count: count, message: message };
+      failed.push({ ref: order.ref, channel: order.channel, message: message, count: count });
+    }
+  }
+
+  // Keep failure counts only for orders still waiting to be sent
+  const waitingRefs = review.reduce((o, x) => (o[x.ref] = true, o), {});
+  autoShipWriteJson_(AUTO_SHIP_FAILS_KEY_, Object.keys(fails).filter(k => waitingRefs[k] && sent.indexOf(k) === -1)
+    .reduce((o, k) => (o[k] = fails[k], o), {}));
+  autoShipWriteJson_(AUTO_SHIP_STATE_KEY_, {
+    lastCheckAt: new Date().toISOString(),
+    lastCheck: { ready: ready.length, sent: sent.length, failed: failed, waiting: review.length - ready.length },
+    recent: recent.slice(0, 15)
+  });
+
+  return {
+    status: "success",
+    message: `Auto-send to ${partnerLabel}: ${sent.length} sent${sent.length ? ` (${sent.join(", ")})` : ""}, ${failed.length} failed, ` +
+      `${Math.max(0, ready.length - sent.length - failed.length)} left for the next run, ${review.length - ready.length} waiting.`
+  };
+}
+
+// --- Settings (doPost actions) ---
+
+// data: {} → the settings, the choices and the last check
+function getAutoShipSettings() {
+  return {
+    status: "success",
+    config: autoShipConfig_(),
+    channels: AUTO_SHIP_CHANNELS_,
+    partners: AUTO_SHIP_PARTNERS_,
+    rules: { maxPerRun: AUTO_SHIP_MAX_PER_RUN_, maxInvoiceAgeDays: AUTO_SHIP_MAX_INVOICE_AGE_DAYS_, maxFails: AUTO_SHIP_MAX_FAILS_ },
+    state: autoShipReadJson_(AUTO_SHIP_STATE_KEY_, {}) || {}
+  };
+}
+
+// data: { enabled, channels: [keys], partner, userName }
+function saveAutoShipSettings(data) {
+  const keys = AUTO_SHIP_CHANNELS_.map(c => c.key);
+  const channels = (Array.isArray(data.channels) ? data.channels : []).map(k => String(k).toLowerCase()).filter(k => keys.indexOf(k) !== -1);
+  const partner = String(data.partner || "");
+  if (!AUTO_SHIP_PARTNERS_.some(p => p.key === partner)) return { status: "error", message: "Choose the partner to send orders to." };
+  if (data.enabled === true && !channels.length) return { status: "error", message: "Pick at least one channel, or turn the automation off." };
+  autoShipWriteJson_(AUTO_SHIP_CONFIG_KEY_, {
+    enabled: data.enabled === true,
+    channels: Array.from(new Set(channels)),
+    partner: partner,
+    updatedBy: String(data.userName || "").trim(),
+    updatedAt: new Date().toISOString()
+  });
+  return { status: "success", message: data.enabled === true ? "Auto-send is on. Orders are checked every 15 minutes, 8 am to 10 pm." : "Auto-send is off.", config: autoShipConfig_() };
+}
+
+// data: { channels?: [keys] } (the form's unsaved choice; defaults to the saved one) →
+// the orders and whether each would be sent now
+function previewAutoShip(data) {
+  const keys = AUTO_SHIP_CHANNELS_.map(c => c.key);
+  const channels = Array.isArray(data && data.channels)
+    ? data.channels.map(k => String(k).toLowerCase()).filter(k => keys.indexOf(k) !== -1)
+    : autoShipConfig_().channels;
+  return { status: "success", orders: channels.length ? autoShipReview_(channels) : [] };
 }

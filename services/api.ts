@@ -744,6 +744,55 @@ export const syncPackingListFromEasyEcom = async (referenceCode: string, userNam
     return await postToScript({ action: 'syncPackingListFromEasyEcom', referenceCode, userName });
 };
 
+// --- Auto-send for shipping (Settings → Shipping Automation; Apps Script "auto ship.js") ---
+
+export interface AutoShipConfig {
+    enabled: boolean;
+    channels: string[]; // lower-case Channel Names, e.g. "blinkit"
+    partner: string;    // e.g. "urvi_ent"
+    updatedBy?: string;
+    updatedAt?: string;
+}
+
+export interface AutoShipOrder {
+    ref: string;
+    channel: string;
+    poNumbers: string[];
+    invoiceNumber: string;
+    invoiceDate: string;
+    boxes: number;
+    ready: boolean;
+    reason: string;     // why it isn't sent yet (blank when ready)
+    lastError: string;  // the last failed attempt, while it is still retried
+}
+
+export interface AutoShipSettings {
+    status: string;
+    message?: string;
+    config: AutoShipConfig;
+    channels: { key: string; label: string; note?: string }[];
+    partners: { key: string; label: string }[];
+    rules: { maxPerRun: number; maxInvoiceAgeDays: number; maxFails: number };
+    state: {
+        lastCheckAt?: string;
+        lastCheck?: { ready: number; sent: number; waiting: number; failed: { ref: string; channel: string; message: string; count: number }[] };
+        recent?: { ref: string; channel: string; invoiceNumber: string; partner: string; at: string }[];
+    };
+}
+
+export const fetchAutoShipSettings = async (): Promise<AutoShipSettings> => {
+    return await postToScriptWithRetry({ action: 'getAutoShipSettings' });
+};
+
+export const saveAutoShipSettings = async (settings: { enabled: boolean; channels: string[]; partner: string; userName: string }): Promise<{ status: string; message: string; config?: AutoShipConfig }> => {
+    return await postToScript({ action: 'saveAutoShipSettings', ...settings });
+};
+
+// The orders on these channels and whether each would be sent now
+export const previewAutoShip = async (channels: string[]): Promise<{ status: string; message?: string; orders?: AutoShipOrder[] }> => {
+    return await postToScriptWithRetry({ action: 'previewAutoShip', channels });
+};
+
 export const pushToEasyEcom = async (po: PurchaseOrder, selectedArticleCodes: string[], pushTarget?: 'AMZ' | 'EE') => {
     const itemsToSend = (po.items || [])
         .filter(item => selectedArticleCodes.includes(item.articleCode))

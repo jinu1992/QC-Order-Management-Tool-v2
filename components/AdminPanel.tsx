@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, User, Role, ViewType, RolePermissions, ChannelConfig } from '../types';
-import { ShieldCheckIcon, UserGroupIcon, LockClosedIcon, PencilIcon, TrashIcon, CheckCircleIcon, XCircleIcon, PlusIcon, AdminIcon, CogIcon, RefreshIcon, GlobeIcon, MailIcon } from './icons/Icons';
+import { ShieldCheckIcon, UserGroupIcon, LockClosedIcon, PencilIcon, TrashIcon, CheckCircleIcon, XCircleIcon, PlusIcon, AdminIcon, CogIcon, RefreshIcon, GlobeIcon, MailIcon, TruckIcon } from './icons/Icons';
 import { saveChannelConfig, saveSystemConfig, fetchSystemConfig, saveUserToSheet, deleteUserFromSheet } from '../services/api';
+import AutoShipSettings from './AutoShipSettings';
 
 interface AdminPanelProps {
     logs: ActivityLog[];
@@ -14,8 +15,8 @@ interface AdminPanelProps {
     currentUser: User;
     channelConfigs: ChannelConfig[];
     onSync: () => void;
-    activeTab: 'users' | 'roles' | 'channels' | 'integrations' | 'logs';
-    setActiveTab: (tab: 'users' | 'roles' | 'channels' | 'integrations' | 'logs') => void;
+    activeTab: 'users' | 'roles' | 'channels' | 'integrations' | 'automation' | 'logs';
+    setActiveTab: (tab: 'users' | 'roles' | 'channels' | 'integrations' | 'automation' | 'logs') => void;
     addNotification: (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
@@ -389,7 +390,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                     >
                         <GlobeIcon className="h-4 w-4" /> Integrations
                     </button>
-                    <button 
+                    <button
+                         onClick={() => setActiveTab('automation')}
+                         className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'automation' ? 'border-partners-green text-partners-green' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <TruckIcon className="h-4 w-4" /> Shipping Automation
+                    </button>
+                    <button
                          onClick={() => setActiveTab('logs')}
                          className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'logs' ? 'border-partners-green text-partners-green' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                     >
@@ -652,6 +659,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                                 </div>
                             </div>
                         </div>
+                    )}
+
+                    {activeTab === 'automation' && (
+                        <AutoShipSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
                     )}
 
                     {activeTab === 'logs' && (
