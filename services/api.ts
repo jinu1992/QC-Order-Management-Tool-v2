@@ -744,7 +744,61 @@ export const syncPackingListFromEasyEcom = async (referenceCode: string, userNam
     return await postToScript({ action: 'syncPackingListFromEasyEcom', referenceCode, userName });
 };
 
-// --- Auto-send for shipping (Settings → Shipping Automation; Apps Script "auto ship.js") ---
+// --- Auto-create invoices (Settings → Order Automation; Apps Script "auto invoice.js") ---
+
+export interface AutoInvoiceConfig {
+    enabled: boolean;
+    channels: string[]; // lower-case Channel Names, e.g. "blinkit", "amazon_fba"
+    updatedBy?: string;
+    updatedAt?: string;
+}
+
+export interface AutoInvoiceOrder {
+    ref: string;
+    channel: string;
+    poNumbers: string[];
+    orderDate: string;  // EE_order_date, yyyy-MM-dd
+    lines: number;      // lines not cancelled in the tool
+    qty: number;        // EasyEcom quantity the invoice would carry
+    ready: boolean;
+    reason: string;     // why it isn't invoiced yet (blank when ready)
+    lastError: string;  // the last failed attempt, while it is still retried
+}
+
+export interface AutoInvoiceSettings {
+    status: string;
+    message?: string;
+    config: AutoInvoiceConfig;
+    channels: { key: string; label: string; note?: string }[];
+    rules: { maxPerRun: number; maxOrderAgeDays: number; maxFails: number };
+    state: {
+        lastCheckAt?: string;
+        lastCheck?: {
+            ready: number;
+            created: number;
+            waiting: number;
+            failed: { ref: string; channel: string; message: string; count: number }[];
+            stopped: { ref: string; channel: string; message: string }[];
+        };
+        recent?: { ref: string; channel: string; invoiceNumber: string; at: string }[];
+        stopped?: { ref: string; channel: string; message: string; at: string }[]; // left to ops, newest first
+    };
+}
+
+export const fetchAutoInvoiceSettings = async (): Promise<AutoInvoiceSettings> => {
+    return await postToScriptWithRetry({ action: 'getAutoInvoiceSettings' });
+};
+
+export const saveAutoInvoiceSettings = async (settings: { enabled: boolean; channels: string[]; userName: string }): Promise<{ status: string; message: string; config?: AutoInvoiceConfig }> => {
+    return await postToScript({ action: 'saveAutoInvoiceSettings', ...settings });
+};
+
+// The orders on these channels and whether each would be invoiced now. Reads PO_Database only.
+export const previewAutoInvoice = async (channels: string[]): Promise<{ status: string; message?: string; orders?: AutoInvoiceOrder[] }> => {
+    return await postToScriptWithRetry({ action: 'previewAutoInvoice', channels });
+};
+
+// --- Auto-send for shipping (Settings → Order Automation; Apps Script "auto ship.js") ---
 
 export interface AutoShipConfig {
     enabled: boolean;

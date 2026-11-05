@@ -234,7 +234,11 @@ function doPost(e) {
     else if (action === 'getAutoShipSettings') result = getAutoShipSettings();
     else if (action === 'saveAutoShipSettings') result = saveAutoShipSettings(data);
     else if (action === 'previewAutoShip') result = previewAutoShip(data);
-    else if (action === 'sendBBOrderConfirmationEmail') 
+    else if (action === 'getAutoInvoiceSettings') result = getAutoInvoiceSettings();
+    else if (action === 'saveAutoInvoiceSettings') result = saveAutoInvoiceSettings(data);
+    else if (action === 'previewAutoInvoice') result = previewAutoInvoice(data);
+    else if (action === 'debugAutoInvoiceLookup') result = debugAutoInvoiceLookup(data);
+    else if (action === 'sendBBOrderConfirmationEmail')
     {
       const poNumbers = (data.poNumbers || []).map(p => String(p).trim()).filter(p => p);
       if (poNumbers.length === 0) {return responseJSON({Status: "error",message: "No PO numbers received."});}
@@ -17562,8 +17566,8 @@ function syncPackingListFromEasyEcom(data) {
 
 /**
  * Time-driven trigger handler. Throws on EasyEcom failures so Google's trigger failure emails fire.
- * Then sends the orders that now have everything to the shipping partner (auto ship.js), even
- * when the EasyEcom step failed.
+ * Then creates the invoices of confirmed orders (auto invoice.js) and sends the orders that now
+ * have everything to the shipping partner (auto ship.js), even when the EasyEcom step failed.
  */
 function runPackingListAutoSync() {
   const startedAt = Date.now();
@@ -17575,6 +17579,11 @@ function runPackingListAutoSync() {
     Logger.log(result.message);
   } catch (e) {
     syncError = e;
+  }
+  try {
+    Logger.log(runAutoInvoice_(startedAt).message);
+  } catch (e) {
+    Logger.log('Auto-invoice failed: ' + e.message);
   }
   try {
     Logger.log(runAutoShipToPartner_(startedAt).message);
@@ -17916,15 +17925,22 @@ function autoShipConfig_() {
 // shipment (cancelShipment). Entries older than AUTO_SHIP_KEEP_HANDLED_DAYS_ are dropped:
 // by then the invoice is past AUTO_SHIP_MAX_INVOICE_AGE_DAYS_ anyway.
 function autoShipRemember_(eeReferenceCode) {
+  autoRememberRef_(AUTO_SHIP_HANDLED_KEY_, eeReferenceCode);
+}
+
+// Adds an EE reference to the { ref: "yyyy-MM-dd" } map in Script Property `key`
+// (AUTO_SHIP_HANDLED, AUTO_INVOICE_HANDLED). Entries older than AUTO_SHIP_KEEP_HANDLED_DAYS_
+// are dropped, so whatever reads the map must also skip orders older than that.
+function autoRememberRef_(key, eeReferenceCode) {
   const ref = String(eeReferenceCode || "").trim();
   if (!ref) return;
-  const handled = autoShipReadJson_(AUTO_SHIP_HANDLED_KEY_, {}) || {};
+  const handled = autoShipReadJson_(key, {}) || {};
   handled[ref] = autoShipToday_();
   const cutoff = Utilities.formatDate(new Date(Date.now() - AUTO_SHIP_KEEP_HANDLED_DAYS_ * 86400000), "Asia/Kolkata", "yyyy-MM-dd");
   let refs = Object.keys(handled).filter(k => handled[k] >= cutoff).sort((a, b) => handled[a].localeCompare(handled[b]));
   // A Script Property holds 9 KB: drop the oldest if it ever gets close
   while (refs.length > 1 && JSON.stringify(refs.reduce((o, k) => (o[k] = handled[k], o), {})).length > 8000) refs.shift();
-  autoShipWriteJson_(AUTO_SHIP_HANDLED_KEY_, refs.reduce((o, k) => (o[k] = handled[k], o), {}));
+  autoShipWriteJson_(key, refs.reduce((o, k) => (o[k] = handled[k], o), {}));
 }
 
 // Invoice numbers and EE references with a row on the Urvi Ent tracker, cancelled ones included
@@ -18172,4 +18188,543 @@ function previewAutoShip(data) {
     ? data.channels.map(k => String(k).toLowerCase()).filter(k => keys.indexOf(k) !== -1)
     : autoShipConfig_().channels;
   return { status: "success", orders: channels.length ? autoShipReview_(channels) : [] };
+}
+
+
+// ==========================================
+// AUTO-CREATE INVOICES (auto invoice.js)
+// ==========================================
+/**
+ * Auto-create invoices (Settings → Order Automation)
+ * Creates an order's Zoho invoice by itself once EasyEcom has confirmed the order, through
+ * createZohoInvoiceByReferenceCode: the same code as the tool's Create Invoice button (draft,
+ * IRP e-invoice, mark sent, then the E-Way Bill or Amazon FBA purchase bill where the button
+ * makes one, and the PO_Database sync). Runs inside runPackingListAutoSync (every 15 minutes,
+ * 08:00-22:00 IST, as the trigger's owner), before auto-send for shipping. Off until switched
+ * on in Settings.
+ *
+ * An invoice carries a legal IRN, so this must never make a second one. Just before each
+ * create:
+ *   - PO_Database is read again: the order must still have no Invoice Id / Invoice Number;
+ *   - Zoho is asked for invoices whose Reference# contains the order's EE reference: if any
+ *     may be this order's, void ones included, the order is left to ops.
+ * An order is never tried again once
+ *   - its invoice was created (AUTO_INVOICE_HANDLED);
+ *   - the create failed after Zoho made the draft ("Invoice was created / pushed / finalized,
+ *     but ..."), or Zoho shows an invoice after any failed attempt, or the run ended while it
+ *     was creating (it leaves AUTO_INVOICE_INFLIGHT behind). These are "stopped": the order
+ *     gets a "[System]" remark and Settings lists it.
+ * Other errors mean nothing was made in Zoho; later runs try again, up to
+ * AUTO_INVOICE_MAX_FAILS_ times.
+ * Only one run works on an order at a time: a run takes AUTO_INVOICE_INFLIGHT under the script
+ * lock, and only when no other run holds it (a duplicate trigger, or a run from the editor).
+ */
+
+const AUTO_INVOICE_CONFIG_KEY_ = "AUTO_INVOICE_CONFIG";
+const AUTO_INVOICE_STATE_KEY_ = "AUTO_INVOICE_STATE";       // last check, recent invoices and stops, for Settings
+const AUTO_INVOICE_HANDLED_KEY_ = "AUTO_INVOICE_HANDLED";   // { EE ref: "yyyy-MM-dd" }: invoiced or stopped, never tried again
+const AUTO_INVOICE_FAILS_KEY_ = "AUTO_INVOICE_FAILS";       // { EE ref: { count, message, stopped } }
+const AUTO_INVOICE_INFLIGHT_KEY_ = "AUTO_INVOICE_INFLIGHT"; // { ref, runId, at, phase, channel, poNumbers }: the order a run is on
+
+// Channel Name, lower-cased. Flipkart isn't offered: it uploads its own e-invoice.
+const AUTO_INVOICE_CHANNELS_ = [
+  { key: "blinkit", label: "Blinkit" },
+  { key: "zepto", label: "Zepto" },
+  { key: "instamart", label: "Instamart" },
+  { key: "bb", label: "BB (BigBasket)" },
+  { key: "rbl", label: "RBL" },
+  { key: "flipkartminutes", label: "Flipkart Minutes" },
+  { key: "amazon_fba", label: "Amazon FBA", note: "Once the FBA Shipment ID is in. Also makes the purchase bill. Store YEIO is skipped." },
+  { key: "bulk", label: "Bulk", note: "Also makes the E-Way Bill when one is needed, as Create Invoice does." },
+  { key: "event", label: "Event", note: "Also makes the E-Way Bill when one is needed, as Create Invoice does." },
+  { key: "starmark", label: "Starmark", note: "Also makes the E-Way Bill when one is needed, as Create Invoice does." }
+];
+const AUTO_INVOICE_DEFAULT_CHANNELS_ = ["blinkit", "zepto"];
+
+const AUTO_INVOICE_MAX_PER_RUN_ = 3;
+const AUTO_INVOICE_MAX_FAILS_ = 3;
+const AUTO_INVOICE_MAX_ORDER_AGE_DAYS_ = 14;    // keep under AUTO_SHIP_KEEP_HANDLED_DAYS_ (30), see autoRememberRef_
+const AUTO_INVOICE_LIST_ORDER_AGE_DAYS_ = 30;   // older orders aren't listed in the preview at all
+const AUTO_INVOICE_START_BY_MS_ = 200000;       // no new invoice after 200 s of the trigger's 6 minutes
+const AUTO_INVOICE_INFLIGHT_STALE_MS_ = 420000; // a marker older than any run can last was left by a run that ended
+const AUTO_INVOICE_LOCK_WAIT_MS_ = 30000;       // wait for the script lock; held only to read and write the marker
+
+// PO_Database statuses of an order that hasn't been invoiced
+const AUTO_INVOICE_OPEN_STATUSES_ = ["", "new", "confirmed"];
+// createZohoInvoiceByReferenceCode errors raised after Zoho made the invoice
+const AUTO_INVOICE_AFTER_DRAFT_RE_ = /invoice was (created|pushed|finalized)|eway bill failed|place_of_supply missing/i;
+
+function autoInvoiceConfig_() {
+  const saved = autoShipReadJson_(AUTO_INVOICE_CONFIG_KEY_, {}) || {};
+  const keys = AUTO_INVOICE_CHANNELS_.map(c => c.key);
+  return {
+    enabled: saved.enabled === true,
+    channels: Array.isArray(saved.channels) ? saved.channels.filter(k => keys.indexOf(k) !== -1) : AUTO_INVOICE_DEFAULT_CHANNELS_.slice(),
+    updatedBy: saved.updatedBy || "",
+    updatedAt: saved.updatedAt || ""
+  };
+}
+
+/**
+ * Every order on the chosen channels that has no invoice yet and is Open or Confirmed in
+ * EasyEcom, with whether its invoice can be created now and, if not, why.
+ * channels: lower-case Channel Names.
+ * Returns [{ ref, channel, poNumbers, orderDate, lines, qty, ready, reason, lastError }],
+ * oldest order first.
+ */
+function autoInvoiceReview_(channels) {
+  const values = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const idx = selfShipHeaderIndex_(values.shift());
+  const col = {
+    ref: idx("EE_reference_code"), channel: idx("Channel Name"), po: idx("PO Number"), store: idx("Store Code"),
+    status: idx("Status"), ee: idx("EE_order_status"), eeDate: idx("EE_order_date"), expiry: idx("PO Expiry Date"),
+    shipped: idx("EE_item_shipped_quantity"), item: idx("Zoho Item ID"), contact: idx("Zoho Contact ID"),
+    sku: idx("Item Code"), fba: idx("FBA Shipment IDs"), invId: idx("Invoice Id"), inv: idx("Invoice Number")
+  };
+  const missing = ["ref", "channel", "status", "ee", "eeDate", "shipped", "item", "contact", "invId", "inv"].filter(k => col[k] === -1);
+  if (missing.length) throw new Error("PO_Database is missing columns needed for auto-invoice: " + missing.join(", "));
+
+  // All of an order's rows in sheet order, the way createZohoInvoiceByReferenceCode reads them
+  const orders = {};
+  values.forEach(row => {
+    const ref = String(row[col.ref]).trim();
+    if (ref) (orders[ref] = orders[ref] || []).push(row);
+  });
+
+  const handled = autoShipReadJson_(AUTO_INVOICE_HANDLED_KEY_, {}) || {};
+  const fails = autoShipReadJson_(AUTO_INVOICE_FAILS_KEY_, {}) || {};
+  const todayIso = autoShipToday_();
+  const today = new Date(todayIso + "T00:00:00");
+  const text = (row, c) => c === -1 || row[c] === null || row[c] === undefined ? "" : String(row[c]).trim();
+  const list = [];
+
+  Object.keys(orders).forEach(ref => {
+    const rows = orders[ref];
+    const channel = text(rows[0], col.channel);
+    const ch = channel.toLowerCase();
+    if (channels.indexOf(ch) === -1) return;
+    if (rows.some(row => text(row, col.invId) || text(row, col.inv))) return; // invoiced
+    const live = rows.filter(row => !/^cancel/i.test(text(row, col.status)));
+    if (!live.length) return; // every line cancelled
+    // Only orders EasyEcom has open or confirmed, which the tool hasn't moved on
+    const ee = Array.from(new Set(live.map(row => text(row, col.ee).toLowerCase())));
+    if (ee.some(s => s !== "open" && s !== "confirmed")) return;
+    if (live.some(row => AUTO_INVOICE_OPEN_STATUSES_.indexOf(text(row, col.status).toLowerCase()) === -1)) return;
+    const isFba = ch === "amazon_fba";
+    if (isFba && text(rows[0], col.store).toUpperCase() === "YEIO") return; // the tool doesn't invoice these
+
+    const dateRow = rows.find(row => text(row, col.eeDate) !== "");
+    const orderDate = dateRow ? partnerIsoDate_(dateRow[col.eeDate]) : "";
+    const ageDays = orderDate ? Math.round((new Date(orderDate + "T00:00:00") - today) / -86400000) : null;
+    if (ageDays !== null && ageDays > AUTO_INVOICE_LIST_ORDER_AGE_DAYS_) return;
+
+    const expiryRow = live.find(row => text(row, col.expiry) !== "");
+    const expiry = expiryRow ? partnerIsoDate_(expiryRow[col.expiry]) : "";
+    // Same quantities as the invoice: every row's EE_item_shipped_quantity, cancelled rows included
+    const qtyOf = (row) => Math.max(0, parseInt(row[col.shipped], 10) || 0);
+    const qty = rows.reduce((n, row) => n + qtyOf(row), 0);
+    const cancelledWithQty = rows.filter(row => /^cancel/i.test(text(row, col.status)) && qtyOf(row) > 0);
+    const noItemId = rows.filter(row => !text(row, col.item));
+    const fail = fails[ref];
+
+    let reason = "";
+    if (handled[ref]) {
+      reason = fail && fail.stopped
+        ? `Left to you since ${handled[ref]}: ${fail.message}`
+        : `Handled by auto-invoice on ${handled[ref]}, but PO_Database shows no invoice yet: check Zoho`;
+    }
+    else if (ee.length !== 1 || ee[0] !== "confirmed") reason = "Waiting for EasyEcom to confirm it (status Open)";
+    else if (!orderDate) reason = "EasyEcom has no order date for it: create it from the tool";
+    else if (ageDays > AUTO_INVOICE_MAX_ORDER_AGE_DAYS_) reason = `EasyEcom order is ${ageDays} days old (over ${AUTO_INVOICE_MAX_ORDER_AGE_DAYS_}): create it from the tool`;
+    else if (expiry && expiry < todayIso) reason = `The PO expired on ${expiry}: create it from the tool if it still ships`;
+    else if (isFba && !text(rows[0], col.fba)) reason = "Waiting for the FBA Shipment ID";
+    else if (!qty) reason = "EasyEcom shows nothing to ship";
+    else if (cancelledWithQty.length) reason = `${cancelledWithQty.length} line(s) cancelled in the tool still have a quantity in EasyEcom: create it from the tool`;
+    else if (noItemId.length) {
+      const skus = noItemId.map(row => text(row, col.sku)).filter(Boolean).slice(0, 3);
+      reason = `No Zoho Item ID on ${noItemId.length} line(s)${skus.length ? ` (${skus.join(", ")})` : ""}`;
+    }
+    else if (!text(rows[0], col.contact)) reason = "No Zoho Contact ID (customer) on the order";
+    else if (fail && fail.count >= AUTO_INVOICE_MAX_FAILS_) reason = `Failed ${fail.count} times (${fail.message}): create it from the tool`;
+
+    list.push({
+      ref: ref,
+      channel: channel,
+      poNumbers: Array.from(new Set(rows.map(row => text(row, col.po)).filter(Boolean))),
+      orderDate: orderDate,
+      lines: live.length,
+      qty: qty,
+      ready: !reason,
+      reason: reason,
+      lastError: fail && !fail.stopped && fail.count < AUTO_INVOICE_MAX_FAILS_ ? fail.message : ""
+    });
+  });
+  return list.sort((a, b) => (a.orderDate || "9999").localeCompare(b.orderDate || "9999"));
+}
+
+// Every EE reference in PO_Database, trimmed and lower-cased: { ref: true }
+function autoInvoiceKnownRefs_() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const n = sheet.getLastRow() - 1;
+  const c = selfShipHeaderIndex_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0])("EE_reference_code");
+  const known = {};
+  if (n < 1 || c === -1) return known;
+  sheet.getRange(2, c + 1, n, 1).getValues().forEach(r => {
+    const ref = String(r[0]).trim().toLowerCase();
+    if (ref) known[ref] = true;
+  });
+  return known;
+}
+
+/**
+ * The invoices in Zoho Books that may be this order's, void ones included. Asks for every
+ * Reference# containing the EE reference, so "AZ1-1 " or "PO 123 / AZ1-1" are found too, then
+ *   - Reference# equal to it (ignoring case and spaces): this order's invoice;
+ *   - Reference# that is another order's EE reference (knownRefs; AZ20261003-1 also finds
+ *     AZ20261003-10): ignored;
+ *   - any other Reference# containing it: may be this order's, counted as found.
+ * Returns { invoices: [{ id, number, status, reference }], siblings: [references], returned, error }.
+ * error is set whenever the answer can't be trusted; the caller must not create then.
+ */
+function autoInvoiceZohoLookup_(ref, knownRefs) {
+  const token = getZohoAccessToken();
+  if (!token) return { error: "no Zoho access token" };
+  const orgId = PropertiesService.getScriptProperties().getProperty("ZOHO_ORG_ID");
+  if (!orgId) return { error: "ZOHO_ORG_ID is not set" };
+
+  let response;
+  try {
+    response = UrlFetchApp.fetch(
+      `https://www.zohoapis.in/books/v3/invoices?organization_id=${orgId}&reference_number_contains=${encodeURIComponent(String(ref).trim())}&per_page=200`,
+      { method: "get", headers: { Authorization: "Zoho-oauthtoken " + token }, muteHttpExceptions: true }
+    );
+  } catch (e) {
+    return { error: e.message };
+  }
+  const code = response.getResponseCode();
+  const body = response.getContentText();
+  let json = null;
+  try { json = JSON.parse(body); } catch (e) {}
+  if (code !== 200 || !json || (json.code !== undefined && json.code !== 0) || !Array.isArray(json.invoices)) {
+    return { error: `Zoho answered HTTP ${code}: ${String(body).slice(0, 150)}` };
+  }
+
+  const key = (s) => String(s === null || s === undefined ? "" : s).trim().toLowerCase();
+  const want = key(ref);
+  const known = knownRefs || {};
+  const result = { invoices: [], siblings: [], returned: json.invoices.length };
+  let unrelated = 0;
+  json.invoices.forEach(inv => {
+    const theirs = key(inv.reference_number);
+    if (theirs.indexOf(want) === -1) unrelated++;
+    else if (theirs !== want && known[theirs]) result.siblings.push(String(inv.reference_number));
+    else {
+      result.invoices.push({
+        id: String(inv.invoice_id || ""), number: String(inv.invoice_number || ""),
+        status: String(inv.status || ""), reference: String(inv.reference_number || "")
+      });
+    }
+  });
+  // A Reference# without this one in it means Zoho didn't apply the filter, and a second page
+  // could hide a match: either way the list proves nothing
+  if (unrelated) result.error = `Zoho's reference search returned ${unrelated} unrelated invoice(s)`;
+  else if (json.page_context && json.page_context.has_more_page) result.error = "Zoho has more than one page of invoices for this reference";
+  return result;
+}
+
+function autoInvoiceDescribe_(ref, invoices) {
+  const names = invoices.map(inv => `${inv.number || inv.id} (${inv.status || "no status"}` +
+    (inv.reference.trim().toLowerCase() === ref.trim().toLowerCase() ? ")" : `, Reference# "${inv.reference}")`));
+  return invoices.length === 1 ? "invoice " + names[0] : `${invoices.length} invoices: ${names.join(", ")}`;
+}
+
+// Re-read just before creating: someone may have clicked Create Invoice since the review.
+// Returns "" when the order can still be invoiced, otherwise why not.
+function autoInvoiceStillOpen_(ref) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_PO_DB);
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return "PO_Database is empty";
+  const idx = selfShipHeaderIndex_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  const read = (name) => idx(name) === -1 ? [] : sheet.getRange(2, idx(name) + 1, n, 1).getValues();
+  const cell = (columnValues, i) => String((columnValues[i] || [""])[0]).trim();
+  const refs = read("EE_reference_code"), ids = read("Invoice Id"), numbers = read("Invoice Number");
+  const statuses = read("Status"), ee = read("EE_order_status");
+  if (!ids.length || !numbers.length) return "PO_Database has no Invoice Id / Invoice Number column";
+  let found = false;
+  for (let i = 0; i < refs.length; i++) {
+    if (cell(refs, i) !== ref) continue;
+    found = true;
+    if (cell(ids, i) || cell(numbers, i)) return "It was invoiced in the meantime";
+    if (!/^cancel/i.test(cell(statuses, i)) && cell(ee, i).toLowerCase() !== "confirmed") return "Its EasyEcom status changed";
+  }
+  return found ? "" : "It is no longer in PO_Database";
+}
+
+function autoInvoiceInFlight_() {
+  return autoShipReadJson_(AUTO_INVOICE_INFLIGHT_KEY_, null);
+}
+
+// fn's result, run under the script lock; null when the lock couldn't be had
+function autoInvoiceWithLock_(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(AUTO_INVOICE_LOCK_WAIT_MS_)) return null;
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Writes this run's marker if the run may: when it already holds the marker (mustHold) or,
+ * to start on an order, when no run holds it. Returns false when another run holds it, or
+ * holds it no more, or the lock couldn't be had: this run then leaves invoicing to the next.
+ */
+function autoInvoiceSetMarker_(run, marker, mustHold) {
+  return autoInvoiceWithLock_(() => {
+    const current = autoInvoiceInFlight_();
+    const mine = !!current && current.runId === run.runId;
+    if (mustHold ? !mine : (current && !mine)) return false;
+    autoShipWriteJson_(AUTO_INVOICE_INFLIGHT_KEY_, marker);
+    return true;
+  }) === true;
+}
+
+function autoInvoiceClearInFlight_(runId) {
+  const marker = autoInvoiceInFlight_();
+  if (marker && marker.runId === runId) PropertiesService.getScriptProperties().deleteProperty(AUTO_INVOICE_INFLIGHT_KEY_);
+}
+
+function autoInvoiceNote_(poNumbers, note) {
+  try {
+    if (poNumbers && poNumbers.length) addOrderNote({ poNumber: poNumbers[0], userName: "Auto-invoice", note: note });
+  } catch (e) {
+    Logger.log(`auto-invoice: no timeline note for PO ${poNumbers && poNumbers[0]}: ${e.message}`);
+  }
+}
+
+// The order won't be tried again: Zoho has, or may have, an invoice for it
+function autoInvoiceStop_(run, order, message) {
+  autoRememberRef_(AUTO_INVOICE_HANDLED_KEY_, order.ref);
+  run.fails[order.ref] = { count: (run.fails[order.ref] || {}).count || 0, message: message, stopped: true };
+  autoShipWriteJson_(AUTO_INVOICE_FAILS_KEY_, run.fails);
+  run.stopped.push({ ref: order.ref, channel: order.channel, message: message.slice(0, 200) });
+  run.stoppedLog.unshift({ ref: order.ref, channel: order.channel, message: message.slice(0, 200), at: new Date().toISOString() });
+  autoInvoiceNote_(order.poNumbers, `[System] Stopped: ${message.replace(/[\s.]*$/, ".")} Check the invoice in Zoho; this order is left to you.`);
+}
+
+/**
+ * Another run's marker. A fresh one means that run is on an order right now: returns true,
+ * and this run leaves invoicing to it. A stale one was left by a run that ended (the 6-minute
+ * limit, a crash). If it ended while creating, Zoho may have the invoice without PO_Database
+ * knowing, so that order is stopped.
+ */
+function autoInvoiceOtherRunBusy_(run) {
+  // Take a dead run's marker under the lock, so that only one run deals with it
+  const seen = autoInvoiceWithLock_(() => {
+    const marker = autoInvoiceInFlight_();
+    if (!marker || marker.runId === run.runId) return { busy: false };
+    if (Date.now() - Number(marker.at || 0) < AUTO_INVOICE_INFLIGHT_STALE_MS_) return { busy: true };
+    PropertiesService.getScriptProperties().deleteProperty(AUTO_INVOICE_INFLIGHT_KEY_);
+    return { busy: false, dead: marker };
+  });
+  if (!seen) return true; // no lock: leave invoicing to the next run
+  const dead = seen.dead;
+  if (dead && dead.phase === "creating" && dead.ref && !(autoShipReadJson_(AUTO_INVOICE_HANDLED_KEY_, {}) || {})[dead.ref]) {
+    const order = { ref: dead.ref, channel: dead.channel || "", poNumbers: dead.poNumbers || [] };
+    if (autoInvoiceStillOpen_(dead.ref) === "It was invoiced in the meantime") {
+      autoRememberRef_(AUTO_INVOICE_HANDLED_KEY_, dead.ref); // the create got through before the run ended
+    } else {
+      autoInvoiceStop_(run, order, "The run ended while creating its invoice, so Zoho may have it.");
+    }
+  }
+  return seen.busy;
+}
+
+/**
+ * Creates one order's invoice after checking, once more, that it has none anywhere.
+ * Returns { outcome, message, invoiceNumber }. outcome:
+ *   created
+ *   stopped: Zoho has (or may have) an invoice for it; never try again
+ *   failed:  nothing was made in Zoho; a later run may try again
+ *   skipped: no longer to be invoiced (someone did it, or EasyEcom changed); not counted
+ *   busy:    another run took over; stop this run
+ */
+function autoInvoiceCreateOne_(run, order) {
+  const ref = order.ref;
+  const marker = { ref: ref, runId: run.runId, at: Date.now(), phase: "checking", channel: order.channel, poNumbers: order.poNumbers.slice(0, 3) };
+  if (!autoInvoiceSetMarker_(run, marker, false)) return { outcome: "busy", message: "Another run is creating invoices" };
+  let createCalled = false;
+  try {
+    if ((autoShipReadJson_(AUTO_INVOICE_HANDLED_KEY_, {}) || {})[ref]) return { outcome: "skipped", message: "Another run handled it" };
+    const why = autoInvoiceStillOpen_(ref);
+    if (why) return { outcome: "skipped", message: why };
+
+    const before = autoInvoiceZohoLookup_(ref, run.knownRefs);
+    if (before.error) return { outcome: "failed", message: `Couldn't check Zoho for an invoice with this reference (${before.error})` };
+    if (before.invoices.length) return { outcome: "stopped", message: `Zoho already has ${autoInvoiceDescribe_(ref, before.invoices)} for Reference# ${ref}.` };
+
+    // Only while this run still holds the marker
+    marker.phase = "creating";
+    marker.at = Date.now();
+    if (!autoInvoiceSetMarker_(run, marker, true)) return { outcome: "busy", message: "Another run is creating invoices" };
+
+    createCalled = true;
+    let res;
+    try {
+      res = createZohoInvoiceByReferenceCode(ref);
+    } catch (e) {
+      res = { status: "error", message: e.message };
+    }
+    if (res && res.status === "success") {
+      return { outcome: "created", message: res.message, invoiceNumber: String((res.data && res.data.invoice_number) || "") };
+    }
+    if (res && res.status === "skipped") return { outcome: "skipped", message: res.message };
+
+    const message = String((res && res.message) || "No response").slice(0, 300);
+    if (AUTO_INVOICE_AFTER_DRAFT_RE_.test(message)) {
+      return { outcome: "stopped", message: `Create Invoice failed after Zoho made the invoice: ${message}` };
+    }
+    // Any other error could still have reached Zoho (a timeout, an unreadable answer): look again
+    const after = autoInvoiceZohoLookup_(ref, run.knownRefs);
+    if (!after.error && after.invoices.length) {
+      return { outcome: "stopped", message: `Create Invoice failed (${message}), but Zoho now has ${autoInvoiceDescribe_(ref, after.invoices)}.` };
+    }
+    return { outcome: "failed", message: message };
+  } catch (e) {
+    // Something unexpected around the create: once it ran, assume Zoho may have the invoice
+    if (createCalled) return { outcome: "stopped", message: `Something went wrong around Create Invoice (${e.message}), so Zoho may have the invoice.` };
+    return { outcome: "failed", message: e.message };
+  } finally {
+    autoInvoiceClearInFlight_(run.runId);
+  }
+}
+
+/**
+ * Creates the invoices of the ready orders (at most AUTO_INVOICE_MAX_PER_RUN_, oldest order
+ * first) and records the run for Settings. startedAt: when the trigger started; no invoice
+ * is started after AUTO_INVOICE_START_BY_MS_. Returns { status, message }.
+ */
+function runAutoInvoice_(startedAt) {
+  const config = autoInvoiceConfig_();
+  if (!config.enabled || !config.channels.length) return { status: "success", message: "Auto-invoice is off." };
+  if (Date.now() - startedAt > AUTO_INVOICE_START_BY_MS_) return { status: "success", message: "Auto-invoice skipped: no time left in this run." };
+
+  const state = autoShipReadJson_(AUTO_INVOICE_STATE_KEY_, {}) || {};
+  const run = {
+    runId: Utilities.getUuid(),
+    fails: autoShipReadJson_(AUTO_INVOICE_FAILS_KEY_, {}) || {},
+    stopped: [],                                                     // this run
+    stoppedLog: Array.isArray(state.stopped) ? state.stopped : []    // the last few, for Settings
+  };
+  if (autoInvoiceOtherRunBusy_(run)) return { status: "success", message: "Auto-invoice skipped: another run is creating an invoice." };
+
+  const review = autoInvoiceReview_(config.channels);
+  run.knownRefs = autoInvoiceKnownRefs_();
+  // Orders that failed before go after the rest
+  const ready = review.filter(o => o.ready)
+    .sort((a, b) => ((run.fails[a.ref] || {}).count || 0) - ((run.fails[b.ref] || {}).count || 0));
+  const recent = Array.isArray(state.recent) ? state.recent : [];
+  const created = [], failed = [];
+  let busy = false, tried = 0;
+
+  for (let i = 0; i < ready.length && created.length + failed.length + run.stopped.length < AUTO_INVOICE_MAX_PER_RUN_; i++) {
+    if (Date.now() - startedAt > AUTO_INVOICE_START_BY_MS_) break;
+    if (autoInvoiceOtherRunBusy_(run)) { busy = true; break; }
+    const order = ready[i];
+    const res = autoInvoiceCreateOne_(run, order);
+    if (res.outcome === "busy") { busy = true; break; }
+    tried++;
+    if (res.outcome === "skipped") continue;
+
+    if (res.outcome === "created") {
+      autoRememberRef_(AUTO_INVOICE_HANDLED_KEY_, order.ref);
+      delete run.fails[order.ref];
+      autoShipWriteJson_(AUTO_INVOICE_FAILS_KEY_, run.fails);
+      created.push(order.ref);
+      recent.unshift({ ref: order.ref, channel: order.channel, invoiceNumber: res.invoiceNumber, at: new Date().toISOString() });
+      autoInvoiceNote_(order.poNumbers, `[System] ${res.invoiceNumber ? "Invoice " + res.invoiceNumber : "The invoice"} was created automatically once EasyEcom confirmed the order.`);
+    } else if (res.outcome === "stopped") {
+      autoInvoiceStop_(run, order, res.message);
+    } else {
+      const message = String(res.message || "No response").slice(0, 200);
+      const count = ((run.fails[order.ref] || {}).count || 0) + 1;
+      run.fails[order.ref] = { count: count, message: message };
+      autoShipWriteJson_(AUTO_INVOICE_FAILS_KEY_, run.fails);
+      failed.push({ ref: order.ref, channel: order.channel, message: message, count: count });
+      if (count >= AUTO_INVOICE_MAX_FAILS_) {
+        autoInvoiceNote_(order.poNumbers, `[System] Auto-invoice gave up after ${count} tries (${message}). Create the invoice from the tool.`);
+      }
+    }
+  }
+
+  // Keep failure counts only for orders still waiting, and the reasons of stopped orders
+  const handled = autoShipReadJson_(AUTO_INVOICE_HANDLED_KEY_, {}) || {};
+  const waitingRefs = review.reduce((o, x) => (o[x.ref] = true, o), {});
+  autoShipWriteJson_(AUTO_INVOICE_FAILS_KEY_, Object.keys(run.fails)
+    .filter(k => (waitingRefs[k] && created.indexOf(k) === -1) || (run.fails[k].stopped && handled[k]))
+    .reduce((o, k) => (o[k] = run.fails[k], o), {}));
+  autoShipWriteJson_(AUTO_INVOICE_STATE_KEY_, {
+    lastCheckAt: new Date().toISOString(),
+    lastCheck: { ready: ready.length, created: created.length, failed: failed, stopped: run.stopped, waiting: review.length - ready.length },
+    recent: recent.slice(0, 15),
+    stopped: run.stoppedLog.slice(0, 10)
+  });
+
+  return {
+    status: "success",
+    message: `Auto-invoice: ${created.length} created${created.length ? ` (${created.join(", ")})` : ""}, ${run.stopped.length} stopped, ` +
+      `${failed.length} failed, ${ready.length - tried} left for the next run${busy ? " (another run is creating invoices)" : ""}, ` +
+      `${review.length - ready.length} waiting.`
+  };
+}
+
+// --- Settings (doPost actions) ---
+
+// data: {} → the settings, the choices and the last check
+function getAutoInvoiceSettings() {
+  return {
+    status: "success",
+    config: autoInvoiceConfig_(),
+    channels: AUTO_INVOICE_CHANNELS_,
+    rules: { maxPerRun: AUTO_INVOICE_MAX_PER_RUN_, maxOrderAgeDays: AUTO_INVOICE_MAX_ORDER_AGE_DAYS_, maxFails: AUTO_INVOICE_MAX_FAILS_ },
+    state: autoShipReadJson_(AUTO_INVOICE_STATE_KEY_, {}) || {}
+  };
+}
+
+// data: { enabled, channels: [keys], userName }
+function saveAutoInvoiceSettings(data) {
+  const keys = AUTO_INVOICE_CHANNELS_.map(c => c.key);
+  const channels = (Array.isArray(data.channels) ? data.channels : []).map(k => String(k).toLowerCase()).filter(k => keys.indexOf(k) !== -1);
+  if (data.enabled === true && !channels.length) return { status: "error", message: "Pick at least one channel, or turn the automation off." };
+  autoShipWriteJson_(AUTO_INVOICE_CONFIG_KEY_, {
+    enabled: data.enabled === true,
+    channels: Array.from(new Set(channels)),
+    updatedBy: String(data.userName || "").trim(),
+    updatedAt: new Date().toISOString()
+  });
+  return {
+    status: "success",
+    message: data.enabled === true ? "Auto-invoice is on. Confirmed orders are invoiced every 15 minutes, 8 am to 10 pm." : "Auto-invoice is off.",
+    config: autoInvoiceConfig_()
+  };
+}
+
+// data: { channels?: [keys] } (the form's unsaved choice; defaults to the saved one) →
+// the orders and whether each would be invoiced now. Reads PO_Database only, never Zoho.
+function previewAutoInvoice(data) {
+  const keys = AUTO_INVOICE_CHANNELS_.map(c => c.key);
+  const channels = Array.isArray(data && data.channels)
+    ? data.channels.map(k => String(k).toLowerCase()).filter(k => keys.indexOf(k) !== -1)
+    : autoInvoiceConfig_().channels;
+  return { status: "success", orders: channels.length ? autoInvoiceReview_(channels) : [] };
+}
+
+// data: { referenceCode } → what the Zoho check finds for that reference (one read-only Zoho
+// call), to confirm how Zoho's reference search behaves
+function debugAutoInvoiceLookup(data) {
+  const ref = String((data && data.referenceCode) || "").trim();
+  if (!ref) return { status: "error", message: "No referenceCode was provided." };
+  const lookup = autoInvoiceZohoLookup_(ref, autoInvoiceKnownRefs_());
+  return Object.assign({ status: "success", referenceCode: ref, wouldCreate: !lookup.error && !lookup.invoices.length }, lookup);
 }

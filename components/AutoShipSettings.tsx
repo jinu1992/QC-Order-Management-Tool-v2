@@ -3,7 +3,7 @@ import { User } from '../types';
 import { fetchAutoShipSettings, saveAutoShipSettings, previewAutoShip, AutoShipSettings as Settings, AutoShipOrder } from '../services/api';
 import { TruckIcon, RefreshIcon, CheckCircleIcon, AlertIcon, ClockIcon } from './icons/Icons';
 
-// Settings → Shipping Automation: marketplace orders are sent to the shipping partner by
+// Settings → Order Automation: marketplace orders are sent to the shipping partner by
 // themselves once they have an invoice, box details and (where needed) the appointment.
 // The rules and the timer live in Apps Script ("auto ship.js"); this page only switches it
 // on or off, picks the channels and partner, and shows what it did and would do.
@@ -87,18 +87,14 @@ const AutoShipSettings: React.FC<Props> = ({ currentUser, addLog, addNotificatio
     };
 
     if (!settings) {
-        return (
-            <div className="p-6">
-                {loadError ? (
-                    <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-center justify-between gap-4">
-                        <span>{loadError}</span>
-                        <button onClick={load} className="px-3 py-1.5 bg-white border border-red-200 rounded-lg font-semibold hover:bg-red-50">Retry</button>
-                    </div>
-                ) : (
-                    <div className="py-12 flex flex-col items-center gap-2 text-sm text-gray-500">
-                        <RefreshIcon className="h-6 w-6 animate-spin text-gray-400" /> Loading…
-                    </div>
-                )}
+        return loadError ? (
+            <div className="max-w-3xl p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm flex items-center justify-between gap-4">
+                <span>{loadError}</span>
+                <button onClick={load} className="px-3 py-1.5 bg-white border border-red-200 rounded-lg font-semibold hover:bg-red-50">Retry</button>
+            </div>
+        ) : (
+            <div className="max-w-3xl py-12 flex flex-col items-center gap-2 text-sm text-gray-500">
+                <RefreshIcon className="h-6 w-6 animate-spin text-gray-400" /> Loading…
             </div>
         );
     }
@@ -108,12 +104,7 @@ const AutoShipSettings: React.FC<Props> = ({ currentUser, addLog, addNotificatio
     const readyCount = preview?.filter(o => o.ready).length || 0;
 
     return (
-        <div className="p-6 space-y-6">
-            <div>
-                <h3 className="text-lg font-semibold text-gray-800">Shipping Automation</h3>
-                <p className="text-sm text-gray-500">Send marketplace orders to the shipping partner as soon as they are ready, instead of clicking Ship Order.</p>
-            </div>
-
+        <div className="space-y-6">
             <div className="max-w-3xl bg-gray-50 p-6 rounded-lg border border-gray-200 space-y-6">
                 <div className="flex items-start justify-between gap-4">
                     <div>

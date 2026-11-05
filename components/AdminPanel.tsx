@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, User, Role, ViewType, RolePermissions, ChannelConfig } from '../types';
-import { ShieldCheckIcon, UserGroupIcon, LockClosedIcon, PencilIcon, TrashIcon, CheckCircleIcon, XCircleIcon, PlusIcon, AdminIcon, CogIcon, RefreshIcon, GlobeIcon, MailIcon, TruckIcon } from './icons/Icons';
+import { ShieldCheckIcon, UserGroupIcon, LockClosedIcon, PencilIcon, TrashIcon, CheckCircleIcon, XCircleIcon, PlusIcon, AdminIcon, CogIcon, RefreshIcon, GlobeIcon, MailIcon, ClipboardListIcon } from './icons/Icons';
 import { saveChannelConfig, saveSystemConfig, fetchSystemConfig, saveUserToSheet, deleteUserFromSheet } from '../services/api';
 import AutoShipSettings from './AutoShipSettings';
+import AutoInvoiceSettings from './AutoInvoiceSettings';
 
 interface AdminPanelProps {
     logs: ActivityLog[];
@@ -394,7 +395,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                          onClick={() => setActiveTab('automation')}
                          className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-2 whitespace-nowrap ${activeTab === 'automation' ? 'border-partners-green text-partners-green' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
                     >
-                        <TruckIcon className="h-4 w-4" /> Shipping Automation
+                        <ClipboardListIcon className="h-4 w-4" /> Order Automation
                     </button>
                     <button
                          onClick={() => setActiveTab('logs')}
@@ -662,7 +663,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                     )}
 
                     {activeTab === 'automation' && (
-                        <AutoShipSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
+                        <div className="p-6 space-y-8">
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-800">Order Automation</h3>
+                                <p className="text-sm text-gray-500">Steps the tool can take by itself every 15 minutes, 8 am to 10 pm, instead of a button click. Each one stays off until you switch it on here.</p>
+                            </div>
+                            <AutoInvoiceSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
+                            <AutoShipSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
+                        </div>
                     )}
 
                     {activeTab === 'logs' && (
