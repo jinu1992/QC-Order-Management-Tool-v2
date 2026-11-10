@@ -54,14 +54,18 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentUser, addLog, addNot
     const [errorDetails, setErrorDetails] = useState<{ title: string, message: string } | null>(null);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-    const uploadFunctions = [
+    const uploadFunctions: { id: string; name: string; link: string; instructions: string; accept: string; validExtensions: string[]; hidden?: boolean }[] = [
         {
+            // Hidden: the 15-minute EasyEcom Reports API sync (runPackingListAutoSync) and the
+            // "Fetch Box Data from EasyEcom" button fill box data now. The backend upload path
+            // still works, so set hidden to false to bring the card back if the API sync fails.
             id: 'b2b-packing-list',
             name: 'B2B Packing List Data',
             link: 'https://app.easyecom.io/V2/reports/reports-HomePage',
             instructions: "Go to 'B2B Packing List Report' in Other Reports section and Download last 7 days file.",
             accept: '.csv, .xlsx',
-            validExtensions: ['.csv', '.xlsx']
+            validExtensions: ['.csv', '.xlsx'],
+            hidden: true
         },
         {
             id: 'flipkart-minutes-po',
@@ -221,7 +225,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ currentUser, addLog, addNot
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {uploadFunctions.map(func => {
+                {uploadFunctions.filter(func => !func.hidden).map(func => {
                     const meta = getMetadata(func.id);
                     return (
                         <div key={func.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col hover:shadow-md transition-shadow overflow-hidden">
