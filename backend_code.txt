@@ -14202,7 +14202,15 @@ const NIMBUS_EMAIL_COLUMNS_ = [
   { header: "Invoice URL", cell: s => docLink_(s.invoiceUrl, `${s.awb}_Invoice`) }
 ];
 
+// Stopped 2026-11-11 at Avinav's request ("Please stop this daily email"). The daily
+// trigger still fires but sends nothing. Set to true to send the report again.
+const NIMBUS_SUMMARY_EMAIL_ENABLED_ = false;
+
 function processNimbusAndSendEmail() {
+  if (!NIMBUS_SUMMARY_EMAIL_ENABLED_) {
+    Logger.log('Nimbus Delivery Alignment email is switched off (NIMBUS_SUMMARY_EMAIL_ENABLED_ = false).');
+    return;
+  }
   const props = PropertiesService.getScriptProperties();
   sendTrackerSummaryEmail_({
     label: "Nimbus",
