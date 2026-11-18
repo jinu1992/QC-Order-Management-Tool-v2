@@ -15103,6 +15103,9 @@ const SELF_SHIP_TRACKERS_ = {
 
 const SELF_SHIP_DOC_FOLDER_NAME_ = "Self Ship Labels";
 
+// Tracker column syncSelfShipTrackers keeps each row's AWB in as of its last run
+const SELF_SHIP_SYNCED_AWB_COLUMN_ = "Synced AWB";
+
 const SELF_SHIP_DELHIVERY_COURIER_ID_ = 110; // EWB transporter mapping, see COURIER_TRANSPORTER_MAP_
 
 // Couriers Urvi Ent books with, chosen on the partner portal per request and written to
@@ -15470,6 +15473,9 @@ function syncSelfShipTrackers() {
       let sheet;
       try {
         sheet = getSelfShipTrackerSheet_(cfg);
+        // Each row's AWB as of the last sync. It tells an AWB changed in PO_Database apart
+        // from one changed on the tracker (selfShipAwbEditedInDb_).
+        ensureSelfShipColumns_(sheet, [SELF_SHIP_SYNCED_AWB_COLUMN_]);
       } catch (e) {
         errors.push(e.message);
         return;
@@ -15484,18 +15490,22 @@ function syncSelfShipTrackers() {
         po: tIdx("PO Number"), inv: tIdx("Invoice Number"), awb: tIdx("AWB"),
         link: tIdx("Tracking Link"), courier: tIdx("Courier"), // Only the Delhivery tracker's Status column is the portal request status
         requestStatus: key === "delhivery" ? tIdx("Status") : -1,
-        label: tIdx("Box Label") // label PDF the partner uploaded
+        label: tIdx("Box Label"), // label PDF the partner uploaded
+        synced: tIdx(SELF_SHIP_SYNCED_AWB_COLUMN_), verification: tIdx("Verification")
       };
       if (t.awb === -1) { errors.push(`${cfg.label} tracker has no AWB column`); return; }
 
+      const synced = values.map(row => t.synced !== -1 ? String(row[t.synced] || "").trim() : "");
+      const syncedBefore = synced.slice();
+
       for (let r = 1; r < values.length; r++) {
-        const awb = String(values[r][t.awb] || "").trim();
-        if (!awb || awb.toUpperCase() === "N/A") continue;
+        const trackerAwb = String(values[r][t.awb] || "").trim();
+        if (!trackerAwb || trackerAwb.toUpperCase() === "N/A") continue;
 
         // Partner-portal requests only sync once their label has passed verification:
         // an AWB typed straight into a Pending row is ignored. Rows from before the portal
         // (no Status) and rows ops moved on (Accepted, Delivered, ...) sync as before.
-        const requestStatus = t.requestStatus !== -1 ? partnerRowStatus_(values[r][t.requestStatus], awb) : "";
+        const requestStatus = t.requestStatus !== -1 ? partnerRowStatus_(values[r][t.requestStatus], trackerAwb) : "";
         if (requestStatus === PARTNER_STATUS_.PENDING || requestStatus === PARTNER_STATUS_.CANCELLED) continue;
 
         // Urvi Ent rows: the courier the partner booked with decides the tracking link
@@ -15503,17 +15513,20 @@ function syncSelfShipTrackers() {
           ? SELF_SHIP_PARTNER_COURIERS_[selfShipPartnerCourierKey_(t.courier !== -1 ? values[r][t.courier] : "")]
           : null;
         const trackingUrlBase = partnerCourier ? partnerCourier.trackingUrlBase : cfg.trackingUrlBase;
-        let trackingUrl = "";
-        if (trackingUrlBase) {
-          trackingUrl = trackingUrlBase + encodeURIComponent(awb);
-          // Rows typed in by hand have no link formula; fill it in
-          if (t.link !== -1 && !String(values[r][t.link] || "").trim() && !formulas[r][t.link]) {
-            sheet.getRange(r + 1, t.link + 1).setValue(trackingUrl);
+        const syncTrackingLink = (awbNow) => {
+          if (!trackingUrlBase) {
+            const link = t.link !== -1 ? extractUrlFromCell(values[r][t.link], formulas[r][t.link]) : "";
+            return link && link !== "N/A" ? link : "";
           }
-        } else if (t.link !== -1) {
-          const link = extractUrlFromCell(values[r][t.link], formulas[r][t.link]);
-          trackingUrl = link && link !== "N/A" ? link : "";
-        }
+          const url = trackingUrlBase + encodeURIComponent(awbNow);
+          // Rows typed in by hand have no link formula: fill it in, and keep it on the
+          // current AWB when that changes (a link to some other site is left alone)
+          if (t.link !== -1 && !formulas[r][t.link]) {
+            const link = String(values[r][t.link] || "").trim();
+            if (link !== url && (!link || link.indexOf(trackingUrlBase) === 0)) sheet.getRange(r + 1, t.link + 1).setValue(url);
+          }
+          return url;
+        };
 
         // Goes to PO_Database "Label URL", which shows the same print-label button as NP orders
         const labelUrl = t.label !== -1 ? partnerCellUrl_(values[r][t.label], formulas[r][t.label]) : "";
@@ -15527,7 +15540,34 @@ function syncSelfShipTrackers() {
           String(values[r][t.po] || "").split(",").map(p => p.trim()).filter(Boolean)
             .forEach(p => { rowIdxs = rowIdxs.concat(byPo[p] || []); });
         }
-        if (!rowIdxs.length) continue;
+        if (!rowIdxs.length) { syncTrackingLink(trackerAwb); synced[r] = trackerAwb; continue; }
+        const ref = (col.ref !== -1 && dbData[rowIdxs[0]][col.ref]) || inv;
+
+        // An AWB ops changed in PO_Database after it synced goes to the tracker, instead of
+        // the tracker's old one going back to PO_Database (2026-11-18: P6215804's corrected
+        // LRN 323026418 kept reverting to 323010506)
+        let awb = trackerAwb;
+        const dbEdit = selfShipAwbEditedInDb_(trackerAwb, synced[r], rowIdxs.map(i => dbData[i]), col);
+        if (dbEdit.error) { errors.push(`${ref}: ${dbEdit.error}`); continue; }
+        if (dbEdit.awb) {
+          const usedBy = selfShipAwbUsedElsewhere_(dbEdit.awb, values, t.awb, r, dbData, col, rowIdxs);
+          if (usedBy) {
+            errors.push(`${ref}: AWB ${dbEdit.awb} from PO_Database not copied to the ${cfg.label} tracker, ${usedBy} already has it`);
+            continue;
+          }
+          sheet.getRange(r + 1, t.awb + 1).setNumberFormat("@").setValue(dbEdit.awb);
+          values[r][t.awb] = dbEdit.awb;
+          if (t.verification !== -1) {
+            const note = `✎ ${Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HH:mm")}: AWB changed in PO_Database ` +
+              `${trackerAwb} → ${dbEdit.awb}; the label was not checked again`;
+            const before = String(values[r][t.verification] || "").trim();
+            sheet.getRange(r + 1, t.verification + 1).setValue(before ? `${before}\n${note}` : note);
+          }
+          awb = dbEdit.awb;
+          updated.push(`${ref}: AWB ${trackerAwb} → ${awb} copied from PO_Database to the ${cfg.label} tracker`);
+        }
+        synced[r] = awb;
+        const trackingUrl = syncTrackingLink(awb);
 
         let changed = false;
         rowIdxs.forEach(i => {
@@ -15543,10 +15583,13 @@ function syncSelfShipTrackers() {
 
           if (dbAwb !== awb) {
             set(col.awb, awb);
-            set(col.tracking, "AWB Assigned");
-            if (col.pickup !== -1 && !row[col.pickup]) set(col.pickup, selfShipPickupDate_());
-            const status = col.status !== -1 ? String(row[col.status] || "").trim().toLowerCase() : "";
-            if (col.status !== -1 && !SELF_SHIP_NO_ADVANCE_STATUSES_.includes(status)) set(col.status, "Label Generated");
+            // A line item brought in line with the AWB edited on another row keeps its progress
+            if (!dbEdit.awb) {
+              set(col.tracking, "AWB Assigned");
+              if (col.pickup !== -1 && !row[col.pickup]) set(col.pickup, selfShipPickupDate_());
+              const status = col.status !== -1 ? String(row[col.status] || "").trim().toLowerCase() : "";
+              if (col.status !== -1 && !SELF_SHIP_NO_ADVANCE_STATUSES_.includes(status)) set(col.status, "Label Generated");
+            }
           }
           // The courier is known once the AWB arrives: "Urvi Ent (Self)" -> "Urvi Ent · Scorpion (Self)"
           if (!/\(self\)/i.test(dbCarrier) || (dbAwb !== awb && isSelfShipPartnerCarrier_(dbCarrier))) set(col.carrier, `${courier} (Self)`);
@@ -15556,7 +15599,14 @@ function syncSelfShipTrackers() {
           if (labelUrl && col.label !== -1 && String(row[col.label] || "").trim() !== labelUrl) set(col.label, labelUrl);
         });
 
-        if (changed) updated.push(`${(col.ref !== -1 && dbData[rowIdxs[0]][col.ref]) || inv} → ${awb} (${cfg.label})`);
+        if (changed && !dbEdit.awb) updated.push(`${ref} → ${awb} (${cfg.label})`);
+      }
+
+      // One write for the column, skipped if rows were added or removed during the sync
+      // (the next run writes it)
+      if (t.synced !== -1 && synced.some((v, i) => i > 0 && v !== syncedBefore[i]) && sheet.getLastRow() === values.length) {
+        sheet.getRange(2, t.synced + 1, values.length - 1, 1).setNumberFormat("@")
+          .setValues(synced.slice(1).map(v => [v]));
       }
     });
 
@@ -15589,6 +15639,38 @@ function syncSelfShipTrackers() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * The AWB ops typed into PO_Database since the last sync, for a tracker row whose own AWB
+ * hasn't changed since then (an edit made on the tracker still wins). Partners can't change
+ * an accepted AWB on the portal, so a later change is always an ops edit in one of the two
+ * sheets. Only for orders still with Urvi Ent: a NimbusPost or other-courier AWB isn't theirs.
+ * Returns { awb } to copy to the tracker, { error } when it can't be done safely, or {}.
+ */
+function selfShipAwbEditedInDb_(trackerAwb, syncedAwb, dbRows, col) {
+  if (!syncedAwb || syncedAwb !== trackerAwb) return {};
+  const edited = dbRows.filter(row => {
+    const a = String(row[col.awb] || "").trim();
+    return a && a !== "PROCESSING" && a !== trackerAwb;
+  });
+  if (!edited.length) return {};
+  if (col.carrier === -1 || !edited.every(row => isSelfShipPartnerCarrier_(row[col.carrier]))) return {};
+  const awbs = Array.from(new Set(edited.map(row => String(row[col.awb]).trim())));
+  if (awbs.length > 1) return { error: `its PO_Database rows have different AWBs (${awbs.join(", ")}); make them the same` };
+  if (!/^[A-Za-z0-9\/-]{4,40}$/.test(awbs[0])) return { error: `"${awbs[0]}" in PO_Database isn't a valid AWB / LRN` };
+  return { awb: awbs[0] };
+}
+
+// Where else an AWB already is: another tracker row, or another order's PO_Database rows
+function selfShipAwbUsedElsewhere_(awb, trackerValues, awbCol, ownRow, dbData, col, ownDbRows) {
+  for (let i = 1; i < trackerValues.length; i++) {
+    if (i !== ownRow && String(trackerValues[i][awbCol] || "").trim() === awb) return `tracker row ${i + 1}`;
+  }
+  const own = new Set(ownDbRows);
+  const i = dbData.findIndex((row, k) => !own.has(k) && String(row[col.awb] || "").trim() === awb);
+  if (i === -1) return "";
+  return `order ${(col.ref !== -1 && dbData[i][col.ref]) || (col.inv !== -1 && dbData[i][col.inv]) || `on PO_Database row ${i + 2}`}`;
 }
 
 // Same pickup rule as the NP flow: after 2 PM IST -> next day, skip Sunday
