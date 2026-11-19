@@ -135,10 +135,26 @@ export interface BoxScanStatus {
     // Boxes scanned in an earlier session that was left before every box was scanned
     abandonedCount?: number;
     duplicate?: boolean;
+    // Amazon FBA orders: the box labels / delivery challan fetched from Amazon (links only once scanned)
+    amazonDocs?: AmazonFbaDocs | null;
+}
+
+// Amazon_FBA_Docs row of an order, as the backend reports it
+export interface AmazonFbaDocs {
+    status: string; // Done | Labels only | Challan only | Waiting | Error
+    message?: string;
+    fbaShipmentId?: string;
+    boxes?: number;
+    hasBoxLabels?: boolean;
+    hasChallan?: boolean;
+    boxLabelsUrl?: string;
+    challanUrl?: string;
+    updatedAt?: string;
 }
 
 export interface PrintPackDocument {
-    kind: 'label' | 'invoice' | 'docket' | 'po';
+    // amazon_labels: Amazon's A4 box label sheet, one box per page (FBA label on top, ATS label below)
+    kind: 'label' | 'invoice' | 'docket' | 'po' | 'amazon_labels' | 'challan';
     label: string;
     url: string;
     mimeType?: string;
@@ -159,7 +175,7 @@ export const recordBoxScan = async (referenceCode: string, boxId: string, userNa
 };
 
 // Not retried: it downloads every document again on each attempt
-export const getPrintPack = async (referenceCode: string): Promise<{ status: string; message?: string; documents?: PrintPackDocument[] }> => {
+export const getPrintPack = async (referenceCode: string): Promise<{ status: string; message?: string; documents?: PrintPackDocument[]; amazonDocs?: AmazonFbaDocs | null }> => {
     const response = await fetch(`${API_URL}?action=getPrintPack&referenceCode=${encodeURIComponent(referenceCode)}`, { redirect: 'follow' });
     return await response.json();
 };
@@ -190,6 +206,49 @@ export const reassignCourier = async (eeReferenceCode: string, courierId: number
 
 export const updateFBAShipmentId = async (poNumber: string, fbaShipmentId: string): Promise<{ status: string, message?: string }> => {
     return await postToScript({ action: 'updateFBAShipmentId', poNumber, fbaShipmentId });
+};
+
+// --- Amazon FBA shipment through the API (amazon fba shipment.js) ---
+export interface AmazonCarrierOption {
+    transportationOptionId: string;
+    carrier: string;
+    shippingMode: string;
+    shippingSolution: string;
+    pickupStart: string;
+    pickupEnd: string;
+    amount: number | null;
+    currency: string;
+    voidableUntil: string;
+    expiresAt: string;
+    preconditions: string[];
+}
+
+export interface AmazonShipmentResult {
+    status: string;
+    message?: string;
+    code?: string;
+    stage?: 'chooseCarrier' | 'done';
+    fbaShipmentId?: string;
+    shipmentId?: string;
+    placementOptionId?: string;
+    amazonReferenceId?: string;
+    options?: AmazonCarrierOption[];
+    steps?: string[];
+    amazonDocs?: AmazonFbaDocs | null;
+}
+
+// Placement, packing information and FBA Shipment ID; returns the ATS pickup options. Takes 1-3 minutes.
+export const createAmazonShipment = async (referenceCode: string, userName: string): Promise<AmazonShipmentResult> => {
+    return await postToScript({ action: 'createAmazonShipment', referenceCode, userName });
+};
+
+// Books the chosen ATS pickup (Amazon charges the quote), then fetches the labels and challan
+export const confirmAmazonTransport = async (referenceCode: string, transportationOptionId: string, userName: string): Promise<AmazonShipmentResult> => {
+    return await postToScript({ action: 'confirmAmazonTransport', referenceCode, transportationOptionId, userName });
+};
+
+export const fetchAmazonFbaDocs = async (referenceCode: string, force = false): Promise<{ status: string; message?: string; amazonDocs?: AmazonFbaDocs | null }> => {
+    return await postToScript({ action: 'fetchAmazonFbaDocs', referenceCode, force });
 };
 
 export const fetchUploadMetadata = async (): Promise<UploadMetadata[]> => {
@@ -796,6 +855,60 @@ export const saveAutoInvoiceSettings = async (settings: { enabled: boolean; chan
 // The orders on these channels and whether each would be invoiced now. Reads PO_Database only.
 export const previewAutoInvoice = async (channels: string[]): Promise<{ status: string; message?: string; orders?: AutoInvoiceOrder[] }> => {
     return await postToScriptWithRetry({ action: 'previewAutoInvoice', channels });
+};
+
+// --- Amazon FBA auto-shipment (Settings → Order Automation; Apps Script "amazon fba shipment.js" 1b) ---
+
+export interface AmazonAutoShipConfig {
+    enabled: boolean;
+    updatedBy?: string;
+    updatedAt?: string;
+}
+
+export interface AmazonAutoShipOrder {
+    ref: string;
+    poNumbers: string[];
+    storeCode: string;
+    orderDate: string;  // EE_order_date, yyyy-MM-dd
+    qty: number;        // units on the lines not cancelled in the tool
+    boxes: number;      // boxes in the box data (0 when it isn't checked or isn't there)
+    ready: boolean;
+    reason: string;     // why the shipment isn't created yet (blank when ready)
+    lastError: string;  // the last failed attempt, while it is still retried
+    resume: boolean;    // a run began it and ended before booking the pickup
+}
+
+export interface AmazonAutoShipSettings {
+    status: string;
+    message?: string;
+    config: AmazonAutoShipConfig;
+    rules: { maxPerRun: number; maxOrderAgeDays: number; maxFails: number };
+    state: {
+        lastCheckAt?: string;
+        lastCheck?: {
+            ready: number;
+            booked: number;
+            waiting: number;
+            failed: { ref: string; message: string; count: number }[];
+            stopped: { ref: string; message: string }[];
+        };
+        recent?: { ref: string; fbaShipmentId: string; storeCode: string; boxes: number; pickupStart: string; amount: number | null; currency: string; docs: string; at: string }[];
+        stopped?: { ref: string; message: string; at: string }[]; // left to ops, newest first
+    };
+}
+
+export const fetchAmazonAutoShipSettings = async (): Promise<AmazonAutoShipSettings> => {
+    return await postToScriptWithRetry({ action: 'getAmazonAutoShipSettings' });
+};
+
+export const saveAmazonAutoShipSettings = async (settings: { enabled: boolean; userName: string }): Promise<{ status: string; message: string; config?: AmazonAutoShipConfig }> => {
+    return await postToScript({ action: 'saveAmazonAutoShipSettings', ...settings });
+};
+
+// Amazon FBA orders pushed to Amazon without an FBA Shipment ID, and whether each would get its
+// shipment now. Reads the sheets only, never Amazon.
+export const previewAmazonAutoShip = async (): Promise<{ status: string; message?: string; orders?: AmazonAutoShipOrder[] }> => {
+    return await postToScriptWithRetry({ action: 'previewAmazonAutoShip' });
 };
 
 // --- Auto-send for shipping (Settings → Order Automation; Apps Script "auto ship.js") ---

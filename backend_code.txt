@@ -230,6 +230,12 @@ function doPost(e) {
     else if (action === 'recordOtherSelfShipment') result = recordOtherSelfShipment(data);
     else if (action === 'cancelShipment') result = cancelShipment(data);
     else if (action === 'recordBoxScan') result = recordBoxScan(data);
+    else if (action === 'createAmazonShipment') result = createAmazonShipment(data);
+    else if (action === 'confirmAmazonTransport') result = confirmAmazonTransport(data);
+    else if (action === 'fetchAmazonFbaDocs') result = fetchAmazonFbaDocs(data);
+    else if (action === 'getAmazonAutoShipSettings') result = getAmazonAutoShipSettings();
+    else if (action === 'saveAmazonAutoShipSettings') result = saveAmazonAutoShipSettings(data);
+    else if (action === 'previewAmazonAutoShip') result = previewAmazonAutoShip();
     else if (action === 'syncPackingListFromEasyEcom') result = syncPackingListFromEasyEcom(data);
     else if (action === 'getAutoShipSettings') result = getAutoShipSettings();
     else if (action === 'saveAutoShipSettings') result = saveAutoShipSettings(data);
@@ -10503,312 +10509,13 @@ function createAmazonFbaInboundPlan(data,poRef) {
   }
 }
 
-//Get Placement Option ID and Shipment ID
-function generateAndListAmazonPlacementDirect(poRef) {
-  try {
-    const token = getAmazonAccessToken();
-    if (!token) throw new Error('Amazon access token missing');
-
-    const endpoint = AMAZON.endpoint;
-
-    // ==================================================
-    // STEP 0 — Fetch inboundPlanId from PO DB
-    // ==================================================
-    const { inboundPlanId } = getFbaIdsFromDB_(poRef);
-    if (!inboundPlanId) {
-      throw new Error(`Inbound Plan ID not found for PO ${poRef}`);
-    }
-
-    // ==================================================
-    // STEP 1 — Fetch items + warehouseId from PO DB
-    // ==================================================
-    const { items, warehouseId } = getPoItemsFromDB_(poRef);
-
-    // ==================================================
-    // STEP 2 — Generate placement options
-    // ==================================================
-    const url =
-      `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}/placementOptions`;
-
-    const payload = {
-      customPlacement: [
-        {
-          warehouseId: warehouseId,
-          items: items.map(i => ({
-            msku: i.articleCode,
-            quantity: i.qty,
-            labelOwner: 'SELLER',
-            prepOwner: 'NONE'
-          }))
-        }
-      ]
-    };
-
-    Logger.log(JSON.stringify(payload, null, 2));
-
-    
-
-    const res = fetchSigned_(
-      token,
-      { method: 'POST', url, payload },
-      [202]
-    );
-
-    // ==================================================
-    // STEP 3 — Poll async operation
-    // ==================================================
-    pollOperation_(token, endpoint, res.operationId);
-    
-
-    const { placementOptionId, shipmentId } = listPlacementOptions_(token, endpoint, inboundPlanId);
-    updatePoDatabase_(poRef, "", shipmentId, placementOptionId);
-
-    return {
-      status: 'success',
-      message: 'Amazon placement options generated successfully.',
-      data: {
-        inboundPlanId,
-        placementOperationId: res.operationId,
-        warehouseId
-      }
-    };
-
-  } catch (e) {
-    Logger.log(`generateAmazonPlacementDirect failed for PO ${poRef}: ${e.message}`);
-
-    return {
-      status: 'error',
-      message: e.message
-    };
-  }
-}
-
-function setPackingInformationAndConfirmPlacementDirect(poRef) {
-  try {
-    // ==================================================
-    // STEP 0 — Auth + endpoint
-    // ==================================================
-    const token = getAmazonAccessToken();
-    if (!token) throw new Error('Amazon access token missing');
-
-    const endpoint = AMAZON.endpoint;
-
-    
-
-    // ==================================================
-    // STEP 1 — Fetch FBA IDs from PO DB
-    // ==================================================
-    const {
-      inboundPlanId,
-      placementId,
-      shipmentId
-    } = getFbaIdsFromDB_(poRef);
-
-    if (!inboundPlanId) {
-      throw new Error(`Inbound Plan ID missing for PO ${poRef}`);
-    }
-    if (!placementId) {
-      throw new Error(`Placement ID missing for PO ${poRef}`);
-    }
-    if (!shipmentId) {
-      throw new Error(`Shipment ID missing for PO ${poRef}`);
-    }
-
-    // ==================================================
-    // STEP 2 — Load + convert packing data
-    // ==================================================
-    const packingRows =
-      _loadPackingData(SpreadsheetApp.getActiveSpreadsheet(), poRef);
-
-    if (!packingRows.length) {
-      throw new Error(`No packing data found for PO ${poRef}`);
-    }
-
-    const boxes = buildBoxesFromPackingData_(packingRows);
-    Logger.log('Packing boxes:');
-    Logger.log(boxes);
-
-    // ==================================================
-    // STEP 3 — Set packing information (MANUAL_PROCESS)
-    // ==================================================
-    const packOpId = setPackingInformation_(
-      token,
-      endpoint,
-      inboundPlanId,
-      shipmentId,   // using shipmentId (post-placement flow)
-      boxes
-    );
-
-    pollOperation_(token, endpoint, packOpId);
-
-    const genTransopID = generateTransportationOptions_(token, endpoint, inboundPlanId,placementId, shipmentId);
-     pollOperation_(token, endpoint, genTransopID);
-
- 
-
-    // ==================================================
-    // STEP 4 — Confirm placement option
-    // ==================================================
-    const confirmOpId = confirmPlacement_(
-      token,
-      endpoint,
-      inboundPlanId,
-      placementId
-    );
-
-    pollOperation_(token, endpoint, confirmOpId);
-    
-
-    // ==================================================
-    // STEP 5 — Fetch shipment confirmation ID ✅
-    // ==================================================
-    const shipmentConfirmationId =
-      getShipmentConfirmationId_(
-        token,
-        endpoint,
-        inboundPlanId,
-        shipmentId
-      );
-
-    // (Optional) store in DB
-    updatePoDatabase_(poRef, "", "", "", shipmentConfirmationId);
-
-    const options = listTransportationOptions_(token,endpoint,inboundPlanId,shipmentId);
-    
-    const atsTransportationOptionId = getATSTransportationOptionId_(options);
-    
-    const confirmTransOpId = confirmTransportationOption_(token,endpoint,inboundPlanId,shipmentId,atsTransportationOptionId);
-    
-    pollOperation_(token, endpoint, confirmTransOpId);
-
-    getShipmentConfirmationId_(
-        token,
-        endpoint,
-        inboundPlanId,
-        shipmentId
-      );
-
-    return {
-      status: 'success',
-      message: `Packing + placement confirmed for PO ${poRef}`,
-      data: {
-        inboundPlanId,
-        placementId,
-        shipmentId
-      }
-    };
-
-
-  } catch (e) {
-    Logger.log(
-      `setPackingInformationAndConfirmPlacementDirect failed for PO ${poRef}: ${e.message}`
-    );
-
-    return {
-      status: 'error',
-      message: e.message
-    };
-  }
-}
-
-function getShipmentConfirmationId_(token,endpoint,inboundPlanId,shipmentId) 
-{
-  const url =`${endpoint}${AMAZON.apiPath}` +`/inboundPlans/${inboundPlanId}/shipments/${shipmentId}`;
-
-  const res = fetchSigned_(token,{ method: 'GET', url },[200]);
-  Logger.log(res);
-
-  const confirmationId =
-    res.shipmentConfirmationId ||
-    res.shipmentConfirmation?.shipmentConfirmationId ||
-    null;
-
-  if (!confirmationId) {
-    throw new Error(
-      `ShipmentConfirmationId not found for shipment ${shipmentId}`
-    );
-  }
-
-  return confirmationId;
-}
-
-function listTransportationOptions_(token,  endpoint,  inboundPlanId,  shipmentId)
-  {
-   const url =
-    `${endpoint}/inbound/fba/2024-03-20/inboundPlans/${inboundPlanId}` +
-    `/transportationOptions?shipmentId=${shipmentId}`;
-
-  const res = fetchSigned_(
-    token,
-    { method: 'GET', url },
-    [200]
-  );
-
-  return res.transportationOptions || [];
-}
-
-function confirmPlacement_(token, endpoint, inboundPlanId, placementOptionId) {
-  const url = `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}/placementOptions/${placementOptionId}/confirmation`;
-  return fetchSigned_(token, { method: 'POST', url, payload: {} }, [202]).operationId;
-}
-
-
-function confirmTransportationOption_(token,endpoint,inboundPlanId,shipmentId,transportationOptionId)
-{
-  const url =
-    `${endpoint}${AMAZON.apiPath}` +
-    `/inboundPlans/${inboundPlanId}` +
-    `/transportationOptions/confirmation`;
-
-  const payload = {
-    transportationSelections: [
-      {
-        shipmentId,
-        transportationOptionId
-      }
-    ]
-  };
-
-  const res = fetchSigned_(
-    token,
-    { method: 'POST', url, payload },
-    [202]
-  );
-
-  return res.operationId;
-}
-
-
-function setPackingInformation_(token, endpoint, inboundPlanId, shipmentId, boxes) {
-  const url =
-    `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}/packingInformation`;
-
-  const payload = {
-    packageGroupings: [
-      {
-        shipmentId: shipmentId, // ✅ REQUIRED for India
-        boxes: boxes.map(b => ({
-          quantity: b.quantity || 1,
-          contentInformationSource: 'MANUAL_PROCESS',
-          dimensions: {
-            unitOfMeasurement: 'CM',
-            length: Number(b.lengthCm),
-            width: Number(b.widthCm),
-            height: Number(b.heightCm)
-          },
-          weight: {
-            unit: 'KG',
-            value: Number(b.weightKg)
-          }
-        }))
-      }
-    ]
-  };
-
-  const response = fetchSigned_(token,{ method: 'POST', url, payload},[202]);
-
-  return response.operationId;
-}
+// Placement, packing information, carrier and labels: see "amazon fba shipment.js" (2026-11-19).
+// The functions that used to be here (generateAndListAmazonPlacementDirect,
+// setPackingInformationAndConfirmPlacementDirect, downloadFbaShipmentLabels and their helpers)
+// were never called by the app and could not have worked: the transportation request sent a
+// field the API doesn't have (shipmentTransportationType), each box was counted once per SKU
+// line, pollOperation_ returned nothing, and the label request called an endpoint that doesn't
+// exist. They were replaced by createAmazonShipment / confirmAmazonTransport / fetchAmazonFbaDocs.
 
 function createInboundPlan_(token, endpoint, poNumber, items, locationKey = null) {
   const url = `${endpoint}${AMAZON.apiPath}/inboundPlans`;
@@ -10866,103 +10573,6 @@ function createInboundPlan_(token, endpoint, poNumber, items, locationKey = null
 // ============================================================================
 // HELPER NEW
 // ============================================================================
-
-function getPoItemsFromDB_(poRef) {
-  const sh = SpreadsheetApp
-    .getActive()
-    .getSheetByName(SHEET_PO_DB);
-
-  const data = sh.getDataRange().getValues();
-  const headers = data.shift();
-
-  const poIdx    = headers.indexOf('EE Order Ref ID');
-  const skuIdx   = headers.indexOf('Item Code');
-  const qtyIdx   = headers.indexOf('Qty');
-  const storeIdx = headers.indexOf('Store Code');
-
-  if ([poIdx, skuIdx, qtyIdx, storeIdx].includes(-1)) {
-    throw new Error('Required columns missing in PO_Database');
-  }
-
-  const rows = data.filter(
-    r => String(r[poIdx]).trim() === String(poRef).trim()
-  );
-
-  if (!rows.length) {
-    throw new Error(`No rows found for PO ${poRef}`);
-  }
-
-  const warehouseId = String(rows[0][storeIdx]).trim();
-
-  const items = rows
-    .map(r => ({
-      articleCode: String(r[skuIdx]).trim(),
-      qty: Number(r[qtyIdx])
-    }))
-    .filter(i => i.articleCode && i.qty > 0);
-
-  if (!items.length) {
-    throw new Error(`No valid items found for PO ${poRef}`);
-  }
-
-  return { items, warehouseId };
-}
-
-function getFbaIdsFromDB_(poRef) {
-  const sh = SpreadsheetApp
-    .getActive()
-    .getSheetByName(SHEET_PO_DB);
-
-  if (!sh) throw new Error(`Sheet ${SHEET_PO_DB} not found`);
-
-  const data = sh.getDataRange().getValues();
-  const headers = data.shift();
-
-  const poIdx        = headers.indexOf('EE Order Ref ID');
-  const inboundIdx   = headers.indexOf('Inbound Plan ID');
-  const placementIdx = headers.indexOf('Placement ID');
-  const shipmentIdx  = headers.indexOf('Shipment ID');
-
-  if ([poIdx, inboundIdx, placementIdx, shipmentIdx].includes(-1)) {
-    throw new Error(
-      'Required columns missing: EE Order Ref ID / Inbound Plan ID / Placement ID / Shipment ID'
-    );
-  }
-
-  for (const row of data) {
-    if (String(row[poIdx]).trim() === String(poRef).trim()) {
-      return {
-        inboundPlanId:  String(row[inboundIdx]   || '').trim() || null,
-        placementId:    String(row[placementIdx] || '').trim() || null,
-        shipmentId:     String(row[shipmentIdx]  || '').trim() || null
-      };
-    }
-  }
-
-  return {
-    inboundPlanId: null,
-    placementId: null,
-    shipmentId: null
-  };
-}
-
-function buildBoxesFromPackingData_(rows) {
-  const map = {};
-  rows.forEach(r => {
-    const id = r['Box ID'];
-    if (!map[id]) {
-      map[id] = {
-        quantity: 0,
-        lengthCm: r['Box Length'],
-        widthCm: r['Box Width'],
-        heightCm: r['Box Height'],
-        weightKg: r['Box Weight']/1000
-      };
-    }
-    map[id].quantity++;
-  });
-  return Object.values(map);
-}
 
 function updatePoDatabase_(po, inboundPlanId, shipmentId, placementId, shipmentConfirmationId) {
   const sh = SpreadsheetApp
@@ -11077,231 +10687,18 @@ function backfillFbaInboundPlanForPo_(poNumber, opts) {
 // AZ20261102-1 had 4 ACTIVE plans (Push to AMZ clicked 4 times); keep the newest, void the rest.
 function runBackfillFbaPlan_AZ20261102_1() { return backfillFbaInboundPlanForPo_('AZ20261102-1', { pick: 'newest' }); }
 
-function getATSTransportationOptionId_(transportationOptions)
-{
-  if (!transportationOptions || !transportationOptions.length) {
-    throw new Error('No transportation options available');
-  }
-
-  const atsOption = transportationOptions.find(opt =>
-    opt.shippingSolution === 'AMAZON_PARTNERED_CARRIER' ||
-    opt.carrier?.alphaCode === 'AMAZNEMP'
-  );
-
-  if (!atsOption) {
-    throw new Error('ATS transportation option not found');
-  }
-
-  return atsOption.transportationOptionId;
-}
-
-
-function listPlacementOptions_(token, endpoint, inboundPlanId) {
-  const url =
-    `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}/placementOptions`;
-
-  const response = fetchSigned_(
-    token,
-    { method: 'GET', url },
-    [200]
-  );
-
-  const placementOptions = response.placementOptions || [];
-
-  if (!placementOptions.length) {
-    throw new Error('No placement options returned for inbound plan');
-  }
-
-  // India usually returns exactly one placement option
-  const option = placementOptions[0];
-
-  const placementOptionId = option.placementOptionId;
-  const shipmentId = (option.shipmentIds && option.shipmentIds[0]) || null;
-
-  if (!placementOptionId) {
-    throw new Error('placementOptionId missing in placement option');
-  }
-
-  if (!shipmentId) {
-    throw new Error('shipmentId missing in placement option');
-  }
-
-  return {
-    placementOptionId,
-    shipmentId
-  };
-}
-
-
-function requestShipmentLabels_(
-  token,
-  endpoint,
-  inboundPlanId,
-  shipmentId,
-  boxCount
-) {
-  const url =
-    `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}` +
-    `/shipments/${shipmentId}/labels`;
-
-  const payload = {
-    labelType: 'PACKAGE_LABEL',
-    pageType: 'A4',
-    numberOfPackages: boxCount
-  };
-
-  const res = fetchSigned_(
-    token,
-    { method: 'POST', url, payload },
-    [202]
-  );
-
-  return res.operationId;
-}
-
-
-function downloadLabelDocument_(token, endpoint, documentId) {
-  const url =
-    `${endpoint}${AMAZON.apiPath}/documents/${documentId}`;
-
-  const res = fetchSigned_(token, { method: 'GET', url }, [200]);
-
-  // res.url → pre-signed S3 URL (PDF)
-  return res.url;
-}
-
-function downloadFbaShipmentLabels(poRef) {
-  const token = getAmazonAccessToken();
-  const endpoint = AMAZON.endpoint;
-
-  const { inboundPlanId, shipmentId } = getFbaIdsFromDB_(poRef);
-
-  const packingRows =
-    _loadPackingData(SpreadsheetApp.getActiveSpreadsheet(), poRef);
-
-  const boxCount = packingRows.length;
-
-  const opId = requestShipmentLabels_(
-    token,
-    endpoint,
-    inboundPlanId,
-    shipmentId,
-    boxCount
-  );
-
-  const result = pollOperation_(token, endpoint, opId);
-
-  const documentId = result.documents?.[0]?.documentId;
-  if (!documentId) {
-    throw new Error('Label document not generated');
-  }
-
-  return downloadLabelDocument_(token, endpoint, documentId);
-}
-
-
-
-
-
 function test_amazon()
 {
   const data = {"action":"pushToEasyEcom","id":"AZ20260718-1","poNumber":"AZ20260718-1","status":"New","poDbStatus":"New","channel":"Amazon_FBA","storeCode":"ISK3","locationKey":"","location":"","qty":2824,"amount":377566.5,"orderDate":"18 Jul 2026","poEdd":"28 Jul 2026","poExpiryDate":"17 Aug 2026","grnDate":"","eeCustomerId":"204731","zohoContactId":"1975394000002061003","items":[{"articleCode":"1630210","masterSku":"1630210","itemName":"Drift Number Sliding Puzzle _4x4","qty":540,"fulfillableQty":540,"unitCost":89.25,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001550348","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030604","masterSku":"1030604","itemName":"Drift 3M v3 3x3 Magnetic","qty":540,"fulfillableQty":540,"unitCost":165.9,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000129386389","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030400","masterSku":"1030400","itemName":"Cubelelo Drift Warrior 3x3 Black","qty":360,"fulfillableQty":360,"unitCost":44.1,"mrp":499,"priceCheckStatus":"Mismatch (PO:42 vs Exp:44)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060831","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1020200","masterSku":"1020200","itemName":"Cubelelo Drift 2x2 Stickerless","qty":240,"fulfillableQty":240,"unitCost":60.9,"mrp":799,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061025","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1460553","masterSku":"1460553c","itemName":"Cubelelo Drift 2x2, 3x3 & Pyraminx Gift Box","qty":200,"fulfillableQty":200,"unitCost":202.65,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001917944","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1630201","masterSku":"1630201","itemName":"Cubelelo Drift Infinity Cube Green","qty":168,"fulfillableQty":168,"unitCost":95.55,"mrp":499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059461","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1040400","masterSku":"1040200","itemName":"Cubelelo Drift 4x4 Stickerless","qty":160,"fulfillableQty":160,"unitCost":141.75,"mrp":999,"priceCheckStatus":"Price Not Found","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060431","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1630223","masterSku":"1630223a","itemName":"Drift Clang! Magnetic Game","qty":100,"fulfillableQty":100,"unitCost":152.25,"mrp":699,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000243643012","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1280100a","masterSku":"1280100","itemName":"Cubelelo Drift Pyraminx Stickerless","qty":60,"fulfillableQty":60,"unitCost":86.1,"mrp":999,"priceCheckStatus":"Mismatch (PO:82 vs Exp:86)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000059068","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1120200","masterSku":"1120200","itemName":"Cubelelo Drift Mirror Cube _Golden","qty":42,"fulfillableQty":42,"unitCost":92.4,"mrp":599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060161","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB00004","masterSku":"TB00004a","itemName":"TinkerBox Stack & Balance Acrobat Human Tower","qty":40,"fulfillableQty":40,"unitCost":329.7,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250781069","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1040600","masterSku":"1040600ps","itemName":"Cubelelo Drift 4M 4x4 Stickerless","qty":30,"fulfillableQty":30,"unitCost":494.44,"mrp":1449,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001913120","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1960100","masterSku":"1960100","itemName":"Cubelelo Drift Mini 3x3 Keychain","qty":30,"fulfillableQty":30,"unitCost":94.5,"mrp":349,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000057903","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1060100","masterSku":"1060100","itemName":"Cubelelo Drift 6x6 Stickerless","qty":30,"fulfillableQty":30,"unitCost":535.5,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060233","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1280600_EAN","masterSku":"1280600ps","itemName":"Cubelelo Drift Pyraminx M _Magnetic","qty":30,"fulfillableQty":30,"unitCost":298.09,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918556","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1260100","masterSku":"1260100","itemName":"Drift Puppet Cube I","qty":25,"fulfillableQty":25,"unitCost":170.1,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001549718","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1460503","masterSku":"1460503b","itemName":"Drift 2x2, 3x3 & 4x4 Stickerless Gift Box","qty":24,"fulfillableQty":24,"unitCost":249.9,"mrp":1499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001550087","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB00003","masterSku":"TB00003a","itemName":"TinkerBox Color and Pattern Sliding Puzzle Game","qty":20,"fulfillableQty":20,"unitCost":310.8,"mrp":999,"priceCheckStatus":"Mismatch (PO:296 vs Exp:0)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250449426","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1050600","masterSku":"1050600ps","itemName":"Cubelelo Drift 5M 5x5 Stickerless","qty":20,"fulfillableQty":20,"unitCost":562.27,"mrp":1599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918034","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1120400_EAN","masterSku":"1120400","itemName":"Cubelelo Drift Mirror 2x2 Silver","qty":20,"fulfillableQty":20,"unitCost":80.85,"mrp":599,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060119","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030652","masterSku":"1030652","itemName":"Drift 3M PLUS v2 MagLev Speedcube","qty":20,"fulfillableQty":20,"unitCost":407.4,"mrp":1999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001549448","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1020300","masterSku":"1020300","itemName":"Cubelelo Drift 2x2 Black","qty":20,"fulfillableQty":20,"unitCost":55.65,"mrp":499,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061023","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1160200","masterSku":"1160200","itemName":"Cubelelo Drift Fisher Cube Tiled","qty":20,"fulfillableQty":20,"unitCost":97.65,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000058218","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030322","masterSku":"1030322ps","itemName":"Cubelelo Drift 3x3 Carbon Fiber","qty":20,"fulfillableQty":20,"unitCost":85.68,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000001918673","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1030800_EAN","masterSku":"1030652gp","itemName":"Drift 3M PLUS v2 MagLev Speedcube (Alternate)","qty":20,"fulfillableQty":20,"unitCost":407.4,"mrp":1999,"priceCheckStatus":"Mismatch (PO:388 vs Exp:391)","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000134970531","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1060600","masterSku":"1060600","itemName":"Cubelelo Drift 6M 6x6 _Magnetic","qty":15,"fulfillableQty":15,"unitCost":755.06,"mrp":2199,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000060231","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB02003","masterSku":"TB02003a","itemName":"Tinker Box Wobbler/ Rolly polly/ Roly poly","qty":10,"fulfillableQty":10,"unitCost":210,"mrp":699,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250782133","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"4001045","masterSku":"4001045","itemName":"Drift Honeycomb Weekday Calendar Puzzle","qty":5,"fulfillableQty":5,"unitCost":178.5,"mrp":999,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000057780","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB06003","masterSku":"TB06003a","itemName":"TinkerBox Cylinder Puzzle","qty":5,"fulfillableQty":5,"unitCost":236.25,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250786161","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"1150100","masterSku":"1150100","itemName":"Cubelelo Drift Square-1 Stickerless","qty":5,"fulfillableQty":5,"unitCost":246.33,"mrp":899,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000000061438","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""},{"articleCode":"TB08002","masterSku":"TB08002a","itemName":"TinkerBox Fabric Winder","qty":5,"fulfillableQty":5,"unitCost":327.6,"mrp":1199,"priceCheckStatus":"Match","itemStatus":"New","eeOrderDate":"","eeBatchCreatedAt":"","eeInvoiceDate":"","eeManifestDate":"","invoiceDate":"","invoiceTotal":0,"eeBoxCount":0,"itemQuantity":0,"cancelledQuantity":0,"shippedQuantity":0,"returnedQuantity":0,"gst":"27AAICB3513C1Z5","bookedDate":"","edd":"","latestStatusDate":"","deliveredDate":"","freightCharged":0,"zohoItemId":"1975394000250781080","appointmentRequestDate":"","appointmentRequestTimestamp":"","appointmentDate":"","pickupDate":""}],"appointmentDate":"","appointmentRequestDate":"","contactVerified":false,"pickupDate":"","orderNotes":"[2026-07-18 10:30] Jainendra Jain: Ship through Fakir Nayak Delhivery @14/kg","isPartial":false,"pushTarget":"AMZ"};
 
   createAmazonFbaInboundPlan(data,"AZ20260718-1");
-  //generateAndListAmazonPlacementDirect(poRef);
-  //setPackingInformationAndConfirmPlacementDirect(poRef);
-
- // const opId = requestShipmentLabels_(token,endpoint,inboundPlanId,shipmentId,boxCount
- // const result = pollOperation_(token, endpoint, opId);
-  //downloadFbaShipmentLabels(poRef);
+  // Next steps: createAmazonShipment / confirmAmazonTransport ("amazon fba shipment.js")
 }
-
-
-function getInboundPlanItems_(token, endpoint, inboundPlanId) {
-  const url =
-    `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}`;
-
-  const res = fetchSigned_(
-    token,
-    { method: 'GET', url },
-    [200]
-  );
-
-  if (!res.items || !res.items.length) {
-    throw new Error(`No items found in inbound plan ${inboundPlanId}`);
-  }
-
-  return res.items.map(i => ({
-    articleCode: i.msku,
-    qty: i.quantity
-  }));
-}
-
-
-function generatePlacementOptions_(token, endpoint, inboundPlanId, warehouseId, items) {
-  const url = `${endpoint}${AMAZON.apiPath}/inboundPlans/${inboundPlanId}/placementOptions`;
-
-  const payload = {
-    customPlacement: [{
-      warehouseId,
-      items: items.map(i => ({
-        msku: i.articleCode,
-        quantity: i.qty,
-        labelOwner: 'SELLER',
-        prepOwner: 'NONE'
-      }))
-    }]
-  };
-
-  return fetchSigned_(token, { method: 'POST', url, payload }, [202]).operationId;
-}
-
-
-
-
-
 
 
 // ============================================================================
 // API HELPERS
 // ============================================================================
-
-
-
-function generateTransportationOptions_(token, endpoint, inboundPlanId, placementOptionId, shipmentId) 
-{
-  const url =`${endpoint}/inbound/fba/2024-03-20/inboundPlans/${inboundPlanId}/transportationOptions`;
-
-  const payload = {
-    placementOptionId: placementOptionId,
-    shipmentTransportationConfigurations: [
-      {
-        shipmentId: shipmentId,
-        shipmentTransportationType: 'SP',
-        contactInformation: {
-          name: 'Mohan Dewangan',
-          phoneNumber: '8103733766',
-          email: 'avinav@cubelelo.com'
-        },
-        readyToShipWindow: {
-          start: getReadyToShipDate_()
-        }
-      }
-    ]
-  };
-
-  const res = fetchSigned_(token,{ method: 'POST', url, payload },[202]);
-
-  return res.operationId;
-}
-
-function getReadyToShipDate_() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1); // tomorrow
-  d.setSeconds(0);
-  d.setMilliseconds(0);
-  return d.toISOString();
-}
 
 
 
@@ -11313,7 +10710,7 @@ function pollOperation_(token, endpoint, operationId, max = 25, waitMs = 12000) 
   for (let i = 0; i < max; i++) {
     const res = fetchSigned_(token, { method: 'GET', url }, [200]);
     const status = String(res.operationStatus || '').toUpperCase();
-    if (['SUCCESS', 'COMPLETED'].includes(status)) return;
+    if (['SUCCESS', 'COMPLETED'].includes(status)) return res;
     if (['FAILED', 'ERROR'].includes(status)) throw new Error(JSON.stringify(res));
     Utilities.sleep(waitMs);
   }
@@ -17314,7 +16711,8 @@ function partnerPushNotesToTracker_(dbValues, po) {
  * Box ID barcode. Expected boxes come from Master_Packing_Data ("Box ID" per
  * "Reference Code"); each scan is logged on the Box_Scan_Log sheet against the
  * order's current AWB, so a new AWB (courier reassigned) needs a fresh scan.
- * The print pack (label, invoice, docket, PO) is served only once every box is scanned.
+ * The print pack (label, invoice, docket; for Amazon FBA the box labels and delivery challan)
+ * is served only once every box is scanned. The PO copy is no longer printed (2026-11-19).
  *
  * Each opening of the scan window is a session (Session ID column). Only a session that
  * covers every box completes the order, so a scan left halfway has to start over. The app
@@ -17449,7 +16847,18 @@ function getBoxScanStatus(data) {
   const referenceCode = String((data && data.referenceCode) || "").trim();
   if (!referenceCode) return { status: "error", message: "No reference code provided." };
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  return boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode), null, data.sessionId);
+  const result = boxScanStatus_(ss, referenceCode, currentAwbForReference_(ss, referenceCode), null, data.sessionId);
+  try {
+    const docs = readAmazonFbaDocs_(ss, referenceCode); // amazon fba shipment.js
+    if (docs) {
+      // Links only once the boxes are scanned: they would let the labels print without the scan
+      result.amazonDocs = publicAmazonFbaDocs_(docs.record);
+      if (!result.complete) { delete result.amazonDocs.boxLabelsUrl; delete result.amazonDocs.challanUrl; }
+    }
+  } catch (e) {
+    Logger.log(`getBoxScanStatus ${referenceCode}: Amazon documents not read: ${e.message}`);
+  }
+  return result;
 }
 
 /** data: { referenceCode, boxId, userName, sessionId } */
@@ -17497,8 +16906,10 @@ function recordBoxScan(data) {
   }
 }
 
-// Every printable document saved for the order, deduplicated, in print order
-function collectPrintDocuments_(ss, referenceCode) {
+// Every printable document saved for the order, deduplicated, in print order.
+// Amazon FBA orders: the box labels and delivery challan from Amazon_FBA_Docs; with
+// opts.fetchAmazonDocs, missing ones are first fetched from Amazon. Returns { docs, amazonDocs }.
+function collectPrintDocuments_(ss, referenceCode, opts) {
   const values = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
   const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
   const refCol = col("EE_reference_code");
@@ -17513,6 +16924,23 @@ function collectPrintDocuments_(ss, referenceCode) {
     seen[url] = true;
     docs.push({ kind: kind, label: label, url: url });
   };
+
+  // Amazon FBA: labels and challan come from Amazon (amazon fba shipment.js)
+  let amazonDocs = null;
+  if (rows.some(r => isAmazonFbaChannel_(cell(r, "Channel Name")))) {
+    let rec = null;
+    try {
+      const saved = readAmazonFbaDocs_(ss, referenceCode);
+      rec = saved ? saved.record : null;
+      if ((!rec || rec.status !== "Done") && opts && opts.fetchAmazonDocs) rec = fetchAmazonFbaDocsForRef_(ss, referenceCode, {});
+    } catch (e) {
+      rec = Object.assign({}, rec || {}, { status: (rec && rec.status) || "Waiting", message: e.message });
+    }
+    amazonDocs = rec;
+    if (rec) {
+      add("amazon_labels", `Amazon box labels${rec.fbaShipmentId ? " " + rec.fbaShipmentId : ""}`, rec.boxLabelsUrl || "");
+    }
+  }
 
   rows.forEach(r => add("label", "Shipping Label", cell(r, "Label URL")));
   rows.forEach(r => {
@@ -17535,11 +16963,9 @@ function collectPrintDocuments_(ss, referenceCode) {
     Logger.log(`collectPrintDocuments_: tracker not read for ${referenceCode}: ${e.message}`);
   }
 
-  rows.forEach(r => {
-    const po = cell(r, "PO Number");
-    add("po", po ? `PO ${po}` : "Purchase Order", cell(r, "PO PDF"));
-  });
-  return docs;
+  if (amazonDocs) add("challan", "Delivery Challan", amazonDocs.challanUrl || "");
+  // The PO copy is not printed any more (2026-11-19)
+  return { docs: docs, amazonDocs: amazonDocs };
 }
 
 // One document as a blob: Drive files (Google Sheets/Docs exported to PDF), Zoho invoice
@@ -17589,7 +17015,8 @@ function getPrintPack(data) {
   }
 
   let total = 0;
-  const documents = collectPrintDocuments_(ss, referenceCode).map(doc => {
+  const collected = collectPrintDocuments_(ss, referenceCode, { fetchAmazonDocs: true });
+  const documents = collected.docs.map(doc => {
     try {
       const blob = fetchPrintDocumentBlob_(doc.url);
       const bytes = blob.getBytes();
@@ -17603,7 +17030,9 @@ function getPrintPack(data) {
       return Object.assign({}, doc, { error: e.message });
     }
   });
-  return { status: "success", referenceCode: referenceCode, documents: documents };
+  const result = { status: "success", referenceCode: referenceCode, documents: documents };
+  if (collected.amazonDocs) result.amazonDocs = publicAmazonFbaDocs_(collected.amazonDocs);
+  return result;
 }
 
 // ==========================================
@@ -17658,6 +17087,9 @@ function syncPackingListFromEasyEcom(data) {
  * Time-driven trigger handler. Throws on EasyEcom failures so Google's trigger failure emails fire.
  * Then creates the invoices of confirmed orders (auto invoice.js) and sends the orders that now
  * have everything to the shipping partner (auto ship.js), even when the EasyEcom step failed.
+ * Then, when switched on, creates the Amazon FBA shipments of packed orders and books their
+ * earliest ATS pickup; last, downloads Amazon's box labels and delivery challan for Amazon FBA
+ * orders whose carrier is booked (both amazon fba shipment.js).
  */
 function runPackingListAutoSync() {
   const startedAt = Date.now();
@@ -17679,6 +17111,16 @@ function runPackingListAutoSync() {
     Logger.log(runAutoShipToPartner_(startedAt).message);
   } catch (e) {
     Logger.log('Auto-send to the shipping partner failed: ' + e.message);
+  }
+  try {
+    Logger.log(runAmazonAutoShip_(startedAt).message);
+  } catch (e) {
+    Logger.log('Amazon auto-shipment failed: ' + e.message);
+  }
+  try {
+    Logger.log(runAmazonFbaDocsAutoFetch_(startedAt).message);
+  } catch (e) {
+    Logger.log('Amazon FBA documents failed: ' + e.message);
   }
   if (syncError) throw syncError;
 }
@@ -18817,4 +18259,1661 @@ function debugAutoInvoiceLookup(data) {
   if (!ref) return { status: "error", message: "No referenceCode was provided." };
   const lookup = autoInvoiceZohoLookup_(ref, autoInvoiceKnownRefs_());
   return Object.assign({ status: "success", referenceCode: ref, wouldCreate: !lookup.error && !lookup.invoices.length }, lookup);
+}
+
+// ==========================================
+// AMAZON FBA SHIPMENT + DOCUMENTS (amazon fba shipment.js)
+// ==========================================
+/**
+ * Amazon FBA orders after "Push to AMZ" (2026-11-19). Amazon books the carrier itself (ATS,
+ * its partnered carrier), so these orders never go to Urvi Ent / NimbusPost.
+ *
+ * 1. Shipment creation (doPost createAmazonShipment, then confirmAmazonTransport).
+ *    Until now the team finished every shipment by hand in Seller Central (Send to Amazon) and
+ *    pasted the FBA Shipment ID back; amazon.js only created the inbound plan. Its later steps
+ *    were never wired to the app and could not have worked: generateTransportationOptions_ sent
+ *    a field the API doesn't have, every box was counted once per SKU line, pollOperation_
+ *    returned nothing, and the label request called an endpoint that doesn't exist.
+ *    This file runs Amazon's India order instead (developer-docs "Ship inventory to India FC"):
+ *      custom placement (Store Code = FC) -> transportation options -> packing information
+ *      (one entry per EasyEcom box) -> confirm placement (creates the FBA Shipment ID) ->
+ *      carrier options read (confirming brings the ATS quote; never generated again after it) ->
+ *      [person picks the ATS pickup] -> confirm transportation.
+ *    Placement ID and Shipment ID are saved on PO_Database as soon as Amazon returns them, so
+ *    running it again carries on from where it stopped. The FBA Shipment ID (FBA Shipment IDs)
+ *    is saved only once the ATS pickup is booked: it becomes the invoice number, and a shipment
+ *    Amazon offers no ATS for has to be deleted in Seller Central, so its FBA ID must never
+ *    reach an invoice (the user, 2026-11-19).
+ *    Confirming transportation books the ATS pickup and charges the quoted amount. From the
+ *    button, the app shows the options and a person confirms one. Switched on in Settings →
+ *    Order Automation, the 15-minute timer does it all by itself once the box data is complete
+ *    and books the earliest pickup (section 1b).
+ *
+ * 2. Documents. Box labels come from Fulfillment Inbound v0 getLabels with PageType
+ *    PackageLabel_A4_2, the same A4 sheet as Seller Central's "99.1 X 139 mm (A4)": one page per
+ *    box, the FBA box label on the top half and the ATS carrier label on the bottom half. The
+ *    app's print window cuts each page into its two labels for the 4x6 label printer
+ *    (BoxScanPrintModal). The delivery challan comes from v2024-03-20
+ *    getDeliveryChallanDocument (India, partnered carrier only) and prints on A4.
+ *    Both PDFs go to Drive (PO folder > "Amazon FBA Documents") and the Amazon_FBA_Docs sheet,
+ *    one row per EE reference; the print pack (box scan.js) serves them.
+ *    Fetched by the 15-minute packing sync (runPackingListAutoSync) for open Amazon FBA orders
+ *    with an FBA Shipment ID, right after confirmAmazonTransport, by the print window when they
+ *    are still missing, and by its "Fetch again" button (doPost fetchAmazonFbaDocs).
+ *
+ * 3. Editor-only checks (no app changes): amzDiagDocs() reads the documents of shipments made
+ *    in Seller Central; amzDiagShipmentDryRun() creates a 1-unit test plan, runs every step that
+ *    can still be undone, then cancels the plan. Both save a report to the runner's Drive.
+ */
+
+const SHEET_AMAZON_FBA_DOCS_ = "Amazon_FBA_Docs";
+const AMAZON_FBA_DOCS_HEADERS_ = [
+  "Reference Code", "FBA Shipment ID", "Inbound Plan ID", "Shipment ID", "Boxes",
+  "Box Labels URL", "Delivery Challan URL", "Status", "Message", "Attempts", "Updated At"
+];
+const AMAZON_FBA_DOCS_FOLDER_NAME_ = "Amazon FBA Documents";
+const AMAZON_LABEL_PAGE_TYPE_ = "PackageLabel_A4_2";
+const AMAZON_DOCS_MAX_PER_RUN_ = 3;
+const AMAZON_DOCS_MAX_ATTEMPTS_ = 16;      // ~4 hours of timer runs; the print window still retries
+const AMAZON_DOCS_RUN_UNTIL_MS_ = 300000;  // the trigger gets 6 minutes; start nothing after 5
+// PO_Database statuses past the warehouse: nothing left to print
+const AMAZON_DOCS_DONE_STATUSES_ = ["rtd", "ready to dispatch", "dispatched", "shipped", "delivered", "cancelled", "closed", "returned"];
+// Contact for Amazon's carrier, as the old generateTransportationOptions_ sent it
+const AMZ_SHIP_CONTACT_ = { name: "Mohan Dewangan", phoneNumber: "8103733766", email: "avinav@cubelelo.com" };
+const AMZ_SHIP_RUN_MARKER_TTL_S_ = 370; // just over Apps Script's 6-minute limit
+
+function isAmazonFbaChannel_(channel) {
+  const c = String(channel || "").trim().toLowerCase();
+  return c === "amazon_fba" || c === "amazon fba";
+}
+
+function amzPlanUrl_(planId) {
+  return `${AMAZON.endpoint}${AMAZON.apiPath}/inboundPlans/${encodeURIComponent(planId)}`;
+}
+
+function amzToken_() {
+  const token = getAmazonAccessToken();
+  if (!token) throw new Error("Could not get an Amazon access token (check AMAZON_* Script Properties).");
+  return token;
+}
+
+// Waits for an async SP-API operation; returns it, or throws with Amazon's problem messages
+function amzWaitOperation_(token, operationId, maxMs) {
+  if (!operationId) return null;
+  const url = `${AMAZON.endpoint}${AMAZON.apiPath}/operations/${encodeURIComponent(operationId)}`;
+  const waits = [2000, 3000, 4000, 6000, 8000, 10000];
+  const until = Date.now() + (maxMs || 150000);
+  for (let i = 0; ; i++) {
+    const op = fetchSigned_(token, { method: "GET", url: url }, [200]);
+    const status = String(op.operationStatus || "").toUpperCase();
+    if (status === "SUCCESS") return op;
+    if (status === "FAILED") {
+      const problems = (op.operationProblems || []).map(p => `${p.code || ""} ${p.message || ""}`.trim()).join("; ");
+      throw new Error(`Amazon ${op.operation || "operation"} failed: ${problems || JSON.stringify(op)}`);
+    }
+    if (Date.now() > until) throw new Error(`Amazon ${op.operation || "operation"} ${operationId} still running; try again in a minute.`);
+    Utilities.sleep(waits[Math.min(i, waits.length - 1)]);
+  }
+}
+
+// GETs every page of a v2024-03-20 list (pagination.nextToken)
+function amzListAll_(token, url, key) {
+  const out = [];
+  let next = "";
+  for (let page = 0; page < 20; page++) {
+    const sep = url.indexOf("?") === -1 ? "?" : "&";
+    const res = fetchSigned_(token, { method: "GET", url: next ? `${url}${sep}paginationToken=${encodeURIComponent(next)}` : url }, [200]);
+    (res[key] || []).forEach(x => out.push(x));
+    next = res.pagination && res.pagination.nextToken;
+    if (!next) break;
+  }
+  return out;
+}
+
+/**
+ * The order's Amazon fields from PO_Database (first non-blank value across its rows), found by
+ * EE reference, or by keyColumn ("PO Number" for an order not in EasyEcom yet, editor tests).
+ * Returns null when no row matches.
+ */
+function amazonFbaOrderContext_(ss, referenceCode, keyColumn) {
+  const values = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
+  const keyName = keyColumn || "EE_reference_code";
+  const refCol = col(keyName);
+  if (refCol === -1) throw new Error(`PO_Database has no ${keyName} column.`);
+  const rows = values.filter((r, i) => i > 0 && String(r[refCol]).trim() === referenceCode);
+  if (!rows.length) return null;
+  return amzContextFromRows_(col, rows, referenceCode);
+}
+
+// The context from an order's PO_Database rows (col: selfShipHeaderIndex_ of the header row)
+function amzContextFromRows_(col, rows, referenceCode) {
+  const first = (name) => {
+    const c = col(name);
+    if (c === -1) return "";
+    const row = rows.find(r => String(r[c] === null || r[c] === undefined ? "" : r[c]).trim() !== "");
+    return row ? String(row[c]).trim() : "";
+  };
+  const fbaMatch = first("FBA Shipment IDs").toUpperCase().match(/FBA[0-9A-Z]{6,}/);
+  const statusCol = col("Status");
+  const live = rows.filter(r => statusCol === -1 || !/^cancel/i.test(String(r[statusCol]).trim()));
+  return {
+    referenceCode: referenceCode,
+    channel: first("Channel Name"),
+    isFba: isAmazonFbaChannel_(first("Channel Name")),
+    poNumber: first("PO Number"),
+    poNumbers: col("PO Number") === -1 ? [] : Array.from(new Set(rows.map(r => String(r[col("PO Number")] || "").trim()).filter(Boolean))),
+    storeCode: first("Store Code").toUpperCase(),
+    planId: first("Inbound Plan ID"),
+    placementId: first("Placement ID"),
+    shipmentId: first("Shipment ID"),
+    fbaId: fbaMatch ? fbaMatch[0] : "",
+    boxData: Number(first("Box Data")) || 0,
+    statuses: live.map(r => statusCol === -1 ? "" : String(r[statusCol]).trim().toLowerCase()),
+    eeStatus: first("EE_order_status").toLowerCase(),
+    lines: live.map(r => ({
+      itemCode: col("Item Code") === -1 ? "" : String(r[col("Item Code")]).trim(),
+      masterSku: col("Master SKU") === -1 ? "" : String(r[col("Master SKU")]).trim(),
+      qty: col("Qty") === -1 ? 0 : Number(r[col("Qty")]) || 0
+    }))
+  };
+}
+
+// =====================================================================
+// 1. SHIPMENT CREATION
+// =====================================================================
+
+// prepOwner as the plan was created with it. listInboundPlanItems has no item prepOwner, only prep
+// instructions, and a seller-labelled item lists ITEM_LABELING / SELLER even though Push to AMZ
+// sent prepOwner NONE (AZ20261117-16, 2026-11-19). Only a real prep step (polybagging etc.) counts.
+function amzItemPrepOwner_(item) {
+  const prep = (item.prepInstructions || []).find(p => p && p.prepOwner &&
+    ["ITEM_LABELING", "ITEM_NO_PREP"].indexOf(String(p.prepType || "").toUpperCase()) === -1);
+  return prep ? prep.prepOwner : "NONE";
+}
+
+// The plan's items as Amazon holds them (placement must match them). Amazon returned none for a
+// plan created seconds earlier (dry runs 2026-11-19, still none after 20 s), so it retries; if
+// there are still none, the order's own lines are used (Item Code + Qty, what Push to AMZ sent).
+function amzPlanItems_(token, planId, ctx) {
+  let items = [];
+  for (let attempt = 0; attempt < 4 && !items.length; attempt++) {
+    if (attempt) Utilities.sleep(3000 * attempt);
+    items = amzListAll_(token, `${amzPlanUrl_(planId)}/items?pageSize=1000`, "items");
+  }
+  if (!items.length) {
+    const lines = ((ctx && ctx.lines) || []).filter(l => l.itemCode && l.qty > 0);
+    if (!lines.length) throw new Error(`Amazon has no items on inbound plan ${planId}, and the order has no lines to use instead.`);
+    Logger.log(`amzPlanItems_: Amazon listed no items on ${planId}; using the order's ${lines.length} lines.`);
+    return lines.map(l => ({ msku: l.itemCode, quantity: l.qty, labelOwner: "SELLER", prepOwner: "NONE" }));
+  }
+  return items.map(i => ({
+    msku: i.msku,
+    quantity: Number(i.quantity) || 0,
+    labelOwner: i.labelOwner || "SELLER",
+    prepOwner: amzItemPrepOwner_(i)
+  }));
+}
+
+/**
+ * Boxes for setPackingInformation, one entry per EasyEcom Box ID (Master_Packing_Data).
+ * Box content is sent (BOX_CONTENT_PROVIDED) when every packed SKU maps to one plan MSKU and the
+ * packed totals equal the plan; otherwise MANUAL_PROCESS, and `contentNote` says why.
+ */
+function amzPackingBoxes_(ss, ctx, planItems, packingRows) {
+  // Master_Packing_Data rows of the order (by Reference Code = EE reference), unless given
+  const rows = packingRows || _loadPackingData(ss, ctx.referenceCode);
+  if (!rows.length) throw new Error(`No box data for ${ctx.referenceCode} in Master_Packing_Data yet.`);
+
+  // EasyEcom SKU -> Amazon MSKU, from this order's lines (Master SKU -> Item Code)
+  const planBySku = {};
+  planItems.forEach(p => { planBySku[String(p.msku).toUpperCase()] = p; });
+  const skuToMsku = {};
+  const ambiguous = {};
+  ctx.lines.forEach(l => {
+    if (!planBySku[l.itemCode.toUpperCase()]) return;
+    [l.masterSku, l.itemCode].forEach(k => {
+      const key = String(k || "").toUpperCase();
+      if (!key) return;
+      if (skuToMsku[key] && skuToMsku[key] !== l.itemCode) ambiguous[key] = true;
+      else skuToMsku[key] = l.itemCode;
+    });
+  });
+
+  const boxes = {};
+  const order = [];
+  const unmapped = {};
+  rows.forEach(r => {
+    const id = normalizeBoxId_(r["Box ID"]);
+    if (!id) return;
+    if (!boxes[id]) {
+      boxes[id] = { id: id, length: 0, width: 0, height: 0, weightG: 0, items: {} };
+      order.push(id);
+    }
+    const b = boxes[id];
+    b.length = Math.max(b.length, Number(r["Box Length"]) || 0);
+    b.width = Math.max(b.width, Number(r["Box Width"]) || 0);
+    b.height = Math.max(b.height, Number(r["Box Height"]) || 0);
+    b.weightG = Math.max(b.weightG, Number(r["Box Weight"]) || 0);
+    const sku = String(r["SKU"] || "").trim().toUpperCase();
+    const qty = Number(r["Item Quantity"]) || 0;
+    const msku = ambiguous[sku] ? "" : skuToMsku[sku];
+    if (!msku) { unmapped[sku || "(blank SKU)"] = true; return; }
+    b.items[msku] = (b.items[msku] || 0) + qty;
+  });
+
+  const bad = order.filter(id => !(boxes[id].length > 0 && boxes[id].width > 0 && boxes[id].height > 0 && boxes[id].weightG > 0));
+  if (bad.length) throw new Error(`Box size or weight missing in the box data for box ${bad.join(", ")}.`);
+
+  // Packed totals must equal the plan for Amazon to accept box content
+  const packed = {};
+  order.forEach(id => Object.keys(boxes[id].items).forEach(m => { packed[m] = (packed[m] || 0) + boxes[id].items[m]; }));
+  const mismatch = [];
+  planItems.forEach(p => { if ((packed[p.msku] || 0) !== p.quantity) mismatch.push(`${p.msku}: plan ${p.quantity}, packed ${packed[p.msku] || 0}`); });
+  Object.keys(packed).forEach(m => { if (!planBySku[m.toUpperCase()]) mismatch.push(`${m}: packed but not on the plan`); });
+  const unmappedList = Object.keys(unmapped);
+  const provided = !unmappedList.length && !mismatch.length;
+  const contentNote = provided ? "" : (unmappedList.length
+    ? `SKU ${unmappedList.join(", ")} not matched to an Amazon MSKU`
+    : `packed quantities differ from the plan (${mismatch.slice(0, 5).join("; ")})`);
+
+  const out = order.map(id => {
+    const b = boxes[id];
+    const box = {
+      quantity: 1,
+      contentInformationSource: provided ? "BOX_CONTENT_PROVIDED" : "MANUAL_PROCESS",
+      dimensions: {
+        unitOfMeasurement: "CM",
+        length: Math.round(b.length * 10) / 10,
+        width: Math.round(b.width * 10) / 10,
+        height: Math.round(b.height * 10) / 10
+      },
+      weight: { unit: "KG", value: Math.round(b.weightG / 10) / 100 }
+    };
+    if (provided) {
+      box.items = Object.keys(b.items).filter(m => b.items[m] > 0).map(m => {
+        const p = planBySku[m.toUpperCase()];
+        return { msku: p.msku, quantity: b.items[m], labelOwner: p.labelOwner, prepOwner: p.prepOwner };
+      });
+    }
+    return box;
+  });
+  return { boxes: out, boxIds: order, provided: provided, contentNote: contentNote };
+}
+
+function amzReadyToShipStart_() {
+  // Tomorrow, same time (as before); ATS offers pickup slots from then
+  const d = new Date(Date.now() + 24 * 3600 * 1000);
+  d.setSeconds(0, 0);
+  return d.toISOString();
+}
+
+function amzGenerateTransportation_(token, planId, placementOptionId, shipmentId, readyToShipStart) {
+  const res = fetchSigned_(token, {
+    method: "POST",
+    url: `${amzPlanUrl_(planId)}/transportationOptions`,
+    payload: {
+      placementOptionId: placementOptionId,
+      shipmentTransportationConfigurations: [{
+        shipmentId: shipmentId,
+        contactInformation: AMZ_SHIP_CONTACT_,
+        readyToShipWindow: { start: readyToShipStart || amzReadyToShipStart_() }
+      }]
+    }
+  }, [202]);
+  amzWaitOperation_(token, res.operationId);
+}
+
+function amzListTransportation_(token, planId, placementOptionId, shipmentId) {
+  const q = [`shipmentId=${encodeURIComponent(shipmentId)}`, "pageSize=20"];
+  if (placementOptionId) q.push(`placementOptionId=${encodeURIComponent(placementOptionId)}`);
+  return amzListAll_(token, `${amzPlanUrl_(planId)}/transportationOptions?${q.join("&")}`, "transportationOptions");
+}
+
+// ATS, Amazon's partnered carrier: the only carrier the app books (the user, 2026-11-19).
+// Not "SPN - Amazon Empanelled Carriers": that is USE_YOUR_OWN_CARRIER (test on AZ20261119-1).
+function amzIsPartnered_(o) {
+  return !!o && o.shippingSolution === "AMAZON_PARTNERED_CARRIER";
+}
+
+// "ATS - Amazon Transportation Services (AMAZON_PARTNERED_CARRIER), Other (USE_YOUR_OWN_CARRIER), ..."
+function amzOptionsText_(options) {
+  if (!options.length) return "none";
+  return options.map(o => `${(o.carrier && (o.carrier.name || o.carrier.alphaCode)) || "?"} (${o.shippingSolution || "?"})`).join(", ");
+}
+
+// What the app shows for a carrier option
+function amzOptionSummary_(o) {
+  const quote = o.quote || {};
+  const cost = quote.cost || {};
+  const appt = o.carrierAppointment || {};
+  return {
+    transportationOptionId: o.transportationOptionId,
+    carrier: (o.carrier && (o.carrier.name || o.carrier.alphaCode)) || "",
+    shippingMode: o.shippingMode || "",
+    shippingSolution: o.shippingSolution || "",
+    pickupStart: appt.startTime || "",
+    pickupEnd: appt.endTime || "",
+    amount: cost.amount === undefined ? null : Number(cost.amount),
+    currency: cost.code || "",
+    voidableUntil: quote.voidableUntil || "",
+    expiresAt: quote.expiration || "",
+    preconditions: o.preconditions || []
+  };
+}
+
+function amzCodedError_(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
+// Books one carrier option: Amazon charges its quote, and the shipment's carrier can't be
+// changed through the API afterwards
+function amzConfirmTransport_(token, planId, shipmentId, transportationOptionId) {
+  const res = fetchSigned_(token, {
+    method: "POST",
+    url: `${amzPlanUrl_(planId)}/transportationOptions/confirmation`,
+    payload: { transportationSelections: [{ shipmentId: shipmentId, transportationOptionId: transportationOptionId }] }
+  }, [202]);
+  amzWaitOperation_(token, res.operationId);
+}
+
+// "ATS - Amazon Transportation Services pickup booked for 20 Nov 2026 11:00, INR 1906.5"
+function amzPickupText_(s) {
+  const when = s.pickupStart ? Utilities.formatDate(new Date(s.pickupStart), "Asia/Kolkata", "dd MMM yyyy HH:mm") : "date not given";
+  const cost = s.amount === null ? "" : `, ${s.currency} ${s.amount}`;
+  return `${s.carrier || "ATS"} pickup booked for ${when}${cost}`;
+}
+
+function amzSaveShipmentIds_(ref, shipmentId, placementId, fbaId) {
+  // updatePoDatabase_ matches PO Number or EE Order Ref ID; for FBA orders the EE reference is the
+  // EE Order Ref ID, so this writes only this order's rows
+  updatePoDatabase_(ref, "", shipmentId || "", placementId || "", fbaId || "");
+  SpreadsheetApp.flush(); // the documents fetch right after reads the FBA Shipment ID back
+}
+
+// Stops a double click from running the flow twice at once
+function amzTakeRunMarker_(ref) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("The backend is busy. Try again in a moment.");
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = "AMZ_SHIP_RUN_" + ref;
+    if (cache.get(key)) return false;
+    cache.put(key, String(Date.now()), AMZ_SHIP_RUN_MARKER_TTL_S_);
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function amzDropRunMarker_(ref) {
+  try { CacheService.getScriptCache().remove("AMZ_SHIP_RUN_" + ref); } catch (e) { /* expires anyway */ }
+}
+
+/**
+ * Takes the order as far as Amazon allows without booking the carrier.
+ * Returns { stage: "chooseCarrier", options } (the ATS options, earliest pickup first) or
+ * { stage: "done" } when the carrier is booked.
+ * Saves Placement ID and Shipment ID on PO_Database; the FBA Shipment ID only when the carrier is
+ * already booked (stage done). After stage chooseCarrier the caller books ATS, then saves it.
+ * opts (all optional):
+ *   packing(planItems): the boxes to send instead of the order's EasyEcom box data (editor test)
+ *   saveIds: false keeps the IDs off PO_Database (editor test)
+ *   info: an object; info.fbaShipmentId is set as soon as Amazon gives the FBA Shipment ID
+ *   automatic: the timer's run. Before changing anything on Amazon it throws code WAIT while the
+ *     box data doesn't match the plan exactly (packing not finished, or a SKU not matched), and
+ *     code ELSEWHERE when the placement was confirmed outside the app (Seller Central), where a
+ *     person is finishing it.
+ */
+function amzPrepareShipment_(ss, ctx, steps, opts) {
+  opts = opts || {};
+  const ref = ctx.referenceCode;
+  const save = (shipmentId, placementId, fbaId) => {
+    if (opts.saveIds !== false) amzSaveShipmentIds_(ref, shipmentId, placementId, fbaId);
+  };
+  const token = amzToken_();
+  const planId = ctx.planId;
+
+  const plan = fetchSigned_(token, { method: "GET", url: amzPlanUrl_(planId) }, [200]);
+  if (String(plan.status || "").toUpperCase() !== "ACTIVE") {
+    throw new Error(`Inbound plan ${planId} is ${plan.status} on Amazon, not ACTIVE.`);
+  }
+
+  // A placement confirmed earlier (by this flow, or in Seller Central) is reused
+  let placements = amzListAll_(token, `${amzPlanUrl_(planId)}/placementOptions?pageSize=20`, "placementOptions");
+  let placement = placements.find(p => p.status === "ACCEPTED");
+  let placementId, shipmentId;
+  let justConfirmed = false;
+
+  if (placement) {
+    if (opts.automatic && placement.placementOptionId !== ctx.placementId) {
+      throw amzCodedError_("ELSEWHERE", `Its placement was confirmed outside the app (${placement.placementOptionId}), so a person is finishing it.`);
+    }
+    placementId = placement.placementOptionId;
+    shipmentId = (placement.shipmentIds || [])[0];
+    steps.push(`Placement already confirmed (${placementId}).`);
+  } else {
+    const planItems = amzPlanItems_(token, planId, ctx);
+    // Box data checked before anything changes on Amazon
+    const packing = opts.packing ? opts.packing(planItems) : amzPackingBoxes_(ss, ctx, planItems);
+    if (opts.automatic && !packing.provided) {
+      throw amzCodedError_("WAIT", `Box data doesn't match the Amazon plan yet: ${packing.contentNote}.`);
+    }
+    const notExpired = (p) => !p.expiration || new Date(p.expiration).getTime() > Date.now() + 10 * 60 * 1000;
+    placement = placements.find(p => p.status === "OFFERED" && (p.shipmentIds || []).length && notExpired(p) && p.placementOptionId === ctx.placementId);
+    if (!placement) {
+      const res = fetchSigned_(token, {
+        method: "POST",
+        url: `${amzPlanUrl_(planId)}/placementOptions`,
+        payload: { customPlacement: [{ warehouseId: ctx.storeCode, items: planItems }] }
+      }, [202]);
+      amzWaitOperation_(token, res.operationId);
+      placements = amzListAll_(token, `${amzPlanUrl_(planId)}/placementOptions?pageSize=20`, "placementOptions");
+      placement = placements.filter(p => p.status === "OFFERED" && (p.shipmentIds || []).length && notExpired(p)).pop();
+      if (!placement) throw new Error(`Amazon offered no placement to ${ctx.storeCode} for plan ${planId}.`);
+      steps.push(`Placement generated for ${ctx.storeCode}.`);
+    }
+    placementId = placement.placementOptionId;
+    if ((placement.shipmentIds || []).length !== 1) {
+      throw new Error(`Amazon split this plan into ${placement.shipmentIds.length} shipments; finish it in Seller Central.`);
+    }
+    shipmentId = placement.shipmentIds[0];
+    save(shipmentId, placementId, "");
+
+    // India order: transportation options and packing information before the placement is confirmed
+    amzGenerateTransportation_(token, planId, placementId, shipmentId);
+    steps.push("Transportation options generated.");
+
+    const packRes = fetchSigned_(token, {
+      method: "POST",
+      url: `${amzPlanUrl_(planId)}/packingInformation`,
+      payload: { packageGroupings: [{ shipmentId: shipmentId, boxes: packing.boxes }] }
+    }, [202]);
+    amzWaitOperation_(token, packRes.operationId);
+    steps.push(`Packing information sent: ${packing.boxes.length} boxes, ` +
+      (packing.provided ? "with box contents." : `box contents left to Amazon (${packing.contentNote}).`));
+
+    // Irreversible: creates the FBA Shipment ID
+    const confirmRes = fetchSigned_(token, {
+      method: "POST",
+      url: `${amzPlanUrl_(planId)}/placementOptions/${encodeURIComponent(placementId)}/confirmation`,
+      payload: {}
+    }, [202]);
+    amzWaitOperation_(token, confirmRes.operationId);
+    steps.push("Placement confirmed.");
+    justConfirmed = true;
+  }
+  if (!shipmentId) throw new Error(`No shipment on the confirmed placement of plan ${planId}.`);
+
+  const shipment = fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(planId)}/shipments/${encodeURIComponent(shipmentId)}` }, [200]);
+  const fbaId = String(shipment.shipmentConfirmationId || "").trim();
+  if (!fbaId) throw new Error(`Amazon has not given shipment ${shipmentId} an FBA Shipment ID yet; try again in a minute.`);
+  if (ctx.fbaId && ctx.fbaId !== fbaId) {
+    throw new Error(`The order is linked to ${ctx.fbaId} but this plan's shipment is ${fbaId}. Check which one is right in Seller Central.`);
+  }
+  if (opts.info) opts.info.fbaShipmentId = fbaId;
+  // The FBA Shipment ID goes on the order only once the carrier is booked (top of this file)
+  const booked = amzCarrierBooked_(shipment);
+  save(shipmentId, placementId, booked && !ctx.fbaId ? fbaId : "");
+  if (!ctx.fbaId) {
+    steps.push(`FBA Shipment ID ${fbaId} ` + (opts.saveIds === false ? "created." :
+      booked ? "linked." : "created; it goes on the order once the ATS pickup is booked."));
+  }
+
+  const base = { fbaShipmentId: fbaId, shipmentId: shipmentId, placementOptionId: placementId, amazonReferenceId: shipment.amazonReferenceId || "" };
+  if (booked) {
+    return Object.assign(base, { stage: "done", message: `${fbaId}: the carrier is already booked.` });
+  }
+
+  // Amazon's India guide: confirming the placement is what brings the partnered-carrier (ATS)
+  // quote. Carrier options generated at any other time never had ATS: before or after the packing
+  // information, and five times after the placement was confirmed (FBA15MY3396K, 2026-11-19), so
+  // they are never generated again here; the list is read a few times while the quote arrives.
+  // Seller Central can't finish a shipment the API started ("complete the step using your
+  // software"), so without ATS here the shipment can only be deleted and made again there.
+  let options = amzListTransportation_(token, planId, placementId, shipmentId);
+  for (let i = 0; justConfirmed && i < 3 && !options.some(amzIsPartnered_); i++) {
+    Utilities.sleep(10000);
+    options = amzListTransportation_(token, planId, placementId, shipmentId);
+  }
+  steps.push(`Carrier options: ${amzOptionsText_(options)}.`);
+  const partnered = options.filter(amzIsPartnered_).map(amzOptionSummary_)
+    .sort((a, b) => String(a.pickupStart).localeCompare(String(b.pickupStart)) || (a.amount || 0) - (b.amount || 0));
+  if (!partnered.length) {
+    throw new Error(`Amazon offered no ATS (partnered carrier) pickup for ${fbaId}, only: ${amzOptionsText_(options)}. ` +
+      "Seller Central can't finish a shipment the app started: delete it there (Delete shipment and charges) and send it again from Seller Central.");
+  }
+  return Object.assign(base, { stage: "chooseCarrier", options: partnered });
+}
+
+function amzShipmentPreconditions_(ss, ref) {
+  const ctx = amazonFbaOrderContext_(ss, ref);
+  if (!ctx) throw new Error(`Order ${ref} not found in PO_Database.`);
+  if (!ctx.isFba) throw new Error(`${ref} is not an Amazon FBA order (${ctx.channel}).`);
+  if (ctx.storeCode === "YEIO") throw new Error("YEIO orders don't go through FBA inbound.");
+  if (!ctx.planId) throw new Error(`${ref} has no Inbound Plan ID. Push it to Amazon first.`);
+  if (!ctx.storeCode) throw new Error(`${ref} has no Store Code (the FC to ship to).`);
+  return ctx;
+}
+
+/**
+ * doPost createAmazonShipment: { referenceCode, userName }
+ * Placement, packing information, FBA Shipment ID, then the ATS pickup options to choose from.
+ */
+function createAmazonShipment(data) {
+  const ref = String((data && data.referenceCode) || "").trim();
+  if (!ref) return { status: "error", message: "No reference code provided." };
+  const steps = [];
+  if (!amzTakeRunMarker_(ref)) {
+    return { status: "error", code: "RUNNING", message: `Amazon shipment for ${ref} is already being created. Wait a minute, then open it again.` };
+  }
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const ctx = amzShipmentPreconditions_(ss, ref);
+    const result = amzPrepareShipment_(ss, ctx, steps);
+    if (result.stage === "done") {
+      try { fetchAmazonFbaDocsForRef_(ss, ref, {}); } catch (e) { Logger.log(`createAmazonShipment ${ref}: documents not fetched: ${e.message}`); }
+    }
+    return Object.assign({ status: "success", referenceCode: ref, steps: steps,
+      message: result.message || `${result.fbaShipmentId} is ready. Choose the ATS pickup.` }, result);
+  } catch (e) {
+    Logger.log(`createAmazonShipment ${ref} failed after [${steps.join(" | ")}]: ${e.message}`);
+    return { status: "error", referenceCode: ref, steps: steps, message: e.message };
+  } finally {
+    amzDropRunMarker_(ref);
+  }
+}
+
+/**
+ * doPost confirmAmazonTransport: { referenceCode, transportationOptionId, userName }
+ * Books the chosen ATS pickup (Amazon charges the quote), then fetches the box labels and
+ * delivery challan.
+ */
+function confirmAmazonTransport(data) {
+  const ref = String((data && data.referenceCode) || "").trim();
+  const optionId = String((data && data.transportationOptionId) || "").trim();
+  const userName = String((data && data.userName) || "Unknown").trim();
+  if (!ref || !optionId) return { status: "error", message: "Reference code and carrier option are required." };
+  if (!amzTakeRunMarker_(ref)) {
+    return { status: "error", code: "RUNNING", message: `Amazon shipment for ${ref} is busy. Wait a minute and try again.` };
+  }
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const ctx = amzShipmentPreconditions_(ss, ref);
+    if (!ctx.shipmentId || !ctx.placementId) throw new Error(`Create the Amazon shipment for ${ref} first.`);
+    const token = amzToken_();
+    const shipmentUrl = `${amzPlanUrl_(ctx.planId)}/shipments/${encodeURIComponent(ctx.shipmentId)}`;
+    const before = fetchSigned_(token, { method: "GET", url: shipmentUrl }, [200]);
+    const fbaId = before.shipmentConfirmationId || ctx.fbaId;
+
+    const alreadyBooked = amzCarrierBooked_(before);
+    if (!alreadyBooked) {
+      const option = amzListTransportation_(token, ctx.planId, ctx.placementId, ctx.shipmentId)
+        .find(o => o.transportationOptionId === optionId);
+      if (!option) throw new Error("That pickup option is no longer offered. Open the shipment again to see current options.");
+      if (!amzIsPartnered_(option)) throw new Error("Only Amazon's partnered carrier (ATS) can be booked from the app.");
+      const s = amzOptionSummary_(option);
+      amzConfirmTransport_(token, ctx.planId, ctx.shipmentId, optionId);
+      try {
+        addOrderNote({ poNumber: ctx.poNumber, userName: "[System]", note: `Amazon shipment ${fbaId}: ${amzPickupText_(s)} by ${userName}.` });
+      } catch (e) { Logger.log(`confirmAmazonTransport ${ref}: note not added: ${e.message}`); }
+    }
+    // Booked: only now the FBA Shipment ID goes on the order (it becomes the invoice number)
+    if (fbaId && !ctx.fbaId) amzSaveShipmentIds_(ref, "", "", fbaId);
+
+    let docs = null;
+    try { docs = publicAmazonFbaDocs_(fetchAmazonFbaDocsForRef_(ss, ref, {})); }
+    catch (e) { docs = { status: "Error", message: e.message }; }
+    return {
+      status: "success",
+      referenceCode: ref,
+      fbaShipmentId: fbaId,
+      amazonDocs: docs,
+      message: alreadyBooked
+        ? `${fbaId}: the carrier was already booked.`
+        : `${fbaId}: ATS pickup booked.` + (docs && docs.status === "Done" ? " Box labels and delivery challan are ready to print." : " Box labels and challan will be fetched shortly.")
+    };
+  } catch (e) {
+    Logger.log(`confirmAmazonTransport ${ref} failed: ${e.message}`);
+    return { status: "error", referenceCode: ref, message: e.message };
+  } finally {
+    amzDropRunMarker_(ref);
+  }
+}
+
+// =====================================================================
+// 1b. AUTOMATIC SHIPMENTS (Settings → Order Automation, off by default)
+// =====================================================================
+/**
+ * Every 15 minutes (runPackingListAutoSync, 08:00-22:00 IST, as the trigger's owner), each
+ * Amazon FBA order pushed to Amazon (Inbound Plan ID) without an FBA Shipment ID whose box data
+ * in Master_Packing_Data holds exactly the order's units gets the steps of Create AMZ Shipment
+ * (all units placed at the Store Code FC, the EasyEcom boxes with their contents, placement
+ * confirmed), then the earliest ATS pickup is booked (Amazon charges its quote) and the box
+ * labels and delivery challan are fetched for Scan & Print. Each order gets a "[System]" remark.
+ * The FBA Shipment ID goes on PO_Database only after the booking, so the invoice waits for it.
+ * Orders whose box data doesn't match yet (packing not finished, a SKU not matched) wait;
+ * Settings shows why. Left to a person (remark + Settings) when
+ *   - the placement was confirmed outside the app (Seller Central);
+ *   - anything fails once the FBA Shipment ID exists (Create AMZ Shipment carries on from there);
+ *   - it failed AMZ_AUTO_MAX_FAILS_ times before that.
+ * Amazon accepts one carrier confirmation per shipment, so a booking can't be made twice.
+ */
+const AMZ_AUTO_CONFIG_KEY_ = "AMZ_AUTO_SHIP_CONFIG";   // { enabled, updatedBy, updatedAt }
+const AMZ_AUTO_STATE_KEY_ = "AMZ_AUTO_SHIP_STATE";     // last check, recent shipments and stops, for Settings
+const AMZ_AUTO_FAILS_KEY_ = "AMZ_AUTO_SHIP_FAILS";     // { EE ref: { count, message, stopped } }
+const AMZ_AUTO_STARTED_KEY_ = "AMZ_AUTO_SHIP_STARTED"; // { EE ref: ISO time }: a run began it and ended before booking
+const AMZ_AUTO_MAX_PER_RUN_ = 2;
+const AMZ_AUTO_MAX_FAILS_ = 3;
+const AMZ_AUTO_MAX_ORDER_AGE_DAYS_ = 14;
+const AMZ_AUTO_LIST_ORDER_AGE_DAYS_ = 30;              // older orders aren't listed at all
+const AMZ_AUTO_START_BY_MS_ = 210000;                  // one shipment takes about 1.5 of the trigger's 6 minutes
+const AMZ_AUTO_NOTE_USER_ = "Amazon auto-shipment";
+
+function amzAutoConfig_() {
+  const saved = autoShipReadJson_(AMZ_AUTO_CONFIG_KEY_, {}) || {};
+  return { enabled: saved.enabled === true, updatedBy: saved.updatedBy || "", updatedAt: saved.updatedAt || "" };
+}
+
+// The order's lines as plan items (what Push to AMZ sent), for checking box data without Amazon
+function amzLinesAsPlanItems_(lines) {
+  const byCode = {};
+  lines.forEach(l => {
+    if (!l.itemCode || !(l.qty > 0)) return;
+    const p = byCode[l.itemCode.toUpperCase()] = byCode[l.itemCode.toUpperCase()] || { msku: l.itemCode, quantity: 0, labelOwner: "SELLER", prepOwner: "NONE" };
+    p.quantity += l.qty;
+  });
+  return Object.keys(byCode).map(k => byCode[k]);
+}
+
+// Master_Packing_Data rows grouped by Reference Code (EE reference), read once
+function amzPackingRowsByRef_(ss) {
+  const data = ss.getSheetByName(SHEET_MASTER_DATA).getDataRange().getValues();
+  const headers = data.shift();
+  const refIndex = headers.indexOf("Reference Code");
+  const byRef = {};
+  if (refIndex === -1) return byRef;
+  data.forEach(row => {
+    const ref = String(row[refIndex]).trim();
+    if (ref) (byRef[ref] = byRef[ref] || []).push(Object.fromEntries(headers.map((key, i) => [key, row[i]])));
+  });
+  return byRef;
+}
+
+// Marks (on) or clears (off) an order a run has begun, so a run that ends midway is carried on
+function amzAutoStarted_(ref, on) {
+  const started = autoShipReadJson_(AMZ_AUTO_STARTED_KEY_, {}) || {};
+  if (on) started[ref] = new Date().toISOString();
+  else delete started[ref];
+  const cutoff = Date.now() - 3 * 86400000;
+  Object.keys(started).forEach(k => { if (new Date(started[k]).getTime() < cutoff) delete started[k]; });
+  autoShipWriteJson_(AMZ_AUTO_STARTED_KEY_, started);
+}
+
+/**
+ * Amazon FBA orders pushed to Amazon without an FBA Shipment ID (plus any a run began and didn't
+ * finish), with whether the shipment would be created now and, if not, why. Reads the sheets
+ * only, never Amazon. Returns [{ ref, poNumbers, storeCode, orderDate, qty, boxes, ready, reason,
+ * lastError, resume }], oldest order first.
+ */
+function amzAutoReview_(ss, fails) {
+  const values = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
+  const c = { ref: col("EE_reference_code"), channel: col("Channel Name"), eeDate: col("EE_order_date"), expiry: col("PO Expiry Date"), ee: col("EE_order_status"), status: col("Status") };
+  if (c.ref === -1 || c.channel === -1) throw new Error("PO_Database has no EE_reference_code or Channel Name column.");
+  const byRef = {};
+  values.slice(1).forEach(r => {
+    const ref = String(r[c.ref] || "").trim();
+    if (ref && isAmazonFbaChannel_(r[c.channel])) (byRef[ref] = byRef[ref] || []).push(r);
+  });
+
+  const started = autoShipReadJson_(AMZ_AUTO_STARTED_KEY_, {}) || {};
+  const todayIso = autoShipToday_();
+  const today = new Date(todayIso + "T00:00:00");
+  const text = (row, i) => i === -1 || row[i] === null || row[i] === undefined ? "" : String(row[i]).trim();
+  let packingByRef = null; // read only if an order gets that far
+  const list = [];
+
+  Object.keys(byRef).forEach(ref => {
+    const rows = byRef[ref];
+    const ctx = amzContextFromRows_(col, rows, ref);
+    if (!ctx.planId || ctx.storeCode === "YEIO") return;
+    // A run ended midway after Amazon made the placement (the FBA Shipment ID goes on the order
+    // only after booking, so the Placement ID is what shows a run got that far)
+    const resume = !!started[ref] && !!ctx.placementId;
+    if (ctx.fbaId && !resume) return;              // made here, with the button, or in Seller Central
+    if (!ctx.lines.length) return;
+    if (ctx.statuses.some(s => AMAZON_DOCS_DONE_STATUSES_.indexOf(s) !== -1)) return;
+    // Gone past packing, or cancelled, in EasyEcom
+    const live = rows.filter(r => !/^cancel/i.test(text(r, c.status)));
+    if (live.some(r => /^(shipped|delivered|returned|cancel)/i.test(text(r, c.ee)))) return;
+    const dateRow = rows.find(r => text(r, c.eeDate) !== "");
+    const orderDate = dateRow ? partnerIsoDate_(dateRow[c.eeDate]) : "";
+    const ageDays = orderDate ? Math.round((today - new Date(orderDate + "T00:00:00")) / 86400000) : null;
+    if (ageDays !== null && ageDays > AMZ_AUTO_LIST_ORDER_AGE_DAYS_) return;
+    const expiryRow = rows.find(r => text(r, c.expiry) !== "");
+    const expiry = expiryRow ? partnerIsoDate_(expiryRow[c.expiry]) : "";
+    const fail = fails[ref];
+
+    let reason = "", boxes = 0;
+    if (fail && fail.stopped) reason = `Left to you: ${fail.message}`;
+    else if (!resume) {
+      if (!orderDate) reason = "EasyEcom has no order date for it";
+      else if (ageDays > AMZ_AUTO_MAX_ORDER_AGE_DAYS_) reason = `EasyEcom order is ${ageDays} days old (over ${AMZ_AUTO_MAX_ORDER_AGE_DAYS_}): use Create AMZ Shipment`;
+      else if (expiry && expiry < todayIso) reason = `The PO expired on ${expiry}`;
+      else if (!ctx.storeCode) reason = "No Store Code (the FC to ship to)";
+      else {
+        packingByRef = packingByRef || amzPackingRowsByRef_(ss);
+        const packingRows = packingByRef[ref] || [];
+        if (!packingRows.length) reason = "Waiting for box data from EasyEcom";
+        else {
+          try {
+            const packing = amzPackingBoxes_(ss, ctx, amzLinesAsPlanItems_(ctx.lines), packingRows);
+            boxes = packing.boxes.length;
+            if (!packing.provided) reason = `Box data doesn't match the order: ${packing.contentNote}`;
+          } catch (e) {
+            reason = e.message;
+          }
+        }
+        if (!reason && fail && fail.count >= AMZ_AUTO_MAX_FAILS_) reason = `Failed ${fail.count} times (${fail.message}): use Create AMZ Shipment`;
+      }
+    }
+    list.push({
+      ref: ref,
+      poNumbers: ctx.poNumbers,
+      storeCode: ctx.storeCode,
+      orderDate: orderDate,
+      qty: ctx.lines.reduce((n, l) => n + (l.qty || 0), 0),
+      boxes: boxes,
+      ready: !reason,
+      reason: reason,
+      lastError: fail && !fail.stopped && fail.count < AMZ_AUTO_MAX_FAILS_ ? fail.message : "",
+      resume: resume
+    });
+  });
+  return list.sort((a, b) => (a.orderDate || "9999").localeCompare(b.orderDate || "9999"));
+}
+
+function amzAutoNote_(poNumbers, note) {
+  try {
+    if (poNumbers && poNumbers.length) addOrderNote({ poNumber: poNumbers[0], userName: AMZ_AUTO_NOTE_USER_, note: note });
+  } catch (e) {
+    Logger.log(`Amazon auto-shipment: no timeline note for PO ${poNumbers && poNumbers[0]}: ${e.message}`);
+  }
+}
+
+/**
+ * One order: shipment, earliest ATS pickup booked, documents. Returns { outcome, message, ... }:
+ *   booked:  the carrier is booked (now, or already); fbaShipmentId, pickup (null if already), docsStatus
+ *   waiting: box data doesn't match the Amazon plan yet; nothing changed on Amazon
+ *   stopped: left to a person; never tried again
+ *   failed:  nothing past the placement was made; a later run tries again
+ *   skipped: no longer due (someone linked an FBA ID, or the button is running on it)
+ */
+function amzAutoShipOne_(ss, order) {
+  const ref = order.ref;
+  if (!amzTakeRunMarker_(ref)) return { outcome: "skipped", message: "Create AMZ Shipment is running on it right now." };
+  const steps = [];
+  const info = {}; // info.fbaShipmentId: set once Amazon made it (it's on PO_Database only after booking)
+  try {
+    const ctx = amazonFbaOrderContext_(ss, ref); // read again: the review may be minutes old
+    if (!ctx || !ctx.planId) return { outcome: "skipped", message: "No longer pushed to Amazon." };
+    if (ctx.fbaId && !order.resume) return { outcome: "skipped", message: `FBA Shipment ID ${ctx.fbaId} was linked in the meantime.` };
+    amzAutoStarted_(ref, true);
+    const prep = amzPrepareShipment_(ss, ctx, steps, { automatic: true, info: info });
+    let pickup = null;
+    if (prep.stage === "chooseCarrier") {
+      pickup = prep.options[0]; // earliest pickup, then the cheaper quote
+      amzConfirmTransport_(amzToken_(), ctx.planId, prep.shipmentId, pickup.transportationOptionId);
+      // Booked: only now the FBA Shipment ID goes on the order (it becomes the invoice number)
+      if (!ctx.fbaId) amzSaveShipmentIds_(ref, "", "", prep.fbaShipmentId);
+    }
+    amzAutoStarted_(ref, false);
+    let docs = null;
+    try { docs = fetchAmazonFbaDocsForRef_(ss, ref, {}); }
+    catch (e) { Logger.log(`Amazon auto-shipment ${ref}: documents not fetched yet: ${e.message}`); }
+    return { outcome: "booked", fbaShipmentId: prep.fbaShipmentId, pickup: pickup, docsStatus: docs ? docs.status : "", storeCode: ctx.storeCode, steps: steps };
+  } catch (e) {
+    amzAutoStarted_(ref, false);
+    if (e.code === "WAIT") return { outcome: "waiting", message: e.message };
+    if (e.code === "ELSEWHERE") return { outcome: "stopped", message: e.message };
+    // Once Amazon made the FBA Shipment ID a person carries on: Create AMZ Shipment resumes there.
+    // It's on PO_Database only after booking, so this run's own record comes first.
+    let fbaNow = info.fbaShipmentId || "";
+    if (!fbaNow) {
+      try { const again = amazonFbaOrderContext_(ss, ref); fbaNow = again ? again.fbaId : ""; } catch (x) { /* keep "" */ }
+    }
+    if (fbaNow) return { outcome: "stopped", message: `${fbaNow} was created, then: ${e.message}` };
+    return { outcome: "failed", message: e.message };
+  } finally {
+    amzDropRunMarker_(ref);
+  }
+}
+
+/**
+ * Called from runPackingListAutoSync. At most AMZ_AUTO_MAX_PER_RUN_ orders, none started after
+ * AMZ_AUTO_START_BY_MS_; records the run for Settings. Returns { message }.
+ */
+function runAmazonAutoShip_(startedAt) {
+  const t0 = startedAt || Date.now();
+  if (!amzAutoConfig_().enabled) return { message: "Amazon auto-shipment is off." };
+  if (Date.now() - t0 > AMZ_AUTO_START_BY_MS_) return { message: "Amazon auto-shipment skipped: no time left in this run." };
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const fails = autoShipReadJson_(AMZ_AUTO_FAILS_KEY_, {}) || {};
+  const state = autoShipReadJson_(AMZ_AUTO_STATE_KEY_, {}) || {};
+  const review = amzAutoReview_(ss, fails);
+  // Unfinished ones first, then those that never failed
+  const ready = review.filter(o => o.ready)
+    .sort((a, b) => (Number(b.resume) - Number(a.resume)) || (((fails[a.ref] || {}).count || 0) - ((fails[b.ref] || {}).count || 0)));
+  const recent = Array.isArray(state.recent) ? state.recent : [];
+  const stoppedLog = Array.isArray(state.stopped) ? state.stopped : [];
+  const booked = [], failed = [], stopped = [];
+  let waiting = review.length - ready.length, tried = 0;
+
+  for (const order of ready) {
+    if (tried >= AMZ_AUTO_MAX_PER_RUN_ || Date.now() - t0 > AMZ_AUTO_START_BY_MS_) break;
+    tried++;
+    const res = amzAutoShipOne_(ss, order);
+    const now = new Date().toISOString();
+    if (res.outcome === "booked") {
+      delete fails[order.ref];
+      booked.push(order.ref);
+      const p = res.pickup;
+      recent.unshift({ ref: order.ref, fbaShipmentId: res.fbaShipmentId, storeCode: res.storeCode, boxes: order.boxes,
+        pickupStart: p ? p.pickupStart : "", amount: p ? p.amount : null, currency: p ? p.currency : "", docs: res.docsStatus, at: now });
+      amzAutoNote_(order.poNumbers, `[System] Amazon shipment ${res.fbaShipmentId} created automatically` +
+        (order.boxes ? `: ${order.boxes} boxes to ${res.storeCode}` : "") + ", " +
+        (p ? amzPickupText_(p) : "the carrier was already booked") + ". " +
+        (res.docsStatus === "Done" ? "Box labels and delivery challan are ready in Scan & Print." : "Box labels and delivery challan follow within 15 minutes."));
+    } else if (res.outcome === "stopped") {
+      const message = String(res.message || "").slice(0, 400);
+      fails[order.ref] = { count: (fails[order.ref] || {}).count || 0, message: message, stopped: true };
+      stopped.push({ ref: order.ref, message: message });
+      stoppedLog.unshift({ ref: order.ref, message: message, at: now });
+      amzAutoNote_(order.poNumbers, `[System] Automatic Amazon shipment stopped: ${message.replace(/[\s.]*$/, ".")}` +
+        (/seller central/i.test(message) ? "" : " Finish it with Create AMZ Shipment."));
+    } else if (res.outcome === "failed") {
+      const message = String(res.message || "No response").slice(0, 200);
+      const count = ((fails[order.ref] || {}).count || 0) + 1;
+      fails[order.ref] = { count: count, message: message };
+      failed.push({ ref: order.ref, message: message, count: count });
+      if (count >= AMZ_AUTO_MAX_FAILS_) {
+        amzAutoNote_(order.poNumbers, `[System] Automatic Amazon shipment gave up after ${count} tries (${message}). Use Create AMZ Shipment.`);
+      }
+    } else if (res.outcome === "waiting") {
+      waiting++;
+    }
+  }
+
+  // Failure counts only for orders still listed (stopped ones stay, so they stay left to a person)
+  const listed = review.reduce((o, x) => (o[x.ref] = true, o), {});
+  autoShipWriteJson_(AMZ_AUTO_FAILS_KEY_, Object.keys(fails)
+    .filter(k => listed[k] && booked.indexOf(k) === -1)
+    .reduce((o, k) => (o[k] = fails[k], o), {}));
+  autoShipWriteJson_(AMZ_AUTO_STATE_KEY_, {
+    lastCheckAt: new Date().toISOString(),
+    lastCheck: { ready: ready.length, booked: booked.length, failed: failed, stopped: stopped, waiting: waiting },
+    recent: recent.slice(0, 15),
+    stopped: stoppedLog.slice(0, 10)
+  });
+  return {
+    message: `Amazon auto-shipment: ${booked.length} booked${booked.length ? ` (${booked.join(", ")})` : ""}, ${stopped.length} stopped, ` +
+      `${failed.length} failed, ${ready.length - tried} left for the next run, ${waiting} waiting.`
+  };
+}
+
+// --- Settings (doPost actions) ---
+
+function getAmazonAutoShipSettings() {
+  return {
+    status: "success",
+    config: amzAutoConfig_(),
+    rules: { maxPerRun: AMZ_AUTO_MAX_PER_RUN_, maxOrderAgeDays: AMZ_AUTO_MAX_ORDER_AGE_DAYS_, maxFails: AMZ_AUTO_MAX_FAILS_ },
+    state: autoShipReadJson_(AMZ_AUTO_STATE_KEY_, {}) || {}
+  };
+}
+
+// data: { enabled, userName }
+function saveAmazonAutoShipSettings(data) {
+  const enabled = !!data && data.enabled === true;
+  autoShipWriteJson_(AMZ_AUTO_CONFIG_KEY_, { enabled: enabled, updatedBy: String((data && data.userName) || "").trim(), updatedAt: new Date().toISOString() });
+  return {
+    status: "success",
+    message: enabled
+      ? "Amazon auto-shipment is on. Packed Amazon FBA orders get their shipment and the earliest ATS pickup every 15 minutes, 8 am to 10 pm."
+      : "Amazon auto-shipment is off.",
+    config: amzAutoConfig_()
+  };
+}
+
+// The orders and whether each would get its shipment now. Reads the sheets only, never Amazon.
+function previewAmazonAutoShip() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  return { status: "success", orders: amzAutoReview_(ss, autoShipReadJson_(AMZ_AUTO_FAILS_KEY_, {}) || {}) };
+}
+
+// =====================================================================
+// 2. DOCUMENTS (box labels + delivery challan)
+// =====================================================================
+
+function getAmazonFbaDocsSheet_(ss, create) {
+  let sheet = ss.getSheetByName(SHEET_AMAZON_FBA_DOCS_);
+  if (!sheet && create) {
+    sheet = ss.insertSheet(SHEET_AMAZON_FBA_DOCS_);
+    sheet.getRange(1, 1, 1, AMAZON_FBA_DOCS_HEADERS_.length).setValues([AMAZON_FBA_DOCS_HEADERS_]).setFontWeight("bold");
+    sheet.getRange(1, 1, sheet.getMaxRows(), 4).setNumberFormat("@");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function amazonFbaDocsRecord_(row) {
+  const v = (name) => row[AMAZON_FBA_DOCS_HEADERS_.indexOf(name)];
+  const s = (name) => String(v(name) === null || v(name) === undefined ? "" : v(name)).trim();
+  const at = v("Updated At");
+  return {
+    referenceCode: s("Reference Code"),
+    fbaShipmentId: s("FBA Shipment ID"),
+    inboundPlanId: s("Inbound Plan ID"),
+    shipmentId: s("Shipment ID"),
+    boxes: Number(v("Boxes")) || 0,
+    boxLabelsUrl: s("Box Labels URL"),
+    challanUrl: s("Delivery Challan URL"),
+    status: s("Status"),
+    message: s("Message"),
+    attempts: Number(v("Attempts")) || 0,
+    updatedAt: at instanceof Date ? Utilities.formatDate(at, "Asia/Kolkata", "dd MMM yyyy, HH:mm") : s("Updated At")
+  };
+}
+
+// Every row of Amazon_FBA_Docs by EE reference: { ref: { rowNumber, record } }
+function readAllAmazonFbaDocs_(ss) {
+  const sheet = getAmazonFbaDocsSheet_(ss, false);
+  const out = {};
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, AMAZON_FBA_DOCS_HEADERS_.length).getValues().forEach((row, i) => {
+    const rec = amazonFbaDocsRecord_(row);
+    if (rec.referenceCode) out[rec.referenceCode] = { rowNumber: i + 2, record: rec };
+  });
+  return out;
+}
+
+function readAmazonFbaDocs_(ss, ref) {
+  return readAllAmazonFbaDocs_(ss)[ref] || null;
+}
+
+function writeAmazonFbaDocs_(ss, rec) {
+  const sheet = getAmazonFbaDocsSheet_(ss, true);
+  const existing = readAmazonFbaDocs_(ss, rec.referenceCode);
+  const row = [
+    "'" + rec.referenceCode, rec.fbaShipmentId || "", rec.inboundPlanId || "", rec.shipmentId || "", rec.boxes || "",
+    rec.boxLabelsUrl || "", rec.challanUrl || "", rec.status || "", String(rec.message || "").slice(0, 1000),
+    rec.attempts || 0, new Date()
+  ];
+  if (existing) sheet.getRange(existing.rowNumber, 1, 1, row.length).setValues([row]);
+  else sheet.appendRow(row);
+  SpreadsheetApp.flush();
+}
+
+// What the app is told about an order's Amazon documents
+function publicAmazonFbaDocs_(rec) {
+  if (!rec) return null;
+  return {
+    status: rec.status, message: rec.message, fbaShipmentId: rec.fbaShipmentId, boxes: rec.boxes,
+    hasBoxLabels: !!rec.boxLabelsUrl, hasChallan: !!rec.challanUrl,
+    boxLabelsUrl: rec.boxLabelsUrl, challanUrl: rec.challanUrl, updatedAt: rec.updatedAt
+  };
+}
+
+// Carrier booked: the API's selected option, or tracking details (Seller Central bookings may
+// only show the latter). Before that, Amazon's labels have no ATS label and there's no challan.
+function amzCarrierBooked_(shipment) {
+  if (!shipment) return false;
+  if (shipment.selectedTransportationOptionId) return true;
+  const t = shipment.trackingDetails || {};
+  const spd = (t.spdTrackingDetail && t.spdTrackingDetail.spdTrackingItems) || [];
+  return spd.some(i => i && i.trackingId) || !!(t.ltlTrackingDetail && (t.ltlTrackingDetail.billOfLadingNumber || (t.ltlTrackingDetail.freightBillNumber || []).length));
+}
+
+// The shipment on the plan whose FBA Shipment ID matches (v2024-03-20 getShipment)
+function amzFindShipment_(token, planId, fbaId, knownShipmentId) {
+  if (!planId) throw new Error("the order has no Inbound Plan ID");
+  const get = (id) => fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(planId)}/shipments/${encodeURIComponent(id)}` }, [200]);
+  const matches = (sh) => !fbaId || String(sh.shipmentConfirmationId || "").toUpperCase() === fbaId.toUpperCase();
+  if (knownShipmentId) {
+    const sh = get(knownShipmentId);
+    if (matches(sh)) return sh;
+  }
+  const plan = fetchSigned_(token, { method: "GET", url: amzPlanUrl_(planId) }, [200]);
+  for (const s of (plan.shipments || [])) {
+    if (s.shipmentId === knownShipmentId) continue;
+    const sh = get(s.shipmentId);
+    if (matches(sh)) return sh;
+  }
+  throw new Error(`shipment ${fbaId} is not on inbound plan ${planId}`);
+}
+
+// The shipment's carton IDs, as printed under each box label: <FBA ID>U000001, U000002, ...
+// (listShipmentBoxes is "not supported for the Indian marketplace", and getLabels needs them).
+function amzCartonIds_(fbaId, boxCount) {
+  const ids = [];
+  for (let n = 1; n <= boxCount; n++) ids.push(`${fbaId}U${String(n).padStart(6, "0")}`);
+  return ids;
+}
+
+// Boxes of the order: distinct EasyEcom Box IDs in Master_Packing_Data, else PO_Database "Box Data"
+function amzBoxCount_(ss, ctx) {
+  try {
+    const n = (loadPackingBoxIndex_(ss).byRef[ctx.referenceCode] || []).length; // box scan.js
+    if (n) return n;
+  } catch (e) {
+    Logger.log(`amzBoxCount_ ${ctx.referenceCode}: packing data not read: ${e.message}`);
+  }
+  return ctx.boxData || 0;
+}
+
+// A PDF from an Amazon download link (labels can come zipped)
+function amzDownloadPdf_(url, what) {
+  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+  if (res.getResponseCode() !== 200) throw new Error(`${what} download failed (${res.getResponseCode()})`);
+  let bytes = res.getContent();
+  if ((bytes[0] & 0xff) === 0x50 && (bytes[1] & 0xff) === 0x4b) { // "PK": a zip
+    const pdf = Utilities.unzip(Utilities.newBlob(bytes, "application/zip")).find(b => /\.pdf$/i.test(b.getName()) || sniffPrintMime_(b.getBytes()) === "application/pdf");
+    if (!pdf) throw new Error(`${what}: the zip from Amazon has no PDF`);
+    bytes = pdf.getBytes();
+  }
+  const mime = sniffPrintMime_(bytes, "");
+  if (mime !== "application/pdf") throw new Error(`${what} from Amazon is not a PDF (${mime || "unknown"})`);
+  return Utilities.newBlob(bytes, "application/pdf");
+}
+
+// v0 getLabels: one PDF of every box's labels (PackageLabelsToPrint = the carton IDs)
+function amzBoxLabelsPdf_(token, fbaId, boxCount, pageType) {
+  if (!(boxCount > 0)) throw new Error("box count unknown (no box data for the order)");
+  const q = [
+    `PageType=${encodeURIComponent(pageType || AMAZON_LABEL_PAGE_TYPE_)}`, "LabelType=UNIQUE",
+    `PackageLabelsToPrint=${encodeURIComponent(amzCartonIds_(fbaId, boxCount).join(","))}`
+  ];
+  const res = fetchSigned_(token, { method: "GET", url: `${AMAZON.endpoint}/fba/inbound/v0/shipments/${encodeURIComponent(fbaId)}/labels?${q.join("&")}` }, [200]);
+  const url = res.payload && res.payload.DownloadURL;
+  if (!url) throw new Error(`Amazon returned no label link (${JSON.stringify(res).slice(0, 200)})`);
+  return amzDownloadPdf_(url, "Box labels");
+}
+
+function amzDeliveryChallanPdf_(token, planId, shipmentId) {
+  const res = fetchSigned_(token, {
+    method: "GET",
+    url: `${amzPlanUrl_(planId)}/shipments/${encodeURIComponent(shipmentId)}/deliveryChallanDocument`
+  }, [200]);
+  const doc = res.documentDownload || {};
+  if (!doc.uri) throw new Error(`Amazon returned no challan link (${JSON.stringify(res).slice(0, 200)})`);
+  return amzDownloadPdf_(doc.uri, "Delivery challan");
+}
+
+function saveAmazonFbaDoc_(blob, fileName) {
+  const parent = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  const found = parent.getFoldersByName(AMAZON_FBA_DOCS_FOLDER_NAME_);
+  const folder = found.hasNext() ? found.next() : parent.createFolder(AMAZON_FBA_DOCS_FOLDER_NAME_);
+  const file = folder.createFile(blob.setName(fileName));
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    Logger.log(`saveAmazonFbaDoc_: could not make ${fileName} link-shareable: ${e.message}`);
+  }
+  return file.getUrl();
+}
+
+/**
+ * Downloads the order's box labels and delivery challan from Amazon (whichever is still missing,
+ * or both when opts.force) and records them on Amazon_FBA_Docs. Returns the record.
+ * Labels wait until the carrier is booked: before that Amazon's labels have no ATS label.
+ */
+function fetchAmazonFbaDocsForRef_(ss, ref, opts) {
+  const ctx = amazonFbaOrderContext_(ss, ref);
+  if (!ctx) throw new Error(`Order ${ref} not found in PO_Database.`);
+  if (!ctx.isFba) throw new Error(`${ref} is not an Amazon FBA order.`);
+  if (!ctx.fbaId) throw new Error(`${ref} has no FBA Shipment ID yet.`);
+  const force = !!(opts && opts.force);
+
+  const prev = readAmazonFbaDocs_(ss, ref);
+  const rec = prev && prev.record.fbaShipmentId === ctx.fbaId
+    ? prev.record
+    : { referenceCode: ref, fbaShipmentId: ctx.fbaId, attempts: 0 }; // new or relinked FBA ID: start over
+  rec.inboundPlanId = ctx.planId || rec.inboundPlanId || "";
+  rec.attempts = (rec.attempts || 0) + 1;
+  const problems = [];
+
+  try {
+    const token = amzToken_();
+    let shipment = null;
+    try {
+      shipment = amzFindShipment_(token, ctx.planId, ctx.fbaId, ctx.shipmentId || rec.shipmentId);
+      rec.shipmentId = shipment.shipmentId;
+    } catch (e) {
+      problems.push(`Shipment: ${e.message}`);
+    }
+    const carrierBooked = amzCarrierBooked_(shipment);
+
+    rec.boxes = amzBoxCount_(ss, ctx) || rec.boxes || 0;
+
+    if (force || !rec.boxLabelsUrl) {
+      if (!carrierBooked) {
+        problems.push("Box labels: the ATS pickup is not booked on Amazon yet");
+      } else {
+        try {
+          const blob = amzBoxLabelsPdf_(token, ctx.fbaId, rec.boxes);
+          rec.boxLabelsUrl = saveAmazonFbaDoc_(blob, `${ctx.fbaId} box labels (${ref}).pdf`);
+        } catch (e) {
+          problems.push(`Box labels: ${e.message}`);
+        }
+      }
+    }
+    if (force || !rec.challanUrl) {
+      if (!shipment || !carrierBooked) {
+        if (shipment) problems.push("Delivery challan: the ATS pickup is not booked on Amazon yet");
+      } else {
+        try {
+          const blob = amzDeliveryChallanPdf_(token, ctx.planId, shipment.shipmentId);
+          rec.challanUrl = saveAmazonFbaDoc_(blob, `${ctx.fbaId} delivery challan (${ref}).pdf`);
+        } catch (e) {
+          problems.push(`Delivery challan: ${e.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    problems.push(e.message);
+  }
+
+  rec.status = rec.boxLabelsUrl && rec.challanUrl ? "Done" : rec.boxLabelsUrl ? "Labels only" : rec.challanUrl ? "Challan only" : "Waiting";
+  rec.message = problems.join(" | ");
+  writeAmazonFbaDocs_(ss, rec);
+  return rec;
+}
+
+/** doPost fetchAmazonFbaDocs: { referenceCode, force } (the print window's "Fetch again") */
+function fetchAmazonFbaDocs(data) {
+  const ref = String((data && data.referenceCode) || "").trim();
+  if (!ref) return { status: "error", message: "No reference code provided." };
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const rec = fetchAmazonFbaDocsForRef_(ss, ref, { force: data.force === true });
+    const docs = publicAmazonFbaDocs_(rec);
+    return {
+      status: "success",
+      amazonDocs: docs,
+      message: rec.status === "Done" ? `Box labels and delivery challan of ${rec.fbaShipmentId} are saved.` : `${rec.status}: ${rec.message || "not available yet"}`
+    };
+  } catch (e) {
+    return { status: "error", message: e.message };
+  }
+}
+
+/**
+ * Called from runPackingListAutoSync (the 15-minute timer). Open Amazon FBA orders with an FBA
+ * Shipment ID and documents still missing, up to AMAZON_DOCS_MAX_PER_RUN_ per run.
+ */
+function runAmazonFbaDocsAutoFetch_(startedAt) {
+  const t0 = startedAt || Date.now();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const values = ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues();
+  const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
+  const c = { ref: col("EE_reference_code"), channel: col("Channel Name"), fba: col("FBA Shipment IDs"), status: col("Status"), ee: col("EE_order_status") };
+  if (c.ref === -1 || c.channel === -1 || c.fba === -1) return { message: "Amazon FBA documents: PO_Database columns missing." };
+
+  const byRef = {};
+  values.slice(1).forEach(r => {
+    const ref = String(r[c.ref] || "").trim();
+    if (!ref || !isAmazonFbaChannel_(r[c.channel])) return;
+    (byRef[ref] = byRef[ref] || []).push(r);
+  });
+  const docs = readAllAmazonFbaDocs_(ss);
+  const due = Object.keys(byRef).filter(ref => {
+    const rows = byRef[ref];
+    const fba = (rows.map(r => String(r[c.fba] || "").toUpperCase().match(/FBA[0-9A-Z]{6,}/)).find(Boolean) || [""])[0];
+    if (!fba) return false;
+    const live = rows.filter(r => c.status === -1 || !/^cancel/i.test(String(r[c.status]).trim()));
+    if (!live.length) return false;
+    if (c.status !== -1 && live.some(r => AMAZON_DOCS_DONE_STATUSES_.indexOf(String(r[c.status]).trim().toLowerCase()) !== -1)) return false;
+    if (c.ee !== -1 && rows.some(r => /^cancel/i.test(String(r[c.ee]).trim()))) return false;
+    const d = docs[ref] && docs[ref].record;
+    if (!d || d.fbaShipmentId !== fba) return true;
+    return d.status !== "Done" && d.attempts < AMAZON_DOCS_MAX_ATTEMPTS_;
+  });
+
+  let tried = 0, complete = 0;
+  for (const ref of due) {
+    if (tried >= AMAZON_DOCS_MAX_PER_RUN_ || Date.now() - t0 > AMAZON_DOCS_RUN_UNTIL_MS_) break;
+    tried++;
+    try {
+      if (fetchAmazonFbaDocsForRef_(ss, ref, {}).status === "Done") complete++;
+    } catch (e) {
+      Logger.log(`Amazon FBA documents for ${ref} failed: ${e.message}`);
+    }
+  }
+  return { message: `Amazon FBA documents: ${due.length} due, ${tried} tried, ${complete} complete.` };
+}
+
+// =====================================================================
+// 3. EDITOR-ONLY CHECKS (run from the Apps Script editor; nothing in the app changes)
+// =====================================================================
+
+function amzDiagFolder_(name) {
+  const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd HHmm");
+  return DriveApp.createFolder(`${name} ${stamp}`);
+}
+
+function amzDiagSave_(folder, report) {
+  folder.createFile("report.json", JSON.stringify(report, null, 2), "application/json");
+  Logger.log(`Report saved: ${folder.getUrl()}`);
+  Logger.log(JSON.stringify(report, null, 1).slice(0, 8000));
+}
+
+/**
+ * Read-only. For shipments made in Seller Central: the shipment as the API sees it, its boxes,
+ * carrier options, box labels in three page types and the delivery challan. Saves everything
+ * to a new "Amazon API test" folder in the runner's My Drive. Writes nothing else.
+ */
+function amzDiagDocs() {
+  const refs = ["AZ20261113-1", "AZ20261117-1"];
+  const folder = amzDiagFolder_("Amazon API test (documents)");
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const token = amzToken_();
+  const report = { ranAt: new Date().toISOString(), orders: [] };
+  // Does listInboundPlanItems answer for an older live plan (AZ20261117-16, pushed days ago)?
+  try {
+    const c16 = amazonFbaOrderContext_(ss, "AZ20261117-16");
+    const raw = c16 && c16.planId ? fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(c16.planId)}/items?pageSize=1000` }, [200]) : null;
+    report.planItemsCheck = { ref: "AZ20261117-16", planId: c16 && c16.planId, itemCount: raw && raw.items ? raw.items.length : null, keys: raw ? Object.keys(raw) : null, first: raw && raw.items ? raw.items[0] : null };
+  } catch (e) {
+    report.planItemsCheck = { error: e.message };
+  }
+  refs.forEach(ref => {
+    const out = { ref: ref, steps: [] };
+    report.orders.push(out);
+    const step = (name, fn) => {
+      try { const v = fn(); out.steps.push({ step: name, ok: true, result: v }); return v; }
+      catch (e) { out.steps.push({ step: name, ok: false, error: e.message }); return null; }
+    };
+    const ctx = step("context", () => amazonFbaOrderContext_(ss, ref));
+    if (!ctx) return;
+    const shipment = step("findShipment", () => amzFindShipment_(token, ctx.planId, ctx.fbaId, ctx.shipmentId));
+    if (shipment) {
+      step("carrierBooked", () => amzCarrierBooked_(shipment));
+      step("placementOptions", () => amzListAll_(token, `${amzPlanUrl_(ctx.planId)}/placementOptions?pageSize=20`, "placementOptions"));
+      const boxCount = step("boxCount", () => amzBoxCount_(ss, ctx)) || 0;
+      step("transportationOptions", () => amzListTransportation_(token, ctx.planId, "", shipment.shipmentId).map(o => Object.assign(amzOptionSummary_(o), { raw: o })));
+      ["PackageLabel_A4_2", "PackageLabel_Thermal", "PackageLabel_Plain_Paper"].forEach(pt => {
+        step(`labels ${pt}`, () => {
+          const blob = amzBoxLabelsPdf_(token, ctx.fbaId, boxCount, pt);
+          const f = folder.createFile(blob.setName(`${ctx.fbaId} ${pt}.pdf`));
+          return { bytes: blob.getBytes().length, file: f.getUrl() };
+        });
+      });
+      step("deliveryChallan", () => {
+        const blob = amzDeliveryChallanPdf_(token, ctx.planId, shipment.shipmentId);
+        const f = folder.createFile(blob.setName(`${ctx.fbaId} delivery challan.pdf`));
+        return { bytes: blob.getBytes().length, file: f.getUrl() };
+      });
+    }
+  });
+  amzDiagSave_(folder, report);
+  return report;
+}
+
+/**
+ * Creates a throwaway 1-unit inbound plan ("API-TEST ... cancel me"), runs every step that can
+ * still be undone (placement to the FC, transportation options, packing information, carrier
+ * options before and after the packing information), then cancels the plan. Never confirms a
+ * placement or a carrier, so nothing is booked or charged. Shows which step of the shipment flow
+ * Amazon rejects, with its message.
+ */
+function amzDiagShipmentDryRun() {
+  const sampleRef = "AZ20261113-1";
+  const folder = amzDiagFolder_("Amazon API test (shipment dry run)");
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const token = amzToken_();
+  const report = { ranAt: new Date().toISOString(), steps: [] };
+  const step = (name, fn) => {
+    const t = Date.now();
+    try { const v = fn(); report.steps.push({ step: name, ok: true, ms: Date.now() - t, result: v }); return v; }
+    catch (e) { report.steps.push({ step: name, ok: false, ms: Date.now() - t, error: e.message }); throw e; }
+  };
+  let planId = "";
+  try {
+    const ctx = step("sample order", () => amazonFbaOrderContext_(ss, sampleRef));
+    const msku = ctx.lines[0].itemCode;
+    const name = `API-TEST ${Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyyMMdd-HHmm")} cancel me`;
+    const created = step("createInboundPlan", () => createInboundPlan_(token, AMAZON.endpoint, name, [{ articleCode: msku, qty: 1 }], null));
+    planId = created.inboundPlanId;
+    step("createInboundPlan operation", () => amzWaitOperation_(token, created.operationId));
+    const items = step("plan items", () => amzPlanItems_(token, planId, { lines: [{ itemCode: msku, qty: 1 }] }));
+    const gen = step("generatePlacementOptions", () => fetchSigned_(token, {
+      method: "POST", url: `${amzPlanUrl_(planId)}/placementOptions`,
+      payload: { customPlacement: [{ warehouseId: ctx.storeCode, items: items }] }
+    }, [202]));
+    step("generatePlacementOptions operation", () => amzWaitOperation_(token, gen.operationId));
+    const placements = step("listPlacementOptions", () => amzListAll_(token, `${amzPlanUrl_(planId)}/placementOptions?pageSize=20`, "placementOptions"));
+    const placement = placements.find(p => p.status === "OFFERED");
+    const shipmentId = placement.shipmentIds[0];
+    step("generateTransportationOptions", () => amzGenerateTransportation_(token, planId, placement.placementOptionId, shipmentId));
+    step("listTransportationOptions", () => amzListTransportation_(token, planId, placement.placementOptionId, shipmentId).map(amzOptionSummary_));
+    const pack = step("setPackingInformation", () => fetchSigned_(token, {
+      method: "POST", url: `${amzPlanUrl_(planId)}/packingInformation`,
+      payload: { packageGroupings: [{ shipmentId: shipmentId, boxes: [{
+        quantity: 1, contentInformationSource: "BOX_CONTENT_PROVIDED",
+        dimensions: { unitOfMeasurement: "CM", length: 30, width: 20, height: 15 },
+        weight: { unit: "KG", value: 2 },
+        items: [{ msku: items[0].msku, quantity: 1, labelOwner: items[0].labelOwner, prepOwner: items[0].prepOwner }]
+      }] }] }
+    }, [202]));
+    step("setPackingInformation operation", () => amzWaitOperation_(token, pack.operationId));
+    try {
+      const manual = step("setPackingInformation MANUAL_PROCESS", () => fetchSigned_(token, {
+        method: "POST", url: `${amzPlanUrl_(planId)}/packingInformation`,
+        payload: { packageGroupings: [{ shipmentId: shipmentId, boxes: [{
+          quantity: 1, contentInformationSource: "MANUAL_PROCESS",
+          dimensions: { unitOfMeasurement: "CM", length: 30, width: 20, height: 15 },
+          weight: { unit: "KG", value: 2 }
+        }] }] }
+      }, [202]));
+      step("setPackingInformation MANUAL_PROCESS operation", () => amzWaitOperation_(token, manual.operationId));
+    } catch (e) { /* recorded in the report; the BOX_CONTENT_PROVIDED result above is what matters */ }
+    step("getShipment (before confirmation)", () => fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(planId)}/shipments/${shipmentId}` }, [200]));
+    // Extra checks; a failure here is recorded and the plan is still cancelled
+    try {
+      step("plan items as Amazon lists them now", () => {
+        const raw = amzListAll_(token, `${amzPlanUrl_(planId)}/items?pageSize=1000`, "items");
+        return raw.map(i => ({ msku: i.msku, quantity: i.quantity, labelOwner: i.labelOwner, prepOwnerSent: amzItemPrepOwner_(i), prepInstructions: i.prepInstructions }));
+      });
+    } catch (e) { /* recorded */ }
+    try {
+      step("generateTransportationOptions (after packing information)", () => amzGenerateTransportation_(token, planId, placement.placementOptionId, shipmentId));
+      step("listTransportationOptions (after packing information)", () => amzListTransportation_(token, planId, placement.placementOptionId, shipmentId).map(amzOptionSummary_));
+    } catch (e) { /* recorded */ }
+  } catch (e) {
+    Logger.log(`Dry run stopped: ${e.message}`);
+  } finally {
+    if (planId) {
+      try {
+        const res = fetchSigned_(token, { method: "PUT", url: `${amzPlanUrl_(planId)}/cancellation` }, [202]);
+        amzWaitOperation_(token, res.operationId);
+        report.steps.push({ step: "cancelInboundPlan", ok: true, planId: planId });
+      } catch (e) {
+        report.steps.push({ step: "cancelInboundPlan", ok: false, planId: planId, error: e.message + " (void it in Seller Central)" });
+      }
+    }
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/**
+ * Live test on a real plan (2026-11-19, the user's request): AZ20261119-1's inbound plan with the
+ * user's two dummy boxes, all units to the order's FC (ISK3). Step 1 confirms the placement and
+ * lists the ATS pickups; step 2 books the earliest one and downloads the documents. The user
+ * cancels the shipment by hand afterwards. Neither step writes to PO_Database or Amazon_FBA_Docs;
+ * reports and PDFs go to a new "Amazon API test" folder in the runner's My Drive.
+ */
+const AMZ_TEST_ORDER_ = { poNumber: "AZ20261119-1", planId: "wffcdda264-3596-4006-9406-f66972bc719e" };
+// The user's dummy boxes. They gave no split for the plan's 30 units: 20 + 10, by weight.
+const AMZ_TEST_BOXES_ = [
+  { length: 38, width: 30, height: 26, kg: 10, units: 20 },
+  { length: 30, width: 26, height: 20, kg: 5, units: 10 }
+];
+const AMZ_TEST_STATE_KEY_ = "AMZ_TEST_SHIPMENT"; // step 1's pick, for step 2
+
+function amzTestContext_(ss) {
+  const po = AMZ_TEST_ORDER_.poNumber;
+  const ctx = amazonFbaOrderContext_(ss, po, "PO Number");
+  if (!ctx) throw new Error(`${po} is not in PO_Database.`);
+  if (!ctx.isFba) throw new Error(`${po} is not an Amazon FBA order (${ctx.channel}).`);
+  if (ctx.planId !== AMZ_TEST_ORDER_.planId) {
+    throw new Error(`PO_Database has plan ${ctx.planId || "(none)"} on ${po}, not ${AMZ_TEST_ORDER_.planId}; the test stops.`);
+  }
+  if (!ctx.storeCode) throw new Error(`${po} has no Store Code.`);
+  if (ctx.fbaId) throw new Error(`${po} already has FBA Shipment ID ${ctx.fbaId} in PO_Database; the test stops.`);
+  return ctx;
+}
+
+// The dummy boxes as setPackingInformation boxes, with the units in each (one-SKU plan)
+function amzTestPacking_(planItems) {
+  if (planItems.length !== 1) throw new Error(`The test boxes are for a one-SKU plan; this plan has ${planItems.length} SKUs.`);
+  const p = planItems[0];
+  const units = AMZ_TEST_BOXES_.reduce((n, b) => n + b.units, 0);
+  if (p.quantity !== units) throw new Error(`The test boxes hold ${units} units; the plan has ${p.quantity}.`);
+  const boxes = AMZ_TEST_BOXES_.map(b => ({
+    quantity: 1,
+    contentInformationSource: "BOX_CONTENT_PROVIDED",
+    dimensions: { unitOfMeasurement: "CM", length: b.length, width: b.width, height: b.height },
+    weight: { unit: "KG", value: b.kg },
+    items: [{ msku: p.msku, quantity: b.units, labelOwner: p.labelOwner, prepOwner: p.prepOwner }]
+  }));
+  return { boxes: boxes, boxIds: boxes.map((b, i) => `TEST-${i + 1}`), provided: true, contentNote: "" };
+}
+
+/**
+ * Step 1 of 2. Placement to the FC, the dummy boxes, placement confirmed (irreversible: creates
+ * the FBA Shipment ID), carrier options read. Books nothing. Saves the earliest ATS pickup for
+ * step 2. Run again to see current options; a confirmed placement is reused.
+ */
+function amzTestShipmentStep1() {
+  const folder = amzDiagFolder_(`Amazon API test (${AMZ_TEST_ORDER_.poNumber} step 1)`);
+  const report = { ranAt: new Date().toISOString(), order: AMZ_TEST_ORDER_, boxes: AMZ_TEST_BOXES_, steps: [] };
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const ctx = amzTestContext_(ss);
+    report.storeCode = ctx.storeCode;
+    const result = amzPrepareShipment_(ss, ctx, report.steps, { packing: amzTestPacking_, saveIds: false });
+    report.result = result;
+    if (result.stage === "chooseCarrier") {
+      const pick = result.options[0];
+      report.earliest = pick;
+      PropertiesService.getScriptProperties().setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify({
+        planId: ctx.planId, shipmentId: result.shipmentId, placementOptionId: result.placementOptionId,
+        fbaShipmentId: result.fbaShipmentId, transportationOptionId: pick.transportationOptionId,
+        amount: pick.amount, currency: pick.currency, pickupStart: pick.pickupStart, savedAt: new Date().toISOString()
+      }));
+    }
+  } catch (e) {
+    report.error = e.message;
+  }
+  amzDiagSave_(folder, report);
+  return report;
+}
+
+// fn's result, tried up to 4 times 15 s apart (documents can lag right after the booking)
+function amzTestRetry_(fn) {
+  const errors = [];
+  for (let i = 0; i < 4; i++) {
+    try { return Object.assign({ ok: true, tries: i + 1 }, fn()); }
+    catch (e) { errors.push(e.message); if (i < 3) Utilities.sleep(15000); }
+  }
+  return { ok: false, errors: errors };
+}
+
+/**
+ * Step 2 of 2: books the ATS pickup a test saved (amzTestShipmentStep1, amzTestShipmentInspect or
+ * amzTestAtsFreshPlan; Amazon charges its quote), only if Amazon still offers it at the same price
+ * and time, then downloads the box labels and delivery challan.
+ */
+function amzTestShipmentStep2() {
+  const folder = amzDiagFolder_("Amazon API test (book ATS)");
+  const report = { ranAt: new Date().toISOString(), steps: [] };
+  try {
+    const saved = JSON.parse(PropertiesService.getScriptProperties().getProperty(AMZ_TEST_STATE_KEY_) || "null");
+    if (!saved || !saved.transportationOptionId) throw new Error("No ATS pickup is saved: nothing to book.");
+    report.saved = saved;
+    const token = amzToken_();
+    const shipmentUrl = `${amzPlanUrl_(saved.planId)}/shipments/${encodeURIComponent(saved.shipmentId)}`;
+    if (amzCarrierBooked_(fetchSigned_(token, { method: "GET", url: shipmentUrl }, [200]))) {
+      report.steps.push("The carrier was already booked; nothing was booked now.");
+    } else {
+      const option = amzListTransportation_(token, saved.planId, saved.placementOptionId, saved.shipmentId)
+        .find(o => o.transportationOptionId === saved.transportationOptionId);
+      if (!option) throw new Error("The pickup from step 1 is no longer offered. Run step 1 again for the current options.");
+      if (!amzIsPartnered_(option)) throw new Error(`The saved option is ${amzOptionsText_([option])}, not ATS; nothing booked.`);
+      const s = amzOptionSummary_(option);
+      if (s.amount !== saved.amount || s.pickupStart !== saved.pickupStart) {
+        throw new Error(`The pickup changed since step 1 (${saved.currency} ${saved.amount} at ${saved.pickupStart}, now ${s.currency} ${s.amount} at ${s.pickupStart}). Run step 1 again.`);
+      }
+      amzConfirmTransport_(token, saved.planId, saved.shipmentId, saved.transportationOptionId);
+      report.booked = s;
+      report.steps.push(`${saved.fbaShipmentId}: ${amzPickupText_(s)}.`);
+    }
+    report.labels = amzTestRetry_(() => {
+      const blob = amzBoxLabelsPdf_(token, saved.fbaShipmentId, AMZ_TEST_BOXES_.length);
+      return { bytes: blob.getBytes().length, file: folder.createFile(blob.setName(`${saved.fbaShipmentId} box labels.pdf`)).getUrl() };
+    });
+    report.challan = amzTestRetry_(() => {
+      const blob = amzDeliveryChallanPdf_(token, saved.planId, saved.shipmentId);
+      return { bytes: blob.getBytes().length, file: folder.createFile(blob.setName(`${saved.fbaShipmentId} delivery challan.pdf`)).getUrl() };
+    });
+    report.shipmentAfter = fetchSigned_(token, { method: "GET", url: shipmentUrl }, [200]);
+  } catch (e) {
+    report.error = e.message;
+  }
+  amzDiagSave_(folder, report);
+  return report;
+}
+
+/**
+ * After step 1 found no ATS pickup (2026-11-19: only "SPN - Amazon Empanelled Carriers", which is
+ * USE_YOUR_OWN_CARRIER). Reads the plan, the shipment, its boxes and every carrier option as
+ * Amazon lists them now, then generates carrier options again with four ready-to-ship times and
+ * records which brings ATS. Books nothing. If one does, the earliest ATS pickup is saved for step 2;
+ * otherwise step 2 has nothing to book.
+ */
+function amzTestShipmentInspect() {
+  const folder = amzDiagFolder_(`Amazon API test (${AMZ_TEST_ORDER_.poNumber} inspect)`);
+  const report = { ranAt: new Date().toISOString(), order: AMZ_TEST_ORDER_, steps: [] };
+  const step = (name, fn) => {
+    const t = Date.now();
+    try { const v = fn(); report.steps.push({ step: name, ok: true, ms: Date.now() - t, result: v }); return v; }
+    catch (e) { report.steps.push({ step: name, ok: false, ms: Date.now() - t, error: e.message }); return null; }
+  };
+  const props = PropertiesService.getScriptProperties();
+  try {
+    const saved = JSON.parse(props.getProperty(AMZ_TEST_STATE_KEY_) || "null");
+    if (!saved || saved.planId !== AMZ_TEST_ORDER_.planId) throw new Error("Run amzTestShipmentStep1 first.");
+    // Nothing bookable until this run finds ATS
+    props.setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify(Object.assign({}, saved, { transportationOptionId: "", amount: null, currency: "", pickupStart: "" })));
+    report.saved = saved;
+    const token = amzToken_();
+    const planUrl = amzPlanUrl_(saved.planId);
+    const shipmentUrl = `${planUrl}/shipments/${encodeURIComponent(saved.shipmentId)}`;
+    const raw = (o) => ({ id: o.transportationOptionId, carrier: o.carrier, shippingSolution: o.shippingSolution, shippingMode: o.shippingMode,
+      carrierAppointment: o.carrierAppointment, quote: o.quote, preconditions: o.preconditions });
+    const list = () => amzListTransportation_(token, saved.planId, saved.placementOptionId, saved.shipmentId);
+
+    step("plan", () => { const p = fetchSigned_(token, { method: "GET", url: planUrl }, [200]); return { status: p.status, shipments: p.shipments, placementOptions: p.placementOptions }; });
+    step("shipment", () => fetchSigned_(token, { method: "GET", url: shipmentUrl }, [200]));
+    step("plan boxes", () => fetchSigned_(token, { method: "GET", url: `${planUrl}/boxes?pageSize=100` }, [200]));
+    step("carrier options now (shipment + placement)", () => list().map(raw));
+    step("carrier options now (shipment only)", () => amzListTransportation_(token, saved.planId, "", saved.shipmentId).map(raw));
+    step("delivery window options", () => fetchSigned_(token, { method: "GET", url: `${shipmentUrl}/deliveryWindowOptions` }, [200]));
+
+    const pad = (n) => ("0" + n).slice(-2);
+    const istAt = (daysAhead, hh) => {
+      const day = Utilities.formatDate(new Date(Date.now() + daysAhead * 86400000), "Asia/Kolkata", "yyyy-MM-dd");
+      return new Date(`${day}T${pad(hh)}:00:00+05:30`).toISOString();
+    };
+    const tries = [
+      { label: "in 2 hours", start: new Date(Math.ceil((Date.now() + 2 * 3600000) / 60000) * 60000).toISOString() },
+      { label: "tomorrow 10:00 IST", start: istAt(1, 10) },
+      { label: "in 2 days 10:00 IST", start: istAt(2, 10) },
+      { label: "tomorrow, same time (the app's default)", start: amzReadyToShipStart_() }
+    ];
+    let found = null;
+    tries.forEach(t => {
+      const r = step(`generate, ready to ship ${t.label} (${t.start})`, () => {
+        amzGenerateTransportation_(token, saved.planId, saved.placementOptionId, saved.shipmentId, t.start);
+        const opts = list();
+        return { options: amzOptionsText_(opts), ats: opts.filter(amzIsPartnered_).map(raw) };
+      });
+      if (r && r.ats.length && !found) found = t;
+    });
+    report.atsFoundWith = found ? found.label : "none";
+    if (found) {
+      const ats = step(`generate again, ready to ship ${found.label}`, () => {
+        amzGenerateTransportation_(token, saved.planId, saved.placementOptionId, saved.shipmentId, found.start);
+        return list().filter(amzIsPartnered_).map(amzOptionSummary_)
+          .sort((a, b) => String(a.pickupStart).localeCompare(String(b.pickupStart)) || (a.amount || 0) - (b.amount || 0));
+      });
+      if (ats && ats.length) {
+        const pick = ats[0];
+        report.earliest = pick;
+        props.setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify(Object.assign({}, saved, {
+          transportationOptionId: pick.transportationOptionId, amount: pick.amount, currency: pick.currency,
+          pickupStart: pick.pickupStart, savedAt: new Date().toISOString()
+        })));
+      }
+    }
+  } catch (e) {
+    report.error = e.message;
+  }
+  amzDiagSave_(folder, report);
+  return report;
+}
+
+/**
+ * Live test 2 (2026-11-19). On AZ20261119-1 (FBA15MY3396K) the carrier options were generated
+ * again right after the placement was confirmed and ATS never showed, in five generations; Amazon's
+ * India guide says confirming the placement is what brings the ATS quote. This makes a throwaway
+ * plan ("API-TEST ... cancel me": AZ20261119-1's SKU, the dummy boxes' 30 units, to ISK3) and runs
+ * the app's own flow (amzPrepareShipment_), which now only reads the options after confirmation.
+ * Books nothing and writes nothing to PO_Database.
+ *   ATS offered: the earliest pickup is saved for amzTestShipmentStep2 and the plan is kept (delete
+ *     it in Seller Central, Delete shipment and charges, when done).
+ *   No ATS: the plan is cancelled at the end.
+ */
+const AMZ_TEST_SKU_ = "1120200"; // AZ20261119-1's only line
+
+function amzTestAtsFreshPlan() {
+  const folder = amzDiagFolder_("Amazon API test (fresh plan, ATS)");
+  const report = { ranAt: new Date().toISOString(), boxes: AMZ_TEST_BOXES_, steps: [] };
+  const props = PropertiesService.getScriptProperties();
+  let token = null, planId = "", keep = false;
+  try {
+    token = amzToken_();
+    const units = AMZ_TEST_BOXES_.reduce((n, b) => n + b.units, 0);
+    const name = `API-TEST ${Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyyMMdd-HHmm")} cancel me`;
+    const created = createInboundPlan_(token, AMAZON.endpoint, name, [{ articleCode: AMZ_TEST_SKU_, qty: units }], null);
+    planId = created.inboundPlanId;
+    amzWaitOperation_(token, created.operationId);
+    report.plan = { name: name, planId: planId };
+    const ctx = {
+      referenceCode: name, channel: "Amazon_FBA", isFba: true, poNumber: name, poNumbers: [], storeCode: "ISK3",
+      planId: planId, placementId: "", shipmentId: "", fbaId: "", boxData: AMZ_TEST_BOXES_.length,
+      statuses: [], eeStatus: "", lines: [{ itemCode: AMZ_TEST_SKU_, masterSku: AMZ_TEST_SKU_, qty: units }]
+    };
+    const result = amzPrepareShipment_(SpreadsheetApp.openById(SPREADSHEET_ID), ctx, report.steps, { packing: amzTestPacking_, saveIds: false });
+    report.result = result;
+    if (result.stage === "chooseCarrier" && result.options.length) {
+      keep = true;
+      const pick = result.options[0];
+      report.earliest = pick;
+      props.setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify({
+        planId: planId, shipmentId: result.shipmentId, placementOptionId: result.placementOptionId,
+        fbaShipmentId: result.fbaShipmentId, transportationOptionId: pick.transportationOptionId,
+        amount: pick.amount, currency: pick.currency, pickupStart: pick.pickupStart, savedAt: new Date().toISOString()
+      }));
+    }
+  } catch (e) {
+    report.error = e.message;
+  } finally {
+    if (planId && !keep) {
+      try {
+        const res = fetchSigned_(token, { method: "PUT", url: `${amzPlanUrl_(planId)}/cancellation` }, [202]);
+        amzWaitOperation_(token, res.operationId);
+        report.cancelled = true;
+      } catch (e) {
+        report.cancelled = `not cancelled: ${e.message} (delete it in Seller Central)`;
+      }
+    }
+    amzDiagSave_(folder, report);
+  }
+  return report;
 }

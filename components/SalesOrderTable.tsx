@@ -38,6 +38,7 @@ import OrderNotesTimeline from './OrderNotesTimeline';
 import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, recordOtherSelfShipment, cancelShipment, syncSelfShipTrackers, syncPackingListFromEasyEcom } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import BoxScanPrintModal, { type ExtraPrintAction } from './BoxScanPrintModal';
+import AmazonShipmentModal from './AmazonShipmentModal';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
 
@@ -1647,8 +1648,9 @@ const AmazonBoxDetailsModal: FC<{
     onClose: () => void,
     addNotification: any,
     data?: any[],
-    onLinkFbaShipment?: (fbaId: string) => Promise<void>
-}> = ({ so, onClose, addNotification, data = [], onLinkFbaShipment }) => {
+    onLinkFbaShipment?: (fbaId: string) => Promise<void>,
+    onCreateOnAmazon?: () => void
+}> = ({ so, onClose, addNotification, data = [], onLinkFbaShipment, onCreateOnAmazon }) => {
     const [boxDetails, setBoxDetails] = useState<any[]>(data);
     const [isLoading, setIsLoading] = useState(data.length === 0);
     const [fbaId, setFbaId] = useState(so.fbaShipmentId || '');
@@ -1853,6 +1855,16 @@ const AmazonBoxDetailsModal: FC<{
         </a>
     )}
 
+    {so.channel === 'Amazon_FBA' && so.inboundPlanId && onCreateOnAmazon && boxDetails.length > 0 && (
+        <button
+            onClick={onCreateOnAmazon}
+            className="px-5 py-3 bg-[#232F3E] text-[#FF9900] font-bold rounded-2xl shadow-xl hover:bg-black transition-all"
+            title="Placement, box sizes, FBA Shipment ID and the ATS pickup through Amazon's API"
+        >
+            {so.fbaShipmentId ? 'Book ATS Pickup' : 'Create on Amazon'}
+        </button>
+    )}
+
     <button
         onClick={onClose}
         className="px-8 py-3 bg-gray-900 text-white font-bold rounded-2xl shadow-xl hover:bg-black transition-all active:scale-95 text-sm"
@@ -1968,6 +1980,7 @@ const SalesOrderTable: FC<SalesOrderTableProps> = ({
     const [instamartPrintPackModal, setInstamartPrintPackModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     // Once a label exists, printing goes through the box scan (every box scanned first)
     const [scanPrintSo, setScanPrintSo] = useState<GroupedSalesOrder | null>(null);
+    const [amazonShipSo, setAmazonShipSo] = useState<GroupedSalesOrder | null>(null);
     const [shippingConfirm, setShippingConfirm] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [zeptoASNHelper, setZeptoASNHelper] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
     const [instamartApptModal, setInstamartApptModal] = useState<{ isOpen: boolean, so: GroupedSalesOrder | null }>({ isOpen: false, so: null });
@@ -4000,6 +4013,15 @@ const handleUpdateGoogleSheet = async () => {
 
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
+        if (canInvoice && fbaMissing && so.inboundPlanId && so.boxCount > 0) {
+            return {
+                label: 'Create AMZ Shipment',
+                color: 'bg-[#232F3E] text-[#FF9900] hover:bg-black shadow-md',
+                onClick: () => setAmazonShipSo(so),
+                disabled: isExecuting
+            };
+        }
+
         if (canInvoice) {
             const isFlipkart = so.channel.toLowerCase().includes('flipkart') && !so.channel.toLowerCase().includes('minute');
             return {
@@ -4213,6 +4235,15 @@ const handleUpdateGoogleSheet = async () => {
                     addNotification={addNotification}
                 />
             )}
+            {amazonShipSo && (
+                <AmazonShipmentModal
+                    so={amazonShipSo}
+                    userName={currentUser?.name || currentUser?.email || 'Unknown'}
+                    onClose={() => setAmazonShipSo(null)}
+                    onChanged={() => onSync()}
+                    addNotification={addNotification}
+                />
+            )}
             {scanPrintSo && (
                 <BoxScanPrintModal
                     so={scanPrintSo}
@@ -4270,6 +4301,7 @@ const handleUpdateGoogleSheet = async () => {
                     onClose={() => setAmazonBoxModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     data={amazonBoxModal.data}
+                    onCreateOnAmazon={() => { const target = amazonBoxModal.so; setAmazonBoxModal({ isOpen: false, so: null }); setAmazonShipSo(target); }}
                     onLinkFbaShipment={async (fbaId) => {
                         try {
                             const res = await updateFBAShipmentId(amazonBoxModal.so!.poReference, fbaId);
@@ -4611,7 +4643,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                 <button
                                                                     onClick={(e: any) => { e.stopPropagation(); setScanPrintSo(so); }}
                                                                     className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all shadow-sm active:scale-95 whitespace-nowrap bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-                                                                    title="Scan every box, then print the label, invoice, PO and docket"
+                                                                    title="Scan every box, then print the label, invoice and docket"
                                                                 >
                                                                     <PrinterIcon className="h-3.5 w-3.5" /> Scan & Print
                                                                 </button>
@@ -4957,9 +4989,17 @@ const handleUpdateGoogleSheet = async () => {
                                                                                                 {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
                                                                                                 {isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}
                                                                                             </button>
+                                                                                            {fbaMissing && so.inboundPlanId && so.boxCount > 0 && (
+                                                                                                <button
+                                                                                                    onClick={() => setAmazonShipSo(so)}
+                                                                                                    className="px-4 py-2 bg-[#232F3E] text-[#FF9900] text-[11px] font-bold rounded-lg shadow-sm hover:bg-black flex items-center justify-center gap-2 transition-all active:scale-95"
+                                                                                                >
+                                                                                                    <TruckIcon className="h-3 w-3" /> Create Amazon Shipment
+                                                                                                </button>
+                                                                                            )}
                                                                                             {fbaMissing && (
                                                                                                 <p className="text-[10px] text-amber-600 font-bold text-center">
-                                                                                                    * Link FBA Shipment ID in Box Details first
+                                                                                                    * Create the Amazon shipment, or link its FBA Shipment ID in Box Details
                                                                                                 </p>
                                                                                             )}
                                                                                         </div>

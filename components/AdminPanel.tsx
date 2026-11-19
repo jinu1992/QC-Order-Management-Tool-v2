@@ -5,6 +5,7 @@ import { ShieldCheckIcon, UserGroupIcon, LockClosedIcon, PencilIcon, TrashIcon, 
 import { saveChannelConfig, saveSystemConfig, fetchSystemConfig, saveUserToSheet, deleteUserFromSheet } from '../services/api';
 import AutoShipSettings from './AutoShipSettings';
 import AutoInvoiceSettings from './AutoInvoiceSettings';
+import AmazonAutoShipSettings from './AmazonAutoShipSettings';
 
 interface AdminPanelProps {
     logs: ActivityLog[];
@@ -670,6 +671,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ logs, users, setUsers, rolePerm
                             </div>
                             <AutoInvoiceSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
                             <AutoShipSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
+                            <AmazonAutoShipSettings currentUser={currentUser} addLog={addLog} addNotification={addNotification} />
                         </div>
                     )}
 

@@ -1,9 +1,10 @@
 import React, { FC, useEffect, useRef, useState } from 'react';
 import { type GroupedSalesOrder } from '../types';
-import { getBoxScanStatus, recordBoxScan, getPrintPack, type BoxScanStatus, type PrintPackDocument } from '../services/api';
+import { getBoxScanStatus, recordBoxScan, getPrintPack, fetchAmazonFbaDocs, type AmazonFbaDocs, type BoxScanStatus, type PrintPackDocument } from '../services/api';
 import { PrinterIcon, XCircleIcon, CheckCircleIcon, AlertIcon, CubeIcon, RefreshIcon, ExternalLinkIcon } from './icons/Icons';
 import LoadingCube from './LoadingCube';
 import type { PDFDocument as PdfDoc } from 'pdf-lib';
+import { addAmazonLabelParts, isAmazonFbaChannel } from '../services/amazonLabels';
 
 // Before a shipment's documents print, every box's EasyEcom Box ID barcode is scanned.
 // - The expected Box IDs are never shown (the backend sends hashes), so they can't be typed
@@ -11,6 +12,9 @@ import type { PDFDocument as PdfDoc } from 'pdf-lib';
 // - Each opening of this window is a new scan session. Printing unlocks only when one session
 //   has every box, so leaving halfway means scanning everything again.
 // - Documents print as two PDFs: 4x6 labels for the label printer, and A4 documents.
+// - Amazon FBA: Amazon's A4 box label sheet is cut into its two labels per box (FBA box label,
+//   ATS carrier label), each on its own 4x6 label; the delivery challan prints on A4.
+//   The PO copy is no longer printed.
 
 export interface ExtraPrintAction {
     label: string;
@@ -89,6 +93,9 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
     const [preparing, setPreparing] = useState<PackKind | null>(null);
     const [printedDocs, setPrintedDocs] = useState<PackedDocument[] | null>(null);
     const [emptyPacks, setEmptyPacks] = useState<PackKind[]>([]);
+    const [amazonDocs, setAmazonDocs] = useState<AmazonFbaDocs | null>(null);
+    const [fetchingAmazon, setFetchingAmazon] = useState(false);
+    const isAmazonFba = isAmazonFbaChannel(so.channel);
     const inputRef = useRef<HTMLInputElement>(null);
     const queueRef = useRef<Promise<void>>(Promise.resolve());
     const sessionIdRef = useRef(newSessionId());
@@ -105,7 +112,26 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
         hashesRef.current = res.expectedBoxHashes
             || await Promise.all((res.expectedBoxIds || []).map(b => sha256Hex(`${so.id}|${normalizeBoxId(b)}`)));
         scannedRef.current = new Set((res.scans || []).map(s => s.boxId));
+        if (res.amazonDocs !== undefined) setAmazonDocs(res.amazonDocs);
         setScanStatus({ ...res, expectedCount: res.expectedCount ?? (res.expectedBoxIds || []).length, expectedBoxIds: undefined });
+    };
+
+    // Downloads the box labels / challan from Amazon now (again, when they're already saved)
+    const handleFetchAmazon = async () => {
+        setFetchingAmazon(true);
+        try {
+            const res = await fetchAmazonFbaDocs(so.id, amazonDocs?.status === 'Done');
+            if (res.amazonDocs) setAmazonDocs(isComplete ? res.amazonDocs : { ...res.amazonDocs, boxLabelsUrl: undefined, challanUrl: undefined });
+            packRef.current = null; // the next print uses the new files
+            setPrintedDocs(null);
+            setEmptyPacks([]);
+            addNotification(res.message || (res.status === 'success' ? 'Fetched from Amazon.' : 'Could not fetch from Amazon.'),
+                res.status === 'success' && res.amazonDocs?.status === 'Done' ? 'success' : res.status === 'success' ? 'warning' : 'error');
+        } catch (e: any) {
+            addNotification(e.message || 'Could not fetch from Amazon.', 'error');
+        } finally {
+            setFetchingAmazon(false);
+        }
     };
 
     const load = async () => {
@@ -191,8 +217,9 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
     const buildPack = async (): Promise<BuiltPack> => {
         const res = await getPrintPack(so.id);
         if (res.status !== 'success') throw new Error(res.message || 'Could not collect the documents.');
+        if (res.amazonDocs !== undefined) setAmazonDocs(res.amazonDocs);
 
-        const { PDFDocument } = await import('pdf-lib');
+        const { PDFDocument, degrees } = await import('pdf-lib');
         const out: Record<PackKind, PdfDoc> = { label: await PDFDocument.create(), a4: await PDFDocument.create() };
         const docs: PackedDocument[] = [];
 
@@ -201,6 +228,7 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
             try {
                 const bytes = base64ToBytes(doc.base64);
                 const packs = new Set<PackKind>();
+                const isLabelDoc = doc.kind === 'label' || doc.kind === 'amazon_labels';
                 if (doc.mimeType === 'application/pdf') {
                     const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
                     // Some label files carry more than labels: Scorpion's has the box labels plus an
@@ -210,9 +238,14 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
                     const hasLabelPages = sizes.some(s => isLabelSized(s.width, s.height));
                     for (const i of src.getPageIndices()) {
                         const srcPage = src.getPage(i);
+                        // Amazon's A4 sheet: each page cut into its FBA and ATS labels
+                        if (doc.kind === 'amazon_labels' && await addAmazonLabelParts(out.label, srcPage, degrees, LABEL_SIZE)) {
+                            packs.add('label');
+                            continue;
+                        }
                         const { width, height } = sizes[i];
                         const labelSized = isLabelSized(width, height);
-                        const pack: PackKind = labelSized || (doc.kind === 'label' && !hasLabelPages) ? 'label' : 'a4';
+                        const pack: PackKind = labelSized || (isLabelDoc && !hasLabelPages) ? 'label' : 'a4';
                         packs.add(pack);
                         const target = out[pack];
                         const unrotated = srcPage.getRotation().angle % 360 === 0;
@@ -236,7 +269,7 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
                         }
                     }
                 } else {
-                    const pack: PackKind = doc.kind === 'label' ? 'label' : 'a4';
+                    const pack: PackKind = isLabelDoc ? 'label' : 'a4';
                     packs.add(pack);
                     const target = out[pack];
                     const img = doc.mimeType === 'image/png' ? await target.embedPng(bytes) : await target.embedJpg(bytes);
@@ -407,9 +440,43 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
                                 })}
                             </div>
 
+                            {isAmazonFba && (
+                                <div className="border border-amber-200 bg-amber-50/50 rounded-xl p-3 text-xs space-y-2">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <p className="font-bold text-gray-800">
+                                            Amazon documents{amazonDocs?.fbaShipmentId ? <> · <span className="font-mono">{amazonDocs.fbaShipmentId}</span></> : null}
+                                        </p>
+                                        <button
+                                            onClick={handleFetchAmazon}
+                                            disabled={fetchingAmazon}
+                                            className="px-3 py-1.5 font-bold rounded-lg bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 flex items-center gap-1.5 disabled:opacity-50"
+                                            title="Download the box labels and delivery challan from Amazon"
+                                        >
+                                            <RefreshIcon className={`h-3.5 w-3.5 ${fetchingAmazon ? 'animate-spin' : ''}`} />
+                                            {fetchingAmazon ? 'Fetching...' : amazonDocs?.status === 'Done' ? 'Fetch again' : 'Fetch from Amazon'}
+                                        </button>
+                                    </div>
+                                    <div className="flex flex-wrap gap-x-5 gap-y-1">
+                                        <span className={amazonDocs?.hasBoxLabels ? 'text-partners-green font-bold' : 'text-gray-500'}>
+                                            {amazonDocs?.hasBoxLabels ? '✓' : '○'} Box labels{amazonDocs?.hasBoxLabels && amazonDocs.boxes ? ` (${amazonDocs.boxes} boxes → ${amazonDocs.boxes * 2} labels)` : ''}
+                                            {amazonDocs?.boxLabelsUrl && <a href={amazonDocs.boxLabelsUrl} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-blue-600 hover:underline font-normal">A4 original</a>}
+                                        </span>
+                                        <span className={amazonDocs?.hasChallan ? 'text-partners-green font-bold' : 'text-gray-500'}>
+                                            {amazonDocs?.hasChallan ? '✓' : '○'} Delivery challan
+                                            {amazonDocs?.challanUrl && <a href={amazonDocs.challanUrl} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-blue-600 hover:underline font-normal">Open</a>}
+                                        </span>
+                                    </div>
+                                    {amazonDocs?.status !== 'Done' && (
+                                        <p className="text-amber-800">
+                                            {amazonDocs?.message || 'Not fetched yet. They download automatically once the ATS pickup is booked, or when you print.'}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
                             {printedDocs && (
                                 <div className="border rounded-xl divide-y">
-                                    {printedDocs.length === 0 && <p className="p-3 text-xs text-gray-500">No label, invoice, docket or PO is saved on this order.</p>}
+                                    {printedDocs.length === 0 && <p className="p-3 text-xs text-gray-500">No label, invoice or docket is saved on this order.</p>}
                                     {printedDocs.map(d => (
                                         <div key={d.url} className="p-3 flex items-center justify-between gap-3 text-xs">
                                             <span className="font-bold text-gray-700">{d.label}</span>
@@ -432,8 +499,8 @@ const BoxScanPrintModal: FC<Props> = ({ so, userName, onClose, addNotification, 
                             <PrinterIcon className="h-4 w-4" /> {p.label}
                         </button>
                     ))}
-                    {printButton('a4', 'Print A4 Documents', 'Invoice, PO and docket on A4', false)}
-                    {printButton('label', 'Print 4x6 Labels', 'Shipping label, sized for the 4x6 label printer', true)}
+                    {printButton('a4', 'Print A4 Documents', isAmazonFba ? 'Invoice and delivery challan on A4' : 'Invoice and docket on A4', false)}
+                    {printButton('label', 'Print 4x6 Labels', isAmazonFba ? 'Amazon box labels, 2 per box (FBA + ATS), for the 4x6 label printer' : 'Shipping label, sized for the 4x6 label printer', true)}
                 </div>
             </div>
         </div>
