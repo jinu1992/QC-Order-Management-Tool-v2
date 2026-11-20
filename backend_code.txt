@@ -17091,9 +17091,10 @@ function syncPackingListFromEasyEcom(data) {
 }
 
 /**
- * Time-driven trigger handler. First downloads Amazon's box labels and delivery challan for
- * Amazon FBA orders whose carrier is booked (amazon fba shipment.js; its own short time limit,
- * so the steps below can't use up the run before it). Then the EasyEcom packing sync, which
+ * Time-driven trigger handler. First links the FBA Shipment IDs of Amazon FBA shipments finished in
+ * Seller Central, then downloads Amazon's box labels and delivery challan for Amazon FBA orders
+ * whose carrier is booked (amazon fba shipment.js; each with its own short time limit, so the steps
+ * below can't use up the run before them). Then the EasyEcom packing sync, which
  * throws on EasyEcom failures so Google's trigger failure emails fire. Then creates the invoices
  * of confirmed orders (auto invoice.js) and sends the orders that now have everything to the
  * shipping partner (auto ship.js), even when the EasyEcom step failed. Last, when switched on,
@@ -17104,6 +17105,11 @@ function runPackingListAutoSync() {
   const startedAt = Date.now();
   const hour = Number(Utilities.formatDate(new Date(), 'Asia/Kolkata', 'H'));
   if (hour < PACKING_SYNC_HOURS_IST_.from || hour >= PACKING_SYNC_HOURS_IST_.to) return;
+  try {
+    Logger.log(runAmazonFbaIdAutoLink_(startedAt).message);
+  } catch (e) {
+    Logger.log('Amazon FBA ID auto-link failed: ' + e.message);
+  }
   try {
     Logger.log(runAmazonFbaDocsAutoFetch_(startedAt).message);
   } catch (e) {
@@ -18725,6 +18731,8 @@ function amzDropRunMarker_(ref) {
  *     box data doesn't match the plan exactly (packing not finished, or a SKU not matched), and
  *     code ELSEWHERE when the placement was confirmed outside the app (Seller Central), where a
  *     person is finishing it.
+ *   readyToShipStart: the ready-to-ship (pickup) time sent with the carrier options, ISO; default
+ *     tomorrow, same time (amzReadyToShipStart_). Editor test only (amzPhase2FastPlan).
  */
 function amzPrepareShipment_(ss, ctx, steps, opts) {
   opts = opts || {};
@@ -18782,8 +18790,8 @@ function amzPrepareShipment_(ss, ctx, steps, opts) {
     save(shipmentId, placementId, "");
 
     // India order: transportation options and packing information before the placement is confirmed
-    amzGenerateTransportation_(token, planId, placementId, shipmentId);
-    steps.push("Transportation options generated.");
+    amzGenerateTransportation_(token, planId, placementId, shipmentId, opts.readyToShipStart);
+    steps.push(opts.readyToShipStart ? `Transportation options generated (ready to ship ${opts.readyToShipStart}).` : "Transportation options generated.");
 
     const packRes = fetchSigned_(token, {
       method: "POST",
@@ -19616,6 +19624,144 @@ function runAmazonFbaDocsAutoFetch_(startedAt) {
 }
 
 // =====================================================================
+// 2b. FBA SHIPMENT ID AUTO-LINK (shipments finished in Seller Central)
+// =====================================================================
+
+/**
+ * Option A (2026-11-20): Amazon never confirms the ATS charges of a shipment the API books, so the
+ * team finishes Push to AMZ's inbound plan in Seller Central (Send to Amazon: placement, boxes, ATS
+ * pickup), and someone then typed its FBA Shipment ID into the app. runPackingListAutoSync calls
+ * this before the documents fetch. For each Amazon FBA order with an Inbound Plan ID and no FBA
+ * Shipment ID it reads the plan on Amazon; once the placement is confirmed AND a carrier is booked
+ * (the FBA ID must not reach an invoice before the booking: top of this file) it writes Placement
+ * ID, Shipment ID and FBA Shipment ID on the order's rows and remarks it on the timeline. The
+ * documents fetch right after picks the order up.
+ * Not read: cancelled rows, orders past the warehouse (PO_Database Status or EasyEcom), YEIO. Each
+ * order is read at most every AMAZON_FBA_LINK_GAP_MS_, up to AMAZON_FBA_LINK_MAX_PER_RUN_ per run,
+ * within AMAZON_FBA_LINK_RUN_UNTIL_MS_ of the trigger. Never read again (until its Inbound Plan ID
+ * changes): a plan VOIDED or ERRORED on Amazon (deleted in Seller Central), older than
+ * AMAZON_FBA_LINK_MAX_AGE_DAYS_, or split into several shipments (remarked once: link it by hand).
+ * opts.dryRun (amzFbaLinkPreview): reads Amazon for every waiting order, writes nothing.
+ */
+const AMAZON_FBA_LINK_MAX_PER_RUN_ = 4;
+const AMAZON_FBA_LINK_GAP_MS_ = 14 * 60000;      // about once per 15-minute run
+const AMAZON_FBA_LINK_RUN_UNTIL_MS_ = 20000;     // before the documents fetch's 45 s
+const AMAZON_FBA_LINK_MAX_AGE_DAYS_ = 30;
+const AMAZON_FBA_LINK_STATE_KEY_ = "AMZ_FBA_LINK_STATE"; // { ref: { planId, at, done?, last? } }
+
+// Amazon FBA orders waiting for an FBA Shipment ID: [{ ref, poNumber, planId, storeCode }]
+function amzFbaLinkCandidates_(values) {
+  const col = selfShipHeaderIndex_(values[0].map(h => String(h).trim()));
+  const c = { ref: col("EE_reference_code"), po: col("PO Number"), channel: col("Channel Name"), plan: col("Inbound Plan ID"),
+    fba: col("FBA Shipment IDs"), status: col("Status"), ee: col("EE_order_status"), store: col("Store Code") };
+  if (c.po === -1 || c.channel === -1 || c.plan === -1 || c.fba === -1) return [];
+  const byRef = {};
+  values.slice(1).forEach(r => {
+    if (!isAmazonFbaChannel_(r[c.channel])) return;
+    const ref = String((c.ref !== -1 && r[c.ref]) || r[c.po] || "").trim();
+    if (ref) (byRef[ref] = byRef[ref] || []).push(r);
+  });
+  const first = (rows, i) => {
+    if (i === -1) return "";
+    const r = rows.find(x => String(x[i] === null || x[i] === undefined ? "" : x[i]).trim() !== "");
+    return r ? String(r[i]).trim() : "";
+  };
+  return Object.keys(byRef).map(ref => {
+    const rows = byRef[ref];
+    const live = rows.filter(r => c.status === -1 || !/^cancel/i.test(String(r[c.status]).trim()));
+    if (!live.length) return null;
+    if (c.status !== -1 && live.some(r => AMAZON_DOCS_DONE_STATUSES_.indexOf(String(r[c.status]).trim().toLowerCase()) !== -1)) return null;
+    if (c.ee !== -1 && rows.some(r => /^(shipped|delivered|returned|cancel)/i.test(String(r[c.ee]).trim()))) return null;
+    if (/FBA[0-9A-Z]{6,}/i.test(first(rows, c.fba))) return null;
+    const planId = first(rows, c.plan);
+    const storeCode = first(rows, c.store).toUpperCase();
+    if (!planId || storeCode === "YEIO") return null;
+    return { ref: ref, poNumber: first(live, c.po) || ref, planId: planId, storeCode: storeCode };
+  }).filter(Boolean);
+}
+
+// What Amazon has for one order's plan: { outcome: "link" | "wait" | "never", reason, ids?, split? }
+function amzFbaLinkRead_(token, cand) {
+  const plan = fetchSigned_(token, { method: "GET", url: amzPlanUrl_(cand.planId) }, [200]);
+  const status = String(plan.status || "").toUpperCase();
+  if (status === "VOIDED" || status === "ERRORED") return { outcome: "never", reason: `plan ${cand.planId} is ${status} on Amazon` };
+  const created = plan.createdAt ? new Date(plan.createdAt).getTime() : 0;
+  if (created && Date.now() - created > AMAZON_FBA_LINK_MAX_AGE_DAYS_ * 86400000) {
+    return { outcome: "never", reason: `plan created ${plan.createdAt}, more than ${AMAZON_FBA_LINK_MAX_AGE_DAYS_} days ago` };
+  }
+  const accepted = (plan.placementOptions || []).find(p => String(p.status || "").toUpperCase() === "ACCEPTED");
+  if (!accepted) return { outcome: "wait", reason: "placement not confirmed yet" };
+  const placement = amzListAll_(token, `${amzPlanUrl_(cand.planId)}/placementOptions?pageSize=20`, "placementOptions")
+    .find(p => p.placementOptionId === accepted.placementOptionId) || {};
+  const shipmentIds = placement.shipmentIds || [];
+  if (shipmentIds.length > 1) return { outcome: "never", reason: `Amazon split the plan into ${shipmentIds.length} shipments`, split: true };
+  if (!shipmentIds.length) return { outcome: "wait", reason: "the confirmed placement lists no shipment yet" };
+  const sh = fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(cand.planId)}/shipments/${encodeURIComponent(shipmentIds[0])}` }, [200]);
+  const fbaId = String(sh.shipmentConfirmationId || "").trim().toUpperCase();
+  if (!fbaId) return { outcome: "wait", reason: "the shipment has no FBA Shipment ID yet" };
+  const ids = { fbaId: fbaId, shipmentId: sh.shipmentId || shipmentIds[0], placementId: accepted.placementOptionId,
+    warehouseId: (sh.destination && sh.destination.warehouseId) || "" };
+  if (!amzCarrierBooked_(sh)) return { outcome: "wait", reason: `${fbaId}: placement confirmed, carrier not booked yet`, ids: ids };
+  return { outcome: "link", reason: `${fbaId}: placement confirmed, carrier booked`, ids: ids };
+}
+
+function runAmazonFbaIdAutoLink_(startedAt, opts) {
+  opts = opts || {};
+  const t0 = startedAt || Date.now();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const cands = amzFbaLinkCandidates_(ss.getSheetByName(SHEET_PO_DB).getDataRange().getValues());
+  const props = PropertiesService.getScriptProperties();
+  let state = {};
+  try { state = JSON.parse(props.getProperty(AMAZON_FBA_LINK_STATE_KEY_) || "{}") || {}; } catch (e) { state = {}; }
+  // Kept only for orders still waiting with the same plan
+  const next = {};
+  cands.forEach(cd => { if (state[cd.ref] && state[cd.ref].planId === cd.planId) next[cd.ref] = state[cd.ref]; });
+  const due = cands.filter(cd => {
+    const s = next[cd.ref];
+    return opts.dryRun || !s || (!s.done && Date.now() - (s.at || 0) >= AMAZON_FBA_LINK_GAP_MS_);
+  }).sort((a, b) => ((next[a.ref] || {}).at || 0) - ((next[b.ref] || {}).at || 0));
+
+  const results = [];
+  let token = null, linked = 0;
+  for (const cd of due) {
+    if (!opts.dryRun && (results.length >= AMAZON_FBA_LINK_MAX_PER_RUN_ || Date.now() - t0 > AMAZON_FBA_LINK_RUN_UNTIL_MS_)) break;
+    let r;
+    try {
+      token = token || amzToken_();
+      r = amzFbaLinkRead_(token, cd);
+    } catch (e) {
+      r = { outcome: "error", reason: String(e.message).slice(0, 300) };
+    }
+    results.push(Object.assign({ ref: cd.ref, planId: cd.planId }, r));
+    if (opts.dryRun) continue;
+    const now = Date.now();
+    if (r.outcome === "link") {
+      amzSaveShipmentIds_(cd.poNumber, r.ids.shipmentId, r.ids.placementId, r.ids.fbaId);
+      amzTimelineNote_(cd.poNumber, `FBA Shipment ID ${r.ids.fbaId} linked automatically: Amazon shows the shipment made in Seller Central ` +
+        `(placement confirmed${r.ids.warehouseId ? ` to ${r.ids.warehouseId}` : ""}, carrier booked; shipment ${r.ids.shipmentId}). ` +
+        "Box labels and delivery challan download next.");
+      linked++;
+      next[cd.ref] = { planId: cd.planId, at: now, done: "linked" };
+    } else if (r.outcome === "never") {
+      if (r.split) amzTimelineNote_(cd.poNumber, `${r.reason} (plan ${cd.planId}): the app links one FBA Shipment ID per order, so link it by hand.`);
+      next[cd.ref] = { planId: cd.planId, at: now, done: r.reason };
+    } else {
+      next[cd.ref] = { planId: cd.planId, at: now, last: `${r.outcome}: ${r.reason}` };
+    }
+  }
+  if (!opts.dryRun) props.setProperty(AMAZON_FBA_LINK_STATE_KEY_, JSON.stringify(next));
+  return { message: `Amazon FBA ID auto-link: ${cands.length} waiting, ${results.length} read, ${linked} linked.`, results: results };
+}
+
+/** Editor preview of the FBA Shipment ID auto-link: reads Amazon for every waiting order, writes nothing. */
+function amzFbaLinkPreview() {
+  const r = runAmazonFbaIdAutoLink_(Date.now(), { dryRun: true });
+  Logger.log(r.message);
+  r.results.forEach(x => Logger.log(`${x.ref} (plan ${x.planId}): ${x.outcome}: ${x.reason}`));
+  return r;
+}
+
+// =====================================================================
 // 3. EDITOR-ONLY CHECKS (run from the Apps Script editor; nothing in the app changes)
 // =====================================================================
 
@@ -20246,4 +20392,524 @@ function amzDiagTransportStatus() {
     amzDiagSave_(folder, report);
   }
   return report;
+}
+
+/**
+ * Phased ATS test, phase 1 (2026-11-20). Read-only: books, confirms and changes nothing on Amazon
+ * or in the sheets. Every shipment the API booked had its box labels and delivery challan refused
+ * ("Carrier estimate is not yet confirmed", "PCP shipment does not have confirmed charges"), while
+ * Seller Central shipments of the same SKU get both. The India guide has one step the app has
+ * never run: "You must update compliance details for each item you include in an inbound plan"
+ * (updateItemComplianceDetails: once per SKU, India only). This reads, for the API booking on the
+ * test order (FBA15MY7J2T8) and for AZ20261110-1 (made in Seller Central, also has 1120200, its
+ * documents download):
+ *   - each SKU's compliance details (HSN code, declared value, GST rates) and prep details,
+ *   - Amazon's answer to the API booking (its confirmTransportationOptions operation),
+ *   - both shipments and their booked carrier option side by side (the quote fields especially),
+ *   - both orders' box labels and delivery challan once more (byte counts only, nothing saved).
+ * Logs a short summary first, then saves the full report to a new folder in the runner's Drive.
+ */
+const AMZ_PHASE_COMPARE_REF_ = "AZ20261110-1";
+const AMZ_PHASE_BOOKING_OP_ = "20304e27-6c3d-451a-a39a-bfcb3fd163ba"; // FBA15MY7J2T8's confirmTransportationOptions
+
+// Amazon's message out of an "SP-API failed (400): {...}" error
+function amzPhaseShortError_(text) {
+  const m = String(text || "").match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  return m ? m[1] : String(text || "").slice(0, 200);
+}
+
+function amzPhase1Evidence() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const folder = amzDiagFolder_("Amazon API test (phase 1 evidence)");
+  const report = { ranAt: new Date().toISOString(), orders: {} };
+  const lines = [];
+  try {
+    const token = amzToken_();
+    const v2 = `${AMAZON.endpoint}/inbound/fba/2024-03-20`;
+    const get = (url) => fetchSigned_(token, { method: "GET", url: url }, [200]);
+    const attempt = (fn) => { try { return fn(); } catch (e) { return { error: e.message }; } };
+    const mskus = [];
+
+    [["api", AMZ_TEST_DUMMY_REF_], ["sellerCentral", AMZ_PHASE_COMPARE_REF_]].forEach(([kind, ref]) => {
+      const out = { ref: ref };
+      report.orders[kind] = out;
+      const ctx = attempt(() => amazonFbaOrderContext_(ss, ref));
+      if (!ctx || ctx.error) { out.error = ctx ? ctx.error : "not in PO_Database"; return; }
+      out.ids = { planId: ctx.planId, placementId: ctx.placementId, shipmentId: ctx.shipmentId, fbaId: ctx.fbaId };
+      out.skus = ctx.lines.map(l => `${l.itemCode} x ${l.qty}`);
+      ctx.lines.forEach(l => { if (l.itemCode && mskus.indexOf(l.itemCode) === -1) mskus.push(l.itemCode); });
+      out.plan = attempt(() => {
+        const p = get(amzPlanUrl_(ctx.planId));
+        return { status: p.status, name: p.name, createdAt: p.createdAt, lastUpdatedAt: p.lastUpdatedAt, sourceAddress: p.sourceAddress,
+          placementOptions: p.placementOptions, packingOptions: p.packingOptions, shipments: p.shipments };
+      });
+      const shipment = attempt(() => amzFindShipment_(token, ctx.planId, ctx.fbaId, ctx.shipmentId));
+      out.shipment = shipment;
+      if (shipment && shipment.shipmentId) {
+        const options = attempt(() => amzListTransportation_(token, ctx.planId, "", shipment.shipmentId));
+        out.transportationOptions = options;
+        out.bookedOption = Array.isArray(options) ? (options.find(o => o.transportationOptionId === shipment.selectedTransportationOptionId) || null) : null;
+        out.shipmentItems = attempt(() => amzListAll_(token, `${amzPlanUrl_(ctx.planId)}/shipments/${encodeURIComponent(shipment.shipmentId)}/items?pageSize=100`, "items"));
+        out.challan = attempt(() => ({ ok: true, bytes: amzDeliveryChallanPdf_(token, ctx.planId, shipment.shipmentId).getBytes().length }));
+      }
+      if (ctx.fbaId) {
+        const boxes = amzBoxCount_(ss, ctx);
+        out.labels = attempt(() => ({ ok: true, boxes: boxes, bytes: amzBoxLabelsPdf_(token, ctx.fbaId, boxes).getBytes().length }));
+      }
+    });
+
+    report.mskus = mskus;
+    const q = mskus.map(s => `mskus=${encodeURIComponent(s)}`).join("&");
+    report.compliance = mskus.length ? attempt(() => get(`${v2}/items/compliance?marketplaceId=${AMAZON.marketplaceId}&${q}`).complianceDetails || []) : [];
+    report.prepDetails = mskus.length ? attempt(() => get(`${v2}/items/prepDetails?marketplaceId=${AMAZON.marketplaceId}&${q}`).mskuPrepDetails || []) : [];
+    report.bookingOperation = attempt(() => get(`${v2}/operations/${encodeURIComponent(AMZ_PHASE_BOOKING_OP_)}`));
+
+    // The short version, for the execution log
+    const docText = (d) => !d ? "not tried" : d.ok ? `OK (${d.bytes} bytes)` : `refused: ${amzPhaseShortError_(d.error)}`;
+    Object.keys(report.orders).forEach(kind => {
+      const o = report.orders[kind];
+      if (o.error) { lines.push(`${kind} ${o.ref}: ${o.error}`); return; }
+      const sh = o.shipment || {};
+      const opt = o.bookedOption || {};
+      const quote = opt.quote || {};
+      const cost = quote.cost ? `${quote.cost.code} ${quote.cost.amount}` : "none";
+      lines.push(`${kind} ${o.ref} ${o.ids.fbaId || "(no FBA ID)"}: shipment ${sh.error ? amzPhaseShortError_(sh.error) : sh.status || "?"}, ` +
+        `booked option ${sh.selectedTransportationOptionId || "none"} (${opt.shippingSolution || "?"}, ${opt.shippingMode || "?"}), quote ${cost}, ` +
+        `voidableUntil ${quote.voidableUntil || "blank"}, expiration ${quote.expiration || "blank"}; labels ${docText(o.labels)}; challan ${docText(o.challan)}`);
+    });
+    const listOrError = (v, name) => {
+      if (v && v.error) { lines.push(`${name}: ${amzPhaseShortError_(v.error)}`); return []; }
+      return Array.isArray(v) ? v : [];
+    };
+    const compliance = listOrError(report.compliance, "compliance details");
+    const prep = listOrError(report.prepDetails, "prep details");
+    mskus.forEach(m => {
+      const c = compliance.find(x => String(x.msku) === m);
+      const t = c && c.taxDetails;
+      const p = prep.find(x => String(x.msku) === m);
+      const tax = !c ? "not returned" : !t ? "no tax details" :
+        `HSN ${t.hsnCode || "blank"}, declared ${t.declaredValue ? `${t.declaredValue.code} ${t.declaredValue.amount}` : "blank"}, rates ${JSON.stringify(t.taxRates || [])}`;
+      lines.push(`SKU ${m}: compliance ${tax}; prep ${p ? `${p.prepCategory || "?"} ${JSON.stringify(p.prepTypes || [])}` : "not returned"}`);
+    });
+    const op = report.bookingOperation || {};
+    lines.push(`booking operation ${AMZ_PHASE_BOOKING_OP_}: ` + (op.error ? amzPhaseShortError_(op.error) :
+      `${op.operationStatus || "?"} (${op.operation || "?"}), problems ${JSON.stringify(op.operationProblems || [])}`));
+  } catch (e) {
+    report.error = e.message;
+    lines.push(`ERROR: ${e.message}`);
+  } finally {
+    report.summary = lines;
+    lines.forEach(l => Logger.log(l));
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/**
+ * Phased ATS test, phase 2 fast (2026-11-20). Every ATS option the API booked carried a 3-week
+ * placeholder pickup window and no void deadline, and Amazon never confirmed its charges. Seller
+ * Central's ATS booking (FBA15MXLR48J) had a 3-hour pickup slot and a void deadline of 23:00 the
+ * night before it. The API bookings so far sent a ready-to-ship (pickup) time of tomorrow and were
+ * checked or deleted before it came. Does Amazon confirm the charges once that time has passed?
+ * This throwaway plan ("API-TEST ... fast cancel me": the dummy boxes' 30 units of AZ20261119-1's
+ * SKU, to ISK3) runs the app's own flow (amzPrepareShipment_) with ONE change: the ready-to-ship
+ * time is AMZ_PHASE2_READY_LEAD_MIN_ minutes from now instead of tomorrow. Confirms the placement
+ * (irreversible: creates an FBA Shipment ID), books nothing, writes nothing to PO_Database.
+ *   ATS offered: the pick is saved for amzTestShipmentStep2 (which books it: Amazon charges the
+ *     quote) and the plan is kept. Delete it in Seller Central (Delete shipment and charges) when done.
+ *   No ATS: the plan is cancelled at the end.
+ * Then, once the ready-to-ship time has passed: amzPhase2Check (read-only).
+ */
+const AMZ_PHASE2_READY_LEAD_MIN_ = 60;
+
+// "20 Nov 14:45 IST" for an ISO time, "blank" for none
+function amzPhaseIst_(iso) {
+  if (!iso) return "blank";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? String(iso) : `${Utilities.formatDate(d, "Asia/Kolkata", "dd MMM HH:mm")} IST`;
+}
+
+function amzPhase2FastPlan() {
+  const folder = amzDiagFolder_("Amazon API test (phase 2 fast plan)");
+  const ready = new Date(Date.now() + AMZ_PHASE2_READY_LEAD_MIN_ * 60000);
+  ready.setSeconds(0, 0);
+  const readyToShipStart = ready.toISOString();
+  const report = { ranAt: new Date().toISOString(), readyToShipStart: readyToShipStart, boxes: AMZ_TEST_BOXES_, steps: [] };
+  const lines = [];
+  const props = PropertiesService.getScriptProperties();
+  let token = null, planId = "", keep = false;
+  try {
+    token = amzToken_();
+    const units = AMZ_TEST_BOXES_.reduce((n, b) => n + b.units, 0);
+    const name = `API-TEST ${Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyyMMdd-HHmm")} fast cancel me`;
+    const created = createInboundPlan_(token, AMAZON.endpoint, name, [{ articleCode: AMZ_TEST_SKU_, qty: units }], null);
+    planId = created.inboundPlanId;
+    amzWaitOperation_(token, created.operationId);
+    report.plan = { name: name, planId: planId };
+    const ctx = {
+      referenceCode: name, channel: "Amazon_FBA", isFba: true, poNumber: name, poNumbers: [], storeCode: "ISK3",
+      planId: planId, placementId: "", shipmentId: "", fbaId: "", boxData: AMZ_TEST_BOXES_.length,
+      statuses: [], eeStatus: "", lines: [{ itemCode: AMZ_TEST_SKU_, masterSku: AMZ_TEST_SKU_, qty: units }]
+    };
+    const result = amzPrepareShipment_(SpreadsheetApp.openById(SPREADSHEET_ID), ctx, report.steps,
+      { packing: amzTestPacking_, saveIds: false, readyToShipStart: readyToShipStart });
+    report.result = result;
+    if (result.stage === "chooseCarrier" && result.options.length) {
+      keep = true;
+      const pick = result.options[0];
+      report.pick = pick;
+      props.setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify({
+        planId: planId, shipmentId: result.shipmentId, placementOptionId: result.placementOptionId,
+        fbaShipmentId: result.fbaShipmentId, transportationOptionId: pick.transportationOptionId,
+        amount: pick.amount, currency: pick.currency, pickupStart: pick.pickupStart,
+        readyToShipStart: readyToShipStart, savedAt: new Date().toISOString()
+      }));
+      lines.push(`${result.fbaShipmentId} (${name}): ATS offered ${pick.currency} ${pick.amount}, pickup window ${amzPhaseIst_(pick.pickupStart)} to ` +
+        `${amzPhaseIst_(pick.pickupEnd)}, voidable until ${amzPhaseIst_(pick.voidableUntil)}, expires ${amzPhaseIst_(pick.expiresAt)}; ` +
+        `ready to ship ${amzPhaseIst_(readyToShipStart)}. Saved: amzTestShipmentStep2 books it.`);
+    } else {
+      lines.push(`No ATS to book (stage ${result.stage}).`);
+    }
+  } catch (e) {
+    report.error = e.message;
+    lines.push(`ERROR: ${e.message}`);
+  } finally {
+    if (planId && !keep) {
+      try {
+        const res = fetchSigned_(token, { method: "PUT", url: `${amzPlanUrl_(planId)}/cancellation` }, [202]);
+        amzWaitOperation_(token, res.operationId);
+        report.cancelled = true;
+      } catch (e) {
+        report.cancelled = `not cancelled: ${e.message} (delete it in Seller Central)`;
+      }
+      lines.push(`Plan ${planId}: ${report.cancelled === true ? "cancelled" : report.cancelled}.`);
+    }
+    report.summary = lines.concat(report.steps.map(s => `step: ${s}`));
+    report.summary.forEach(l => Logger.log(l));
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/**
+ * Phase 2 check. Read-only: books, confirms and changes nothing. For the fast plan's shipment (the
+ * pick amzPhase2FastPlan saved; once a later test saved another pick, AMZ_PHASE2_FAST_), the phase 3a
+ * shipment when amzPhase3aStep5 saved one, and FBA15MY7J2T8 (AZ20261119-1): the shipment's status, the booked
+ * carrier option's pickup window and quote (void deadline), and whether the box labels and delivery
+ * challan download (byte counts only, nothing saved). Run once the fast plan's ready-to-ship time
+ * has passed, and again after 23:00 IST. Logs a short summary, saves the full report to Drive.
+ */
+// The fast plan's booking (amzPhase2FastPlan 2026-11-20 14:16 IST, booked 14:18)
+const AMZ_PHASE2_FAST_ = { planId: "wf94458cb3-879e-4c50-be14-109af1f67f8e", shipmentId: "shd9bcb8d9-e735-43cb-aec7-ceaea2906e38",
+  fbaShipmentId: "FBA15MY9DJFX", readyToShipStart: "2026-11-20T09:46:00.000Z" };
+
+function amzPhase2Check() {
+  const folder = amzDiagFolder_("Amazon API test (phase 2 check)");
+  const report = { ranAt: new Date().toISOString(), shipments: [] };
+  const lines = [];
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const token = amzToken_();
+    const attempt = (fn) => { try { return fn(); } catch (e) { return { error: e.message }; } };
+    const targets = [];
+    const saved = JSON.parse(PropertiesService.getScriptProperties().getProperty(AMZ_TEST_STATE_KEY_) || "null");
+    const fast = saved && saved.readyToShipStart && saved.planId && saved.shipmentId ? saved : AMZ_PHASE2_FAST_;
+    targets.push({ label: "fast plan", planId: fast.planId, shipmentId: fast.shipmentId, fbaId: fast.fbaShipmentId,
+      boxes: AMZ_TEST_BOXES_.length, readyToShipStart: fast.readyToShipStart });
+    if (saved && saved.step5 && saved.planId && saved.shipmentId) {
+      targets.push({ label: "step 5 plan", planId: saved.planId, shipmentId: saved.shipmentId, fbaId: saved.fbaShipmentId,
+        boxes: AMZ_TEST_BOXES_.length, readyToShipStart: "" });
+    }
+    const ctx = amazonFbaOrderContext_(ss, AMZ_TEST_DUMMY_REF_);
+    if (ctx && ctx.planId && ctx.shipmentId && ctx.fbaId) {
+      targets.push({ label: AMZ_TEST_DUMMY_REF_, planId: ctx.planId, shipmentId: ctx.shipmentId, fbaId: ctx.fbaId,
+        boxes: amzBoxCount_(ss, ctx), readyToShipStart: "" });
+    } else {
+      lines.push(`${AMZ_TEST_DUMMY_REF_}: no Inbound Plan, Shipment or FBA ID in PO_Database`);
+    }
+    const docText = (d) => d.ok ? `OK (${d.bytes} bytes)` : `refused: ${amzPhaseShortError_(d.error)}`;
+    targets.forEach(t => {
+      const out = { target: t };
+      report.shipments.push(out);
+      out.shipment = attempt(() => fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(t.planId)}/shipments/${encodeURIComponent(t.shipmentId)}` }, [200]));
+      out.options = attempt(() => amzListTransportation_(token, t.planId, "", t.shipmentId));
+      const booked = out.shipment && out.shipment.selectedTransportationOptionId;
+      out.bookedOption = booked && Array.isArray(out.options) ? (out.options.find(o => o.transportationOptionId === booked) || null) : null;
+      out.labels = attempt(() => ({ ok: true, bytes: amzBoxLabelsPdf_(token, t.fbaId, t.boxes).getBytes().length }));
+      out.challan = attempt(() => ({ ok: true, bytes: amzDeliveryChallanPdf_(token, t.planId, t.shipmentId).getBytes().length }));
+      const sh = out.shipment || {};
+      const o = out.bookedOption || {};
+      const appt = o.carrierAppointment || {};
+      const quote = o.quote || {};
+      const cost = quote.cost ? `${quote.cost.code} ${quote.cost.amount}` : "none";
+      lines.push(`${t.label} ${t.fbaId}: shipment ${sh.error ? amzPhaseShortError_(sh.error) : sh.status || "?"}, ` +
+        (booked ? `booked ${o.shippingSolution || "?"}, pickup window ${amzPhaseIst_(appt.startTime)} to ${amzPhaseIst_(appt.endTime)}, ` +
+          `quote ${cost}, voidable until ${amzPhaseIst_(quote.voidableUntil)}, expires ${amzPhaseIst_(quote.expiration)}` : "NOT booked") +
+        (t.readyToShipStart ? `, ready to ship ${amzPhaseIst_(t.readyToShipStart)}` : "") +
+        `; labels ${docText(out.labels)}; challan ${docText(out.challan)}`);
+    });
+  } catch (e) {
+    report.error = e.message;
+    lines.push(`ERROR: ${e.message}`);
+  } finally {
+    report.summary = lines;
+    lines.forEach(l => Logger.log(l));
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/**
+ * Phased ATS test, phase 3a (2026-11-20). Every ATS option the API flow booked was the one Amazon
+ * lists right after confirmPlacementOption: a 3-week placeholder pickup window, no void deadline,
+ * and Amazon never confirmed its charges (labels and challan refused), even after the ready-to-ship
+ * time passed (FBA15MY9DJFX). Seller Central books a 3-hour pickup slot with a void deadline.
+ * Amazon's India guide has a step the app skips: Step 5, generateTransportationOptions AFTER
+ * confirmPlacementOption, then list. The app skips it because ATS never showed after it on
+ * FBA15MY3396K (2026-11-19), but that shipment's options were never listed before regenerating.
+ * This throwaway plan ("API-TEST ... step5 cancel me": the dummy boxes' 30 units of AZ20261119-1's
+ * SKU, to ISK3) runs the app's own flow to the confirmed placement, lists the carrier options (A),
+ * runs Step 5 with a ready-to-ship time of tomorrow AMZ_PHASE3A_READY_HOUR_IST_:00 IST and lists
+ * again (B); if B has no ATS, Step 5 once more for the day after (C). Books nothing, writes nothing
+ * to PO_Database.
+ *   ATS after Step 5: the ATS option with the shortest pickup window is saved for
+ *     amzTestShipmentStep2 (which books it: only with a person's yes) and the plan is kept. Delete it
+ *     in Seller Central (Delete shipment and charges) when done.
+ *   No ATS after Step 5: the plan is cancelled.
+ */
+const AMZ_PHASE3A_READY_HOUR_IST_ = 10;
+
+// `hour`:00 IST on the day `daysAhead` days after today (IST), as an ISO time
+function amzPhaseIstAt_(daysAhead, hour) {
+  const istNow = new Date(Date.now() + 330 * 60000);
+  return new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate() + daysAhead, hour, 0, 0) - 330 * 60000).toISOString();
+}
+
+// One carrier option for the log: pickup window (and its length), quote, void deadline
+function amzPhaseOptionText_(o) {
+  const s = amzOptionSummary_(o);
+  const hours = s.pickupStart && s.pickupEnd ? Math.round((new Date(s.pickupEnd).getTime() - new Date(s.pickupStart).getTime()) / 36e5) : null;
+  return `${s.shippingSolution} ${s.carrier} ${s.shippingMode}: pickup ${amzPhaseIst_(s.pickupStart)} to ${amzPhaseIst_(s.pickupEnd)}` +
+    (hours === null ? "" : ` (${hours} h)`) + `, cost ${s.amount === null ? "none" : `${s.currency} ${s.amount}`}, ` +
+    `voidable until ${amzPhaseIst_(s.voidableUntil)}, expires ${amzPhaseIst_(s.expiresAt)}, preconditions ${JSON.stringify(s.preconditions)}`;
+}
+
+function amzPhase3aStep5() {
+  const folder = amzDiagFolder_("Amazon API test (phase 3a step 5)");
+  const report = { ranAt: new Date().toISOString(), boxes: AMZ_TEST_BOXES_, steps: [], snapshots: {}, step5: [] };
+  const lines = [];
+  const props = PropertiesService.getScriptProperties();
+  let token = null, planId = "", keep = false;
+  try {
+    token = amzToken_();
+    const units = AMZ_TEST_BOXES_.reduce((n, b) => n + b.units, 0);
+    const name = `API-TEST ${Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyyMMdd-HHmm")} step5 cancel me`;
+    const created = createInboundPlan_(token, AMAZON.endpoint, name, [{ articleCode: AMZ_TEST_SKU_, qty: units }], null);
+    planId = created.inboundPlanId;
+    amzWaitOperation_(token, created.operationId);
+    report.plan = { name: name, planId: planId };
+    const ctx = {
+      referenceCode: name, channel: "Amazon_FBA", isFba: true, poNumber: name, poNumbers: [], storeCode: "ISK3",
+      planId: planId, placementId: "", shipmentId: "", fbaId: "", boxData: AMZ_TEST_BOXES_.length,
+      statuses: [], eeStatus: "", lines: [{ itemCode: AMZ_TEST_SKU_, masterSku: AMZ_TEST_SKU_, qty: units }]
+    };
+    // The app's own flow to the confirmed placement. Its "offered no ATS" error comes after the
+    // confirmation, so Step 5 still runs then.
+    try {
+      report.result = amzPrepareShipment_(SpreadsheetApp.openById(SPREADSHEET_ID), ctx, report.steps, { packing: amzTestPacking_, saveIds: false });
+    } catch (e) {
+      report.prepareError = e.message;
+    }
+    const accepted = amzListAll_(token, `${amzPlanUrl_(planId)}/placementOptions?pageSize=20`, "placementOptions").find(p => p.status === "ACCEPTED");
+    if (!accepted) throw new Error(`The placement was not confirmed${report.prepareError ? `: ${report.prepareError}` : ""}`);
+    const placementId = accepted.placementOptionId;
+    const shipmentId = (accepted.shipmentIds || [])[0];
+    const shipment = fetchSigned_(token, { method: "GET", url: `${amzPlanUrl_(planId)}/shipments/${encodeURIComponent(shipmentId)}` }, [200]);
+    const fbaId = String(shipment.shipmentConfirmationId || "").trim();
+    report.ids = { placementId: placementId, shipmentId: shipmentId, fbaId: fbaId };
+    lines.push(`${fbaId || shipmentId} (${name}): placement confirmed` + (report.prepareError ? ` (app flow: ${report.prepareError})` : "") + ".");
+
+    const snapshot = (key) => {
+      const options = amzListTransportation_(token, planId, placementId, shipmentId);
+      report.snapshots[key] = options;
+      const ats = options.filter(amzIsPartnered_);
+      lines.push(`${key}: ${options.length} options, ${ats.length} ATS` + (ats.length ? "" : `; the others: ${amzOptionsText_(options)}`));
+      ats.forEach(o => lines.push(`${key}: ${amzPhaseOptionText_(o)}`));
+      return ats;
+    };
+    const step5 = (key, readyToShipStart) => {
+      const out = { key: key, readyToShipStart: readyToShipStart };
+      report.step5.push(out);
+      try {
+        const res = fetchSigned_(token, {
+          method: "POST",
+          url: `${amzPlanUrl_(planId)}/transportationOptions`,
+          payload: {
+            placementOptionId: placementId,
+            shipmentTransportationConfigurations: [{ shipmentId: shipmentId, contactInformation: AMZ_SHIP_CONTACT_, readyToShipWindow: { start: readyToShipStart } }]
+          }
+        }, [202]);
+        out.operationId = res.operationId || "";
+        const op = amzWaitOperation_(token, res.operationId);
+        out.text = amzOperationText_("generateTransportationOptions", { operationId: res.operationId, op: op });
+      } catch (e) {
+        out.text = `generateTransportationOptions failed: ${amzPhaseShortError_(e.message)}`;
+      }
+      lines.push(`${key} (ready to ship ${amzPhaseIst_(readyToShipStart)}): ${out.text}`);
+    };
+
+    snapshot("A after confirmation");
+    step5("Step 5 #1", amzPhaseIstAt_(1, AMZ_PHASE3A_READY_HOUR_IST_));
+    let ats = snapshot("B after Step 5");
+    if (!ats.length) {
+      step5("Step 5 #2", amzPhaseIstAt_(2, AMZ_PHASE3A_READY_HOUR_IST_));
+      ats = snapshot("C after Step 5 again");
+    }
+    if (ats.length) {
+      const span = (o) => {
+        const a = o.carrierAppointment || {};
+        return a.startTime && a.endTime ? new Date(a.endTime).getTime() - new Date(a.startTime).getTime() : Infinity;
+      };
+      const best = ats.slice().sort((x, y) => span(x) - span(y) ||
+        String((x.carrierAppointment || {}).startTime || "").localeCompare(String((y.carrierAppointment || {}).startTime || "")))[0];
+      const pick = amzOptionSummary_(best);
+      keep = true;
+      report.pick = pick;
+      props.setProperty(AMZ_TEST_STATE_KEY_, JSON.stringify({
+        planId: planId, shipmentId: shipmentId, placementOptionId: placementId, fbaShipmentId: fbaId,
+        transportationOptionId: pick.transportationOptionId, amount: pick.amount, currency: pick.currency,
+        pickupStart: pick.pickupStart, step5: true, savedAt: new Date().toISOString()
+      }));
+      lines.push(`Saved for amzTestShipmentStep2 (it books; only with a yes): ${amzPhaseOptionText_(best)}. Plan kept: delete ${fbaId} in Seller Central when done.`);
+    } else {
+      lines.push("No ATS after Step 5: the plan is cancelled.");
+    }
+  } catch (e) {
+    report.error = e.message;
+    lines.push(`ERROR: ${e.message}`);
+  } finally {
+    if (planId && !keep) {
+      try {
+        const res = fetchSigned_(token, { method: "PUT", url: `${amzPlanUrl_(planId)}/cancellation` }, [202]);
+        amzWaitOperation_(token, res.operationId);
+        report.cancelled = true;
+      } catch (e) {
+        report.cancelled = `not cancelled: ${e.message} (delete it in Seller Central)`;
+      }
+      lines.push(`Plan ${planId}: ${report.cancelled === true ? "cancelled" : report.cancelled}.`);
+    }
+    report.summary = lines.concat(report.steps.map(s => `step: ${s}`));
+    report.summary.forEach(l => Logger.log(l));
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/**
+ * Hand-off test (2026-11-20): how far can the API take a plan before Seller Central won't finish
+ * it? Push to AMZ's plans (createInboundPlan only) finish fine in Send to Amazon. On 19 Nov a plan
+ * where the API had also generated placement and carrier options, sent the boxes and confirmed the
+ * placement showed "Unable to proceed on Send to Amazon ... complete the step using your software".
+ * This makes three throwaway plans (the dummy boxes' 30 units of AZ20261119-1's SKU, to ISK3), each
+ * one API step further, and confirms nothing (no FBA Shipment ID, nothing booked):
+ *   handoff 1 placement: placement options generated (custom placement to ISK3)
+ *   handoff 2 boxes:     placement options, then the box details (setPackingInformation)
+ *   handoff 3 carrier:   placement options, carrier options, then the box details (the app's order)
+ * Then a person opens each in Seller Central (Send to Amazon) and notes whether it can continue
+ * and whether the boxes show. amzHandoffCancel cancels all three afterwards (plan IDs in the Script
+ * Property AMZ_HANDOFF_PLANS). Writes nothing to PO_Database.
+ */
+const AMZ_HANDOFF_KEY_ = "AMZ_HANDOFF_PLANS";
+
+function amzHandoffTest() {
+  const folder = amzDiagFolder_("Amazon API test (hand-off)");
+  const report = { ranAt: new Date().toISOString(), plans: [] };
+  const lines = [];
+  try {
+    const token = amzToken_();
+    const units = AMZ_TEST_BOXES_.reduce((n, b) => n + b.units, 0);
+    const stamp = Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyyMMdd-HHmm");
+    const stages = [
+      { n: 1, label: "placement", boxes: false, carrier: false },
+      { n: 2, label: "boxes", boxes: true, carrier: false },
+      { n: 3, label: "carrier", boxes: true, carrier: true }
+    ];
+    stages.forEach(stage => {
+      const out = { stage: stage.n, name: `API-TEST ${stamp} handoff ${stage.n} ${stage.label}`, planId: "", steps: [] };
+      report.plans.push(out);
+      try {
+        const created = createInboundPlan_(token, AMAZON.endpoint, out.name, [{ articleCode: AMZ_TEST_SKU_, qty: units }], null);
+        out.planId = created.inboundPlanId;
+        amzWaitOperation_(token, created.operationId);
+        out.steps.push("plan created");
+        const items = amzPlanItems_(token, out.planId, { lines: [{ itemCode: AMZ_TEST_SKU_, qty: units }] });
+        const res = fetchSigned_(token, {
+          method: "POST",
+          url: `${amzPlanUrl_(out.planId)}/placementOptions`,
+          payload: { customPlacement: [{ warehouseId: "ISK3", items: items }] }
+        }, [202]);
+        amzWaitOperation_(token, res.operationId);
+        const placement = amzListAll_(token, `${amzPlanUrl_(out.planId)}/placementOptions?pageSize=20`, "placementOptions")
+          .filter(p => p.status === "OFFERED" && (p.shipmentIds || []).length).pop();
+        if (!placement) throw new Error("Amazon offered no placement to ISK3");
+        const shipmentId = placement.shipmentIds[0];
+        out.placementOptionId = placement.placementOptionId;
+        out.shipmentId = shipmentId;
+        out.steps.push("placement options generated");
+        if (stage.carrier) {
+          amzGenerateTransportation_(token, out.planId, placement.placementOptionId, shipmentId);
+          out.steps.push("carrier options generated");
+        }
+        if (stage.boxes) {
+          const packing = amzTestPacking_(items);
+          const pr = fetchSigned_(token, {
+            method: "POST",
+            url: `${amzPlanUrl_(out.planId)}/packingInformation`,
+            payload: { packageGroupings: [{ shipmentId: shipmentId, boxes: packing.boxes }] }
+          }, [202]);
+          amzWaitOperation_(token, pr.operationId);
+          out.steps.push(`box details sent (${packing.boxes.length} boxes)`);
+        }
+      } catch (e) {
+        out.error = e.message;
+      }
+      lines.push(`${out.name} (plan ${out.planId || "none"}): ${out.steps.join(", ") || "nothing"}` +
+        (out.error ? `; STOPPED: ${amzPhaseShortError_(out.error)}` : ""));
+    });
+    PropertiesService.getScriptProperties().setProperty(AMZ_HANDOFF_KEY_,
+      JSON.stringify(report.plans.filter(p => p.planId).map(p => ({ planId: p.planId, name: p.name }))));
+    lines.push("Next: open each plan in Seller Central (Send to Amazon) and note whether it can continue; then run amzHandoffCancel.");
+  } catch (e) {
+    report.error = e.message;
+    lines.push(`ERROR: ${e.message}`);
+  } finally {
+    report.summary = lines;
+    lines.forEach(l => Logger.log(l));
+    amzDiagSave_(folder, report);
+  }
+  return report;
+}
+
+/** Cancels the plans amzHandoffTest made (cancelInboundPlan). Keeps any it couldn't cancel listed. */
+function amzHandoffCancel() {
+  const props = PropertiesService.getScriptProperties();
+  const plans = JSON.parse(props.getProperty(AMZ_HANDOFF_KEY_) || "[]");
+  const left = [];
+  const lines = [];
+  const token = plans.length ? amzToken_() : null;
+  plans.forEach(p => {
+    try {
+      const res = fetchSigned_(token, { method: "PUT", url: `${amzPlanUrl_(p.planId)}/cancellation` }, [202]);
+      amzWaitOperation_(token, res.operationId);
+      lines.push(`${p.name} (${p.planId}): cancelled`);
+    } catch (e) {
+      left.push(p);
+      lines.push(`${p.name} (${p.planId}): NOT cancelled: ${amzPhaseShortError_(e.message)} (delete it in Seller Central)`);
+    }
+  });
+  if (left.length) props.setProperty(AMZ_HANDOFF_KEY_, JSON.stringify(left));
+  else props.deleteProperty(AMZ_HANDOFF_KEY_);
+  if (!plans.length) lines.push("No hand-off plans saved.");
+  lines.forEach(l => Logger.log(l));
+  return lines;
 }
