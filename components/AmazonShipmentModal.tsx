@@ -8,7 +8,8 @@ import { XCircleIcon, CheckCircleIcon, AlertIcon, RefreshIcon, TruckIcon, Extern
 //    EasyEcom packing data, then the placement is confirmed, which creates the FBA Shipment ID.
 // 2. A person picks an ATS pickup slot and books it; Amazon charges the quote shown. Only then
 //    does the FBA Shipment ID go on the order (it becomes the invoice number).
-// The box labels and delivery challan are then fetched for the Scan & Print window.
+// The box labels and delivery challan follow from the backend's 15-minute timer once Amazon has
+// confirmed the carrier charges (it refuses them for a while after the booking).
 // Step 1 resumes from where it stopped, so opening this again after an error carries on.
 
 interface Props {
@@ -179,7 +180,7 @@ const AmazonShipmentModal: FC<Props> = ({ so, userName, onClose, onChanged, addN
                             <p className="text-xs text-gray-500 mt-2 max-w-md">
                                 {result?.amazonDocs?.status === 'Done'
                                     ? 'Box labels and the delivery challan are saved. Print them from Scan & Print once the invoice is made.'
-                                    : 'Box labels and the delivery challan download automatically within 15 minutes, or when you open Scan & Print.'}
+                                    : 'Amazon confirms the carrier charges after the booking, so the box labels and the delivery challan download automatically within about half an hour. Scan & Print also fetches them when you open it.'}
                             </p>
                         </div>
                     )}
