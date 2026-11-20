@@ -131,8 +131,8 @@ const AmazonAutoShipSettings: React.FC<Props> = ({ currentUser, addLog, addNotif
                         <span>
                             Not available for now. When the ATS pickup is booked through Amazon's API, Amazon never confirms the
                             carrier charges, so the box labels and delivery challan can't be downloaded (case 13510273982 with
-                            Seller Support). Create FBA shipments in Seller Central and link the FBA Shipment ID in Box Details:
-                            the labels and challan still download automatically.
+                            Seller Support). Create FBA shipments in Seller Central: once the pickup is booked there, the app links
+                            the FBA Shipment ID by itself (within about 15 minutes, 08:00-22:00) and downloads the labels and challan.
                         </span>
                     </div>
                 )}

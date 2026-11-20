@@ -1755,6 +1755,11 @@ const AmazonBoxDetailsModal: FC<{
                                     <AlertIcon className="h-3.5 w-3.5" /> Shipment ID Required before invoicing
                                 </p>
                             )}
+                            {!so.fbaShipmentId && (
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                    Made in Seller Central? It links here automatically within about 15 minutes of booking the pickup there (08:00-22:00). You can also enter it now.
+                                </p>
+                            )}
                         </div>
                         <div className="flex gap-2">
                             <input
@@ -5001,7 +5006,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                                                 <p className="text-[10px] text-amber-600 font-bold text-center">
                                                                                                     {AMAZON_API_SHIPMENT_ENABLED
                                                                                                         ? '* Create the Amazon shipment, or link its FBA Shipment ID in Box Details'
-                                                                                                        : '* Create the shipment in Seller Central (Send to Amazon), then link its FBA Shipment ID in Box Details'}
+                                                                                                        : '* Create the shipment in Seller Central (Send to Amazon). Its FBA Shipment ID links automatically within about 15 minutes of booking the pickup, or link it in Box Details'}
                                                                                                 </p>
                                                                                             )}
                                                                                         </div>
