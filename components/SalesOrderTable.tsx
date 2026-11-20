@@ -38,7 +38,7 @@ import OrderNotesTimeline from './OrderNotesTimeline';
 import { createZohoInvoice, pushToShippingPartner, reassignCourier, fetchPurchaseOrder, fetchSalesOrder, syncSinglePO, fetchPackingData, updateFBAShipmentId, syncEasyEcomShipments, updatePOStatus, processFlipkartConsignment, processFlipkartEInvoice, fetchBoxDetails, sendZeptoAppointmentRequestEmail, sendZeptoReminder, sendInstamartAppointmentRequestEmail, sendBBAppointmentRequestEmail, sendRBLAppointmentRequestEmail, updateInstamartAppointmentDetails, processBlinkitAppointmentPasses, updateZeptoASN, updateRTOStatus, updatePOPickupDate, createSelfShipBooking, recordOtherSelfShipment, cancelShipment, syncSelfShipTrackers, syncPackingListFromEasyEcom } from '../services/api';
 import AppointmentPass from './AppointmentPass';
 import BoxScanPrintModal, { type ExtraPrintAction } from './BoxScanPrintModal';
-import AmazonShipmentModal from './AmazonShipmentModal';
+import AmazonShipmentModal, { AMAZON_API_SHIPMENT_ENABLED } from './AmazonShipmentModal';
 import LoadingCube from './LoadingCube';
 import ActionConfirmationModal from './ActionConfirmationModal';
 
@@ -4013,7 +4013,7 @@ const handleUpdateGoogleSheet = async () => {
 
         const canInvoice = !isAmazonFbaYeio && !so.invoiceNumber && eeStatusLower !== 'open' && (eeStatusLower === 'confirmed' || so.status === 'Batch Created');
 
-        if (canInvoice && fbaMissing && so.inboundPlanId && so.boxCount > 0) {
+        if (AMAZON_API_SHIPMENT_ENABLED && canInvoice && fbaMissing && so.inboundPlanId && so.boxCount > 0) {
             return {
                 label: 'Create AMZ Shipment',
                 color: 'bg-[#232F3E] text-[#FF9900] hover:bg-black shadow-md',
@@ -4301,7 +4301,7 @@ const handleUpdateGoogleSheet = async () => {
                     onClose={() => setAmazonBoxModal({ isOpen: false, so: null })}
                     addNotification={addNotification}
                     data={amazonBoxModal.data}
-                    onCreateOnAmazon={() => { const target = amazonBoxModal.so; setAmazonBoxModal({ isOpen: false, so: null }); setAmazonShipSo(target); }}
+                    onCreateOnAmazon={AMAZON_API_SHIPMENT_ENABLED ? () => { const target = amazonBoxModal.so; setAmazonBoxModal({ isOpen: false, so: null }); setAmazonShipSo(target); } : undefined}
                     onLinkFbaShipment={async (fbaId) => {
                         try {
                             const res = await updateFBAShipmentId(amazonBoxModal.so!.poReference, fbaId);
@@ -4989,7 +4989,7 @@ const handleUpdateGoogleSheet = async () => {
                                                                                                 {isCreatingInvoice === so.id ? <RefreshIcon className="h-3 w-3 animate-spin" /> : <PlusIcon className="h-3 w-3" />}
                                                                                                 {isCreatingInvoice === so.id ? 'Creating...' : 'Create Zoho Invoice'}
                                                                                             </button>
-                                                                                            {fbaMissing && so.inboundPlanId && so.boxCount > 0 && (
+                                                                                            {AMAZON_API_SHIPMENT_ENABLED && fbaMissing && so.inboundPlanId && so.boxCount > 0 && (
                                                                                                 <button
                                                                                                     onClick={() => setAmazonShipSo(so)}
                                                                                                     className="px-4 py-2 bg-[#232F3E] text-[#FF9900] text-[11px] font-bold rounded-lg shadow-sm hover:bg-black flex items-center justify-center gap-2 transition-all active:scale-95"
@@ -4999,7 +4999,9 @@ const handleUpdateGoogleSheet = async () => {
                                                                                             )}
                                                                                             {fbaMissing && (
                                                                                                 <p className="text-[10px] text-amber-600 font-bold text-center">
-                                                                                                    * Create the Amazon shipment, or link its FBA Shipment ID in Box Details
+                                                                                                    {AMAZON_API_SHIPMENT_ENABLED
+                                                                                                        ? '* Create the Amazon shipment, or link its FBA Shipment ID in Box Details'
+                                                                                                        : '* Create the shipment in Seller Central (Send to Amazon), then link its FBA Shipment ID in Box Details'}
                                                                                                 </p>
                                                                                             )}
                                                                                         </div>

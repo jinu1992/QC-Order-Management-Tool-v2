@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { User } from '../types';
 import { fetchAmazonAutoShipSettings, saveAmazonAutoShipSettings, previewAmazonAutoShip, AmazonAutoShipSettings as Settings, AmazonAutoShipOrder } from '../services/api';
 import { CubeIcon, RefreshIcon, CheckCircleIcon, AlertIcon, ClockIcon } from './icons/Icons';
+import { AMAZON_API_SHIPMENT_ENABLED } from './AmazonShipmentModal';
 
 // Settings → Order Automation: once an Amazon FBA order's box data is complete, the tool creates
 // its Amazon shipment and books the earliest ATS pickup by itself, then fetches the box labels and
@@ -107,7 +108,9 @@ const AmazonAutoShipSettings: React.FC<Props> = ({ currentUser, addLog, addNotif
                         <p className="text-xs text-gray-500 mt-1">
                             {enabled
                                 ? 'On: packed Amazon FBA orders get their shipment and the earliest ATS pickup every 15 minutes, 8 am to 10 pm.'
-                                : 'Off: shipments are created with Create AMZ Shipment, and a person picks the pickup slot.'}
+                                : AMAZON_API_SHIPMENT_ENABLED
+                                    ? 'Off: shipments are created with Create AMZ Shipment, and a person picks the pickup slot.'
+                                    : 'Off: shipments are made in Seller Central (Send to Amazon) for now.'}
                         </p>
                     </div>
                     <button
@@ -115,11 +118,24 @@ const AmazonAutoShipSettings: React.FC<Props> = ({ currentUser, addLog, addNotif
                         aria-checked={enabled}
                         aria-label="Amazon FBA shipments and ATS pickup"
                         onClick={() => setEnabled(!enabled)}
-                        className={`relative inline-flex h-7 w-12 flex-shrink-0 rounded-full transition-colors ${enabled ? 'bg-partners-green' : 'bg-gray-300'}`}
+                        disabled={!AMAZON_API_SHIPMENT_ENABLED && !enabled}
+                        className={`relative inline-flex h-7 w-12 flex-shrink-0 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${enabled ? 'bg-partners-green' : 'bg-gray-300'}`}
                     >
                         <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                 </div>
+
+                {!AMAZON_API_SHIPMENT_ENABLED && (
+                    <div className="text-xs p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-2">
+                        <AlertIcon className="h-4 w-4 flex-shrink-0" />
+                        <span>
+                            Not available for now. When the ATS pickup is booked through Amazon's API, Amazon never confirms the
+                            carrier charges, so the box labels and delivery challan can't be downloaded (case 13510273982 with
+                            Seller Support). Create FBA shipments in Seller Central and link the FBA Shipment ID in Box Details:
+                            the labels and challan still download automatically.
+                        </span>
+                    </div>
+                )}
 
                 <div className="text-xs text-gray-600 bg-white border border-gray-200 rounded-lg p-4 leading-relaxed">
                     <p className="font-semibold text-gray-700 mb-1.5">The shipment is created when</p>

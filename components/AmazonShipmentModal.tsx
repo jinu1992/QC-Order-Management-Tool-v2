@@ -12,6 +12,15 @@ import { XCircleIcon, CheckCircleIcon, AlertIcon, RefreshIcon, TruckIcon, Extern
 // confirmed the carrier charges (it refuses them for a while after the booking).
 // Step 1 resumes from where it stopped, so opening this again after an error carries on.
 
+// Off since 2026-11-20. Booked through the API, Amazon never confirms the ATS quote (its
+// quoteState stays empty, CONFIRMED on Seller Central shipments), so the box labels and the
+// delivery challan are refused for good (FBA15MY3S4TQ, FBA15MY7J2T8; Seller Support case
+// 13510273982). Until Amazon says how to confirm it, FBA shipments are made in Seller Central's
+// Send to Amazon and their FBA Shipment ID is linked in Box Details; the backend still downloads
+// their labels and challan. false hides every way into this window and keeps Settings' automatic
+// shipments from being switched on; true brings them back.
+export const AMAZON_API_SHIPMENT_ENABLED = false;
+
 interface Props {
     so: GroupedSalesOrder;
     userName: string;
